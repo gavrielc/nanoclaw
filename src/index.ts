@@ -138,7 +138,7 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
 async function sendMessage(jid: string, text: string): Promise<void> {
   try {
     await sock.sendMessage(jid, { text });
-    logger.info({ jid, text: text.slice(0, 50) }, 'Message sent');
+    logger.info({ jid, length: text.length }, 'Message sent');
   } catch (err) {
     logger.error({ jid, err }, 'Failed to send message');
   }
