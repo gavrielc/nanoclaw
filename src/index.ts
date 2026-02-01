@@ -86,9 +86,8 @@ async function processMessage(msg: NewMessage): Promise<void> {
   const response = await runAgent(group, prompt, msg.chat_jid);
   await setTyping(msg.chat_jid, false);
 
-  lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-
   if (response) {
+    lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
     await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
   }
 }
