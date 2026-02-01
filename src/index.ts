@@ -63,8 +63,10 @@ async function processMessage(msg: NewMessage): Promise<void> {
   if (!group) return;
 
   const content = msg.content.trim();
+  const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
 
-  if (!TRIGGER_PATTERN.test(content)) return;
+  // Main group responds to all messages; other groups require trigger prefix
+  if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return;
 
   // Get all messages since last agent interaction so the session has full context
   const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
