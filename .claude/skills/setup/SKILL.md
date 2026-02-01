@@ -179,7 +179,114 @@ Ensure the groups folder exists:
 mkdir -p groups/main/logs
 ```
 
-## 8. Gmail Authentication (Optional)
+## 8. Configure External Directory Access (Mount Allowlist)
+
+Ask the user:
+> Do you want the agent to be able to access any directories **outside** the NanoClaw project?
+>
+> Examples: Git repositories, project folders, documents you want Claude to work on.
+>
+> **Note:** This is optional. Without configuration, agents can only access their own group folders.
+
+If **no**, create an empty allowlist to make this explicit:
+
+```bash
+mkdir -p ~/.config/nanoclaw
+cat > ~/.config/nanoclaw/mount-allowlist.json << 'EOF'
+{
+  "allowedRoots": [],
+  "blockedPatterns": [],
+  "nonMainReadOnly": true
+}
+EOF
+echo "Mount allowlist created - no external directories allowed"
+```
+
+Skip to the next step.
+
+If **yes**, ask follow-up questions:
+
+### 8a. Collect Directory Paths
+
+Ask the user:
+> Which directories do you want to allow access to?
+>
+> You can specify:
+> - A parent folder like `~/projects` (allows access to anything inside)
+> - Specific paths like `~/repos/my-app`
+>
+> List them one per line, or give me a comma-separated list.
+
+For each directory they provide, ask:
+> Should `[directory]` be **read-write** (agents can modify files) or **read-only**?
+>
+> Read-write is needed for: code changes, creating files, git commits
+> Read-only is safer for: reference docs, config examples, templates
+
+### 8b. Configure Non-Main Group Access
+
+Ask the user:
+> Should **non-main groups** (other WhatsApp chats you add later) be restricted to **read-only** access even if read-write is allowed for the directory?
+>
+> Recommended: **Yes** - this prevents other groups from modifying files even if you grant them access to a directory.
+
+### 8c. Create the Allowlist
+
+Create the allowlist file based on their answers:
+
+```bash
+mkdir -p ~/.config/nanoclaw
+```
+
+Then write the JSON file. Example for a user who wants `~/projects` (read-write) and `~/docs` (read-only) with non-main read-only:
+
+```bash
+cat > ~/.config/nanoclaw/mount-allowlist.json << 'EOF'
+{
+  "allowedRoots": [
+    {
+      "path": "~/projects",
+      "allowReadWrite": true,
+      "description": "Development projects"
+    },
+    {
+      "path": "~/docs",
+      "allowReadWrite": false,
+      "description": "Reference documents"
+    }
+  ],
+  "blockedPatterns": [],
+  "nonMainReadOnly": true
+}
+EOF
+```
+
+Verify the file:
+
+```bash
+cat ~/.config/nanoclaw/mount-allowlist.json
+```
+
+Tell the user:
+> Mount allowlist configured. The following directories are now accessible:
+> - `~/projects` (read-write)
+> - `~/docs` (read-only)
+>
+> **Security notes:**
+> - Sensitive paths (`.ssh`, `.gnupg`, `.aws`, credentials) are always blocked
+> - This config file is stored outside the project, so agents cannot modify it
+> - Changes require restarting the NanoClaw service
+>
+> To grant a group access to a directory, add it to their config in `data/registered_groups.json`:
+> ```json
+> "containerConfig": {
+>   "additionalMounts": [
+>     { "hostPath": "~/projects/my-app", "containerPath": "my-app", "readonly": false }
+>   ]
+> }
+> ```
+
+## 9. Gmail Authentication (Optional)
 
 Ask the user:
 > Do you want to enable Gmail integration for reading/sending emails?
@@ -206,7 +313,7 @@ npx -y @gongrzhe/server-gmail-autoauth-mcp
 
 This will open a browser for OAuth consent. After authorization, credentials are cached.
 
-## 9. Configure launchd Service
+## 10. Configure launchd Service
 
 Get the actual paths:
 
@@ -265,7 +372,7 @@ Verify it's running:
 launchctl list | grep nanoclaw
 ```
 
-## 10. Test
+## 11. Test
 
 Tell the user (using the assistant name they configured):
 > Send `@ASSISTANT_NAME hello` in your registered chat.
