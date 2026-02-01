@@ -111,16 +111,29 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   });
 
   // Environment file directory (workaround for Apple Container -i env var bug)
+  // Only expose specific auth variables needed by Claude Code, not the entire .env
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
   const envFile = path.join(projectRoot, '.env');
   if (fs.existsSync(envFile)) {
-    fs.copyFileSync(envFile, path.join(envDir, 'env'));
-    mounts.push({
-      hostPath: envDir,
-      containerPath: '/workspace/env-dir',
-      readonly: true
-    });
+    const envContent = fs.readFileSync(envFile, 'utf-8');
+    const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+    const filteredLines = envContent
+      .split('\n')
+      .filter(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return false;
+        return allowedVars.some(v => trimmed.startsWith(`${v}=`));
+      });
+
+    if (filteredLines.length > 0) {
+      fs.writeFileSync(path.join(envDir, 'env'), filteredLines.join('\n') + '\n');
+      mounts.push({
+        hostPath: envDir,
+        containerPath: '/workspace/env-dir',
+        readonly: true
+      });
+    }
   }
 
   if (group.containerConfig?.additionalMounts) {

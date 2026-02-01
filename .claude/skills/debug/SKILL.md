@@ -82,7 +82,7 @@ cat .env  # Should show one of:
 
 **Apple Container Bug:** Environment variables passed via `-e` are lost when using `-i` (interactive/piped stdin).
 
-**Workaround:** The system mounts `.env` as a file and sources it inside the container.
+**Workaround:** The system extracts only authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `.env` and mounts them for sourcing inside the container. Other env vars are not exposed.
 
 To verify env vars are reaching the container:
 ```bash
