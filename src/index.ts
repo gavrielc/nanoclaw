@@ -358,12 +358,19 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(jids, lastTimestamp);
-      lastTimestamp = newTimestamp;
+      const { messages } = getNewMessages(jids, lastTimestamp);
 
       if (messages.length > 0) logger.info({ count: messages.length }, 'New messages');
-      for (const msg of messages) await processMessage(msg);
-      saveState();
+      for (const msg of messages) {
+        try {
+          await processMessage(msg);
+        } catch (err) {
+          logger.error({ err, msg: msg.id }, 'Error processing message');
+        }
+        // Advance timestamp after each message to avoid reprocessing on retry
+        lastTimestamp = msg.timestamp;
+        saveState();
+      }
     } catch (err) {
       logger.error({ err }, 'Error in message loop');
     }
