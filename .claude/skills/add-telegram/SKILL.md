@@ -265,7 +265,7 @@ await sendMessage(data.chatJid, message);
 
 ### Step 5: Add Telegram Message Handler
 
-**CRITICAL**: Add this handler BEFORE `connectWhatsApp()` function. Do NOT store messages in the database to avoid duplicate processing:
+**CRITICAL**: Add this handler BEFORE `connectWhatsApp()` function. Build the prompt DIRECTLY from the message - do NOT use `processMessage()` or store in database:
 
 ```typescript
 // Telegram message handler
@@ -300,15 +300,27 @@ telegrafBot.on('message', async (ctx) => {
     // Store chat metadata (but NOT the message itself - we process immediately)
     storeChatMetadata(telegramJid, timestamp);
 
-    // Process immediately (don't store in DB to avoid duplicate processing by message loop)
-    await processMessage({
-      id: `telegram-${ctx.message.message_id}`,
-      chat_jid: telegramJid,
-      sender: senderId,
-      sender_name: senderName,
-      content: ctx.message.text,
-      timestamp
-    });
+    // Build prompt directly for Telegram (don't use database since we don't store messages)
+    const group = registeredGroups[telegramJid];
+    const escapeXml = (s: string) => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+    const prompt = `<messages>\n<message sender="${escapeXml(senderName)}" time="${timestamp}">${escapeXml(ctx.message.text)}</message>\n</messages>`;
+
+    logger.info({ group: group.name, senderName }, 'Processing Telegram message');
+
+    await setTyping(telegramJid, true);
+    const response = await runAgent(group, prompt, telegramJid);
+    await setTyping(telegramJid, false);
+
+    if (response) {
+      lastAgentTimestamp[telegramJid] = timestamp;
+      // No prefix for Telegram (bot sends as itself)
+      await sendMessage(telegramJid, response);
+    }
   } catch (error) {
     logger.error({ error, chatId }, 'Error processing Telegram message');
     await telegrafBot.telegram.sendMessage(chatId, 'Sorry, something went wrong.');
@@ -316,7 +328,16 @@ telegrafBot.on('message', async (ctx) => {
 });
 ```
 
-**Why we don't store in DB**: Telegram messages are processed immediately via the event handler. If we also store them in the database, the message loop (`startMessageLoop`) will process them again, causing duplicate responses.
+**Why we build prompt directly**:
+1. We don't store Telegram messages in the database (to avoid duplicates with message loop)
+2. If we call `processMessage()`, it uses `getMessagesSince()` which queries the database
+3. Empty database = empty prompt = agent says "No new messages to respond to"
+4. Solution: Build the XML prompt directly from the current message
+
+**Why we don't use processMessage()**:
+- `processMessage()` expects messages to be in the database
+- For Telegram, we process immediately without database storage
+- We build the prompt manually and call `runAgent()` directly
 
 ### Step 6: Update main() Function
 
