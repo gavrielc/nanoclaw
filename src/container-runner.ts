@@ -125,8 +125,16 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  const messagesDir = path.join(groupIpcDir, 'messages');
+  const tasksDir = path.join(groupIpcDir, 'tasks');
+  fs.mkdirSync(messagesDir, { recursive: true });
+  fs.mkdirSync(tasksDir, { recursive: true });
+  // Ensure container's node user (UID 1000) can write to IPC directories on Linux
+  // On macOS/Docker Desktop this is handled by file sharing, but on native Linux
+  // the container user needs explicit write permission to the mounted volume
+  fs.chmodSync(groupIpcDir, 0o777);
+  fs.chmodSync(messagesDir, 0o777);
+  fs.chmodSync(tasksDir, 0o777);
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
