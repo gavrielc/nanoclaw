@@ -1,7 +1,7 @@
-# NanoClaw: TypeScript to Babashka Migration Plan
+# NanoClaw: TypeScript to Clojure Migration Plan
 
 **Date**: 2026-02-02
-**Updated**: 2026-02-02 (Telegram replaces WhatsApp)
+**Updated**: 2026-02-02 (Telegram replaces WhatsApp, JVM Clojure replaces Babashka)
 **Author**: Claude
 **Status**: Planning Phase
 
@@ -23,37 +23,66 @@
 
 ## Executive Summary
 
-This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to Babashka (Clojure), replacing WhatsApp with Telegram as the messaging platform.
+This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **JVM Clojure**, replacing WhatsApp with Telegram as the messaging platform.
 
-**Key Decision**: Replacing WhatsApp with Telegram dramatically simplifies the migration. Telegram's HTTP-based Bot API can be called directly from Babashka using the built-in `babashka.http-client` - **no hybrid architecture or external runtimes needed**.
+**Key Decisions**:
+1. **Telegram** replaces WhatsApp - Simple HTTP API, no complex WebSocket protocols
+2. **JVM Clojure** instead of Babashka - Enables **nREPL for self-modification** and full library access
+
+### Why JVM Clojure over Babashka?
+
+| Aspect | Babashka | JVM Clojure |
+|--------|----------|-------------|
+| Startup time | ~10ms | ~3-5s (irrelevant for long-running service) |
+| **nREPL** | Limited | **Full support - agent can modify running system** |
+| **clojure-mcp** | Incompatible | **Native support - agent can add tools to itself** |
+| Library access | Pods only | Full Maven/Clojars ecosystem |
+| SQLite | Pod | Standard JDBC (next.jdbc) |
+| core.async | No | Yes |
+| Self-modification | No | **Yes - bot can evolve its own code** |
 
 ### Key Findings
 
 | Component | Migration Path | Difficulty |
 |-----------|---------------|------------|
-| Telegram Client | babashka.http-client (built-in) | **Low** |
-| SQLite Database | pod-babashka-go-sqlite3 | Low |
-| Container Runner | babashka.process | Low |
-| Task Scheduler | at-at + manual cron parsing | Medium |
-| IPC Watcher | pod-babashka-fswatcher | Low |
-| JSON Handling | cheshire.core (built-in) | Low |
+| Telegram Client | clj-http or hato | **Low** |
+| SQLite Database | next.jdbc + SQLite JDBC | Low |
+| Container Runner | clojure.java.shell / ProcessBuilder | Low |
+| Task Scheduler | chime or quartzite | Low |
+| IPC Watcher | hawk or directory-watcher | Low |
+| JSON Handling | cheshire | Low |
 | Schema Validation | malli | Low |
-| MCP Server (container) | clojure-mcp or modex | Medium |
+| **MCP Server** | **clojure-mcp** | **Low** |
+| **nREPL** | **nrepl + cider-nrepl** | **Low** |
 
-### Architecture: Pure Babashka
+### Architecture: Self-Modifying Clojure System
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    BABASHKA (Single Process)                         │
+│                    JVM CLOJURE (Long-running Process)                │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Telegram Bot API ←──HTTP──→ babashka.http-client                   │
-│  SQLite           ←─────────→ pod-babashka-go-sqlite3               │
-│  Containers       ←─────────→ babashka.process                      │
-│  File Watching    ←─────────→ pod-babashka-fswatcher                │
+│  Telegram Bot API ←──HTTP──→ clj-http                               │
+│  SQLite           ←──JDBC──→ next.jdbc                              │
+│  Containers       ←─────────→ ProcessBuilder                        │
+│  File Watching    ←─────────→ hawk                                  │
+│  Scheduling       ←─────────→ chime                                 │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  nREPL Server (port 7888)                                    │   │
+│  │  • Hot code reload                                           │   │
+│  │  • Agent can eval code to modify running system              │   │
+│  │  • CIDER/Calva integration for development                   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  clojure-mcp Server                                          │   │
+│  │  • Agent can register new tools at runtime                   │   │
+│  │  • Self-extending capabilities                               │   │
+│  └─────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**No Node.js, no nbb, no hybrid architecture required.**
+**The bot can modify its own source code and behavior via nREPL.**
 
 ---
 
@@ -88,32 +117,40 @@ This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to Bab
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Target (Babashka + Telegram)
+### Target (JVM Clojure + Telegram + nREPL)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        HOST (macOS)                                  │
-│                    (Single Babashka Process)                        │
+│                    (JVM Clojure Process)                            │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌──────────────┐    ┌────────────────────┐    ┌───────────────┐   │
 │  │  Telegram    │    │   SQLite Database  │    │  Registered   │   │
-│  │  (HTTP API)  │───▶│   (go-sqlite3 pod) │    │  Groups EDN   │   │
+│  │  (clj-http)  │───▶│   (next.jdbc)      │    │  Groups EDN   │   │
 │  └──────────────┘    └─────────┬──────────┘    └───────────────┘   │
 │                                │                                    │
 │  ┌──────────────────┐  ┌───────┴───────┐  ┌───────────────────┐   │
 │  │  Long Polling    │  │  Scheduler    │  │  IPC Watcher      │   │
-│  │  (30s timeout)   │  │  (at-at pool) │  │  (fswatcher pod)  │   │
+│  │  (30s timeout)   │  │  (chime)      │  │  (hawk)           │   │
 │  └────────┬─────────┘  └───────┬───────┘  └─────────┬─────────┘   │
 │           │                    │                    │              │
 │           └────────────────────┴────────────────────┘              │
 │                                │                                    │
+│  ┌────────────────────────────┴────────────────────────────────┐   │
+│  │  nREPL Server (:7888)  +  clojure-mcp                       │   │
+│  │  • Live code modification                                    │   │
+│  │  • Agent can add/modify tools                                │   │
+│  │  • Self-evolving system                                      │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                │                                    │
 │                       Container Runner                              │
-│                    (babashka.process)                               │
+│                    (ProcessBuilder)                                 │
 ├─────────────────────────────────────────────────────────────────────┤
 │                  APPLE CONTAINER (Linux VM)                         │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Agent Runner (Node.js) + Claude Agent SDK + IPC MCP Server        │
+│  Agent connects to host nREPL → can modify NanoClaw at runtime     │
+│  Agent Runner + Claude Agent SDK + clojure-mcp                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -563,34 +600,36 @@ function createIpcMcp(ctx: IpcMcpContext): McpServer
 
 ## Library Mapping
 
-### Direct Replacements (Available in Babashka)
+### Direct Replacements (JVM Clojure)
 
-| TypeScript | Babashka | Notes |
-|------------|----------|-------|
-| `better-sqlite3` | `pod-babashka-go-sqlite3` | Babashka pod, synchronous API |
-| `zod` | `malli` | Built-in to bb, more powerful |
-| `pino` | `taoensso.timbre` | Built-in logging |
-| `fs` | `babashka.fs` | Built-in, cross-platform |
-| `path` | `babashka.fs` | Path operations included |
-| `child_process` | `babashka.process` | Built-in, excellent API |
-| JSON parsing | `cheshire.core` | Built-in |
+| TypeScript | Clojure | Notes |
+|------------|---------|-------|
+| `better-sqlite3` | `next.jdbc` + SQLite JDBC | Standard JDBC, mature ecosystem |
+| `zod` | `malli` | Data-driven schemas, excellent |
+| `pino` | `taoensso.timbre` | Structured logging |
+| `fs` | `clojure.java.io` + `me.raynes/fs` | Full filesystem access |
+| `path` | `clojure.java.io` | Path operations |
+| `child_process` | `clojure.java.shell` / `ProcessBuilder` | Full control |
+| JSON parsing | `cheshire` | Fast, battle-tested |
+| `cron-parser` | `chime` or `quartzite` | Full cron support |
 
-### Requires Additional Work
+### New Capabilities (JVM Clojure Only)
 
-| TypeScript | Babashka Approach | Complexity |
-|------------|-------------------|------------|
-| `@whiskeysockets/baileys` | **REPLACED**: Telegram Bot API via `babashka.http-client` | **Low** |
-| `cron-parser` | Manual impl OR `at-at` for scheduling | Medium |
-| `@anthropic-ai/claude-agent-sdk` | Keep as subprocess (Node.js) | Medium |
-| MCP Server creation | `modex`, `mcp-clj`, or manual impl | Medium |
+| Capability | Library | Notes |
+|------------|---------|-------|
+| **nREPL Server** | `nrepl` + `cider-nrepl` | **Agent can modify running system** |
+| **MCP Server** | `clojure-mcp` | **Agent can add tools to itself** |
+| Async channels | `core.async` | CSP-style concurrency |
+| File watching | `hawk` or `nextjournal/beholder` | Native filesystem events |
+| HTTP client | `clj-http` or `hato` | Full-featured HTTP |
+| HTTP server | `ring` + `http-kit` | For webhooks if needed later |
 
-### Telegram Bot API (NEW)
-
-The Telegram Bot API is HTTP/JSON-based and works perfectly with Babashka's built-in HTTP client.
+### Telegram Bot API (clj-http)
 
 ```clojure
-(require '[babashka.http-client :as http]
-         '[cheshire.core :as json])
+(ns nanoclaw.telegram
+  (:require [clj-http.client :as http]
+            [cheshire.core :as json]))
 
 (def token (System/getenv "TELEGRAM_BOT_TOKEN"))
 (def base-url (str "https://api.telegram.org/bot" token))
@@ -598,173 +637,304 @@ The Telegram Bot API is HTTP/JSON-based and works perfectly with Babashka's buil
 ;; Send a message
 (defn send-message [chat-id text]
   (-> (http/post (str base-url "/sendMessage")
-        {:headers {"Content-Type" "application/json"}
-         :body (json/generate-string {:chat_id chat-id :text text})})
-      :body
-      (json/parse-string true)))
+        {:content-type :json
+         :body (json/generate-string {:chat_id chat-id :text text})
+         :as :json})
+      :body))
 
 ;; Long polling for updates (30 second timeout)
 (defn get-updates [offset]
   (-> (http/get (str base-url "/getUpdates")
-        {:query-params {:offset offset :timeout 30}})
-      :body
-      (json/parse-string true)))
+        {:query-params (cond-> {:timeout 30}
+                         offset (assoc :offset offset))
+         :socket-timeout 35000
+         :as :json})
+      :body))
 
 ;; Typing indicator
 (defn send-typing [chat-id]
   (http/post (str base-url "/sendChatAction")
-    {:headers {"Content-Type" "application/json"}
+    {:content-type :json
      :body (json/generate-string {:chat_id chat-id :action "typing"})}))
 
 ;; Message reactions (Bot API 7.0+)
 (defn set-reaction [chat-id message-id emoji]
   (http/post (str base-url "/setMessageReaction")
-    {:headers {"Content-Type" "application/json"}
+    {:content-type :json
      :body (json/generate-string
              {:chat_id chat-id
               :message_id message-id
               :reaction [{:type "emoji" :emoji emoji}]})}))
 ```
 
-**Features supported via direct HTTP**:
+### nREPL + Self-Modification (KEY FEATURE)
+
+The agent can modify the running system via nREPL:
+
+```clojure
+(ns nanoclaw.repl
+  (:require [nrepl.server :as nrepl]
+            [cider.nrepl :refer [cider-nrepl-handler]]))
+
+(defonce nrepl-server (atom nil))
+
+(defn start-nrepl!
+  "Start nREPL server. Agent can connect and modify running system."
+  [port]
+  (reset! nrepl-server
+    (nrepl/start-server
+      :port port
+      :handler cider-nrepl-handler))
+  (println "nREPL server started on port" port))
+
+;; Agent can now:
+;; 1. Connect to nREPL from container
+;; 2. Evaluate (defn new-handler ...) to add new message handlers
+;; 3. Evaluate (alter-var-root #'config ...) to change config
+;; 4. Hot-reload any namespace with (require ... :reload)
+```
+
+### clojure-mcp Integration (SELF-EXTENDING)
+
+The agent can add new tools to itself at runtime:
+
+```clojure
+(ns nanoclaw.mcp
+  (:require [clojure-mcp.core :as mcp]))
+
+(defonce mcp-server (atom nil))
+
+(defn register-tool!
+  "Agent can call this via nREPL to add new tools."
+  [tool-name handler schema]
+  (mcp/register-tool! @mcp-server
+    {:name tool-name
+     :handler handler
+     :input-schema schema}))
+
+;; Example: Agent adds a new tool to itself
+;; (register-tool! "search_codebase"
+;;   (fn [{:keys [query]}]
+;;     (grep-codebase query))
+;;   {:type "object"
+;;    :properties {:query {:type "string"}}})
+```
+
+**Features supported**:
 - ✅ Send/receive messages
-- ✅ Group chat support (chat_id works for groups)
-- ✅ Typing indicators (`sendChatAction`)
-- ✅ Message reactions (`setMessageReaction`)
-- ✅ Long polling (no webhooks needed)
+- ✅ Group chat support
+- ✅ Typing indicators
+- ✅ Message reactions
+- ✅ Long polling
+- ✅ **nREPL self-modification**
+- ✅ **Runtime tool registration**
 
 ### Library Details
 
-#### SQLite: pod-babashka-go-sqlite3
+#### SQLite: next.jdbc + SQLite JDBC
 
 ```clojure
-(require '[babashka.pods :as pods])
-(pods/load-pod 'org.babashka/go-sqlite3 "0.3.13")
-(require '[pod.babashka.go-sqlite3 :as sqlite])
+(ns nanoclaw.db
+  (:require [next.jdbc :as jdbc]
+            [next.jdbc.sql :as sql]
+            [next.jdbc.result-set :as rs]))
+
+(def db-spec {:dbtype "sqlite" :dbname "data/nanoclaw.db"})
+(def ds (jdbc/get-datasource db-spec))
 
 ;; Execute DDL
-(sqlite/execute! db-path ["CREATE TABLE IF NOT EXISTS chats ..."])
+(jdbc/execute! ds ["CREATE TABLE IF NOT EXISTS chats (
+                     jid TEXT PRIMARY KEY,
+                     name TEXT,
+                     last_message_time TEXT)"])
 
 ;; Query
-(sqlite/query db-path ["SELECT * FROM messages WHERE chat_jid = ?" jid])
+(jdbc/execute! ds ["SELECT * FROM messages WHERE chat_jid = ?" jid]
+  {:builder-fn rs/as-unqualified-kebab-maps})
 
 ;; Insert
-(sqlite/execute! db-path ["INSERT INTO messages VALUES (?, ?, ?)" id jid content])
+(sql/insert! ds :messages {:id id :chat-jid jid :content content})
+
+;; Transaction
+(jdbc/with-transaction [tx ds]
+  (sql/insert! tx :messages msg1)
+  (sql/insert! tx :messages msg2))
 ```
 
-#### Process Management: babashka.process
+#### Process Management: ProcessBuilder
 
 ```clojure
-(require '[babashka.process :refer [process shell]]
-         '[clojure.java.io :as io])
+(ns nanoclaw.container
+  (:require [clojure.java.io :as io]
+            [cheshire.core :as json]
+            [taoensso.timbre :as log])
+  (:import [java.util.concurrent TimeUnit]))
 
-;; Spawn container with stdin/stdout pipes
-(def container
-  (process ["container" "run" "-i" "--rm" "-v" mount image]
-           {:in :pipe :out :pipe :err :inherit}))
+(defn run-container
+  "Spawn container with stdin/stdout pipes."
+  [args input timeout-ms]
+  (let [pb (ProcessBuilder. (into-array String args))
+        _ (.redirectErrorStream pb false)
+        process (.start pb)]
 
-;; Write JSON to stdin
-(let [stdin (io/writer (:in container))]
-  (.write stdin (cheshire/generate-string input))
-  (.close stdin))
+    ;; Write JSON to stdin
+    (with-open [w (io/writer (.getOutputStream process))]
+      (.write w (json/generate-string input))
+      (.flush w))
+    (.close (.getOutputStream process))
 
-;; Read JSON from stdout
-(with-open [rdr (io/reader (:out container))]
-  (-> (slurp rdr)
-      (extract-json-between-markers)
-      (cheshire/parse-string true)))
-
-;; Wait with timeout
-(deref container timeout-ms :timeout)
+    ;; Wait with timeout
+    (let [completed? (.waitFor process timeout-ms TimeUnit/MILLISECONDS)]
+      (if completed?
+        (let [stdout (slurp (.getInputStream process))
+              exit-code (.exitValue process)]
+          {:status (if (zero? exit-code) "success" "error")
+           :stdout stdout
+           :exit-code exit-code})
+        (do
+          (.destroyForcibly process)
+          {:status "error" :error "Container timed out"})))))
 ```
 
-#### File System Watching: pod-babashka-fswatcher
+#### File System Watching: hawk
 
 ```clojure
-(require '[babashka.pods :as pods])
-(pods/load-pod 'org.babashka/fswatcher "0.0.5")
-(require '[pod.babashka.fswatcher :as fw])
+(ns nanoclaw.ipc
+  (:require [hawk.core :as hawk]
+            [clojure.string :as str]
+            [taoensso.timbre :as log]))
 
-(fw/watch ipc-dir
-  (fn [{:keys [type path]}]
-    (when (and (= type :create) (str/ends-with? path ".json"))
-      (process-ipc-file path)))
-  {:recursive true})
+(defonce watcher (atom nil))
+
+(defn start-watching! [ipc-dir handler]
+  (reset! watcher
+    (hawk/watch! [{:paths [ipc-dir]
+                   :filter hawk/file?
+                   :handler (fn [ctx {:keys [kind file]}]
+                              (when (and (= kind :create)
+                                         (str/ends-with? (.getName file) ".json"))
+                                (handler file))
+                              ctx)}]))
+  (log/info "IPC watcher started on" ipc-dir))
+
+(defn stop-watching! []
+  (when @watcher
+    (hawk/stop! @watcher)
+    (reset! watcher nil)))
 ```
 
 #### Validation: Malli
 
 ```clojure
-(require '[malli.core :as m]
-         '[malli.error :as me])
+(ns nanoclaw.schemas
+  (:require [malli.core :as m]
+            [malli.error :as me]
+            [malli.transform :as mt]))
 
 (def Message
   [:map
    [:id :string]
-   [:content :string]
-   [:timestamp :string]])
+   [:chat-id :int]
+   [:from-name :string]
+   [:text :string]
+   [:timestamp :int]])
 
 (m/validate Message data)  ; => true/false
 (me/humanize (m/explain Message bad-data))  ; => error messages
+
+;; Coercion for API responses
+(def coerce-message
+  (m/coercer Message mt/json-transformer))
+
+(coerce-message {"id" "123" "chat-id" "456"})
+;; => {:id "123" :chat-id 456}
 ```
 
-#### Scheduling: at-at + manual cron
+#### Scheduling: chime (Full cron support)
 
 ```clojure
-(require '[overtone.at-at :as at])
-
-(def scheduler-pool (at/mk-pool))
+(ns nanoclaw.scheduler
+  (:require [chime.core :as chime]
+            [chime.core-async :refer [chime-ch]]
+            [clojure.core.async :as a]
+            [tick.core :as t])
+  (:import [java.time Instant Duration]))
 
 ;; Run every 60 seconds
-(at/every 60000 check-due-tasks scheduler-pool)
+(def scheduler
+  (chime/chime-at
+    (chime/periodic-seq (Instant/now) (Duration/ofSeconds 60))
+    (fn [time]
+      (check-due-tasks time))))
 
-;; Run once at specific time
-(at/at (-> target-time .toInstant .toEpochMilli)
-       run-task
-       scheduler-pool)
+;; Cron-style scheduling with tick
+(defn next-cron-time
+  "Parse cron and get next execution time."
+  [cron-expr]
+  ;; Use tick for date-time arithmetic
+  (let [[min hour dom month dow] (str/split cron-expr #"\s+")]
+    ;; ... implementation using tick
+    ))
+
+;; One-time scheduled task
+(chime/chime-at
+  [(-> (Instant/now) (.plusSeconds 3600))]  ; 1 hour from now
+  (fn [_] (run-task task-id)))
+
+;; Stop scheduler
+(.close scheduler)
 ```
 
-For cron parsing, a simple implementation:
+#### core.async (Concurrency)
 
 ```clojure
-(defn parse-cron [expr]
-  ;; "0 9 * * 1" -> {:minute 0 :hour 9 :day-of-week 1}
-  (let [[min hour dom month dow] (str/split expr #"\s+")]
-    {:minute (parse-field min)
-     :hour (parse-field hour)
-     :day-of-month (parse-field dom)
-     :month (parse-field month)
-     :day-of-week (parse-field dow)}))
+(ns nanoclaw.core
+  (:require [clojure.core.async :as a :refer [<! >! go go-loop chan]]))
 
-(defn next-cron-time [cron-map from-time]
-  ;; Calculate next execution time using java.time
-  ...)
+;; Message processing pipeline
+(def message-chan (chan 100))
+
+(go-loop []
+  (when-let [msg (<! message-chan)]
+    (process-message msg)
+    (recur)))
+
+;; Telegram polling in separate go block
+(go
+  (telegram/start-polling
+    (fn [msg]
+      (a/>!! message-chan msg))))
 ```
 
 ---
 
 ## Migration Strategy
 
-### Recommended Approach: Pure Babashka
+### Recommended Approach: JVM Clojure with nREPL
 
-With Telegram replacing WhatsApp, we can use a **pure Babashka architecture**. No hybrid systems, no nbb, no subprocess bridges needed.
+With JVM Clojure, we get a **self-modifying system** where the agent can evolve its own behavior via nREPL.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        HOST (macOS)                                  │
-│                    (Single Babashka Process)                        │
+│                    (JVM Clojure Process)                            │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │           BABASHKA (bb src/nanoclaw/core.clj)                 │  │
+│  │           CLOJURE (clj -M -m nanoclaw.core)                   │  │
 │  │                                                                │  │
-│  │  • Telegram Bot API (babashka.http-client)                    │  │
-│  │  • SQLite database (pod-babashka-go-sqlite3)                  │  │
-│  │  • Task scheduling (at-at)                                     │  │
-│  │  • Container spawning (babashka.process)                       │  │
-│  │  • IPC file watching (pod-babashka-fswatcher)                 │  │
+│  │  • Telegram Bot API (clj-http)                                │  │
+│  │  • SQLite database (next.jdbc)                                │  │
+│  │  • Task scheduling (chime)                                     │  │
+│  │  • Container spawning (ProcessBuilder)                         │  │
+│  │  • IPC file watching (hawk)                                   │  │
 │  │  • Mount security validation                                   │  │
-│  │  • State management                                           │  │
+│  │  • State management (atoms)                                   │  │
+│  │                                                                │  │
+│  │  ┌─────────────────────────────────────────────────────────┐  │  │
+│  │  │  nREPL (:7888) - Agent can modify running system        │  │  │
+│  │  │  clojure-mcp   - Agent can add tools to itself          │  │  │
+│  │  └─────────────────────────────────────────────────────────┘  │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -774,22 +944,24 @@ With Telegram replacing WhatsApp, we can use a **pure Babashka architecture**. N
 
 #### Phase 1: Core Infrastructure (Week 1)
 
-**Goal**: Set up Babashka project structure and migrate stateless components.
+**Goal**: Set up Clojure project structure and migrate stateless components.
 
 1. **Project Setup**
    ```
    nanoclaw/
-   ├── bb.edn                 # Babashka config, pods, deps
+   ├── deps.edn              # Clojure dependencies
    ├── src/
    │   └── nanoclaw/
    │       ├── core.clj       # Main entry point
    │       ├── config.clj     # Configuration
    │       ├── schemas.clj    # Malli schemas
-   │       ├── db.clj         # SQLite operations
+   │       ├── db.clj         # SQLite operations (next.jdbc)
    │       ├── telegram.clj   # Telegram Bot API client
    │       ├── container.clj  # Container runner
-   │       ├── scheduler.clj  # Task scheduler
-   │       ├── ipc.clj        # IPC watcher
+   │       ├── scheduler.clj  # Task scheduler (chime)
+   │       ├── ipc.clj        # IPC watcher (hawk)
+   │       ├── repl.clj       # nREPL server
+   │       ├── mcp.clj        # clojure-mcp integration
    │       ├── mount_security.clj
    │       └── utils.clj
    └── test/
@@ -799,68 +971,83 @@ With Telegram replacing WhatsApp, we can use a **pure Babashka architecture**. N
    - `config.ts` → `config.clj`
    - `types.ts` → `schemas.clj` (Malli)
    - `utils.ts` → `utils.clj`
-   - `db.ts` → `db.clj` (pod-babashka-go-sqlite3)
+   - `db.ts` → `db.clj` (next.jdbc + SQLite JDBC)
    - `mount-security.ts` → `mount_security.clj`
 
 **Deliverable**: Database operations working, all schemas defined.
 
-#### Phase 2: Telegram Client (Week 2)
+#### Phase 2: Telegram Client + nREPL (Week 2)
 
-**Goal**: Implement Telegram Bot API client.
+**Goal**: Implement Telegram Bot API client and nREPL server.
 
 1. **Create** `telegram.clj`:
    ```clojure
    (ns nanoclaw.telegram
-     (:require [babashka.http-client :as http]
-               [cheshire.core :as json]
-               [nanoclaw.config :as config]))
+     (:require [clj-http.client :as http]
+               [cheshire.core :as json]))
 
-   ;; Core API functions
    (defn send-message [chat-id text] ...)
    (defn get-updates [offset] ...)
    (defn send-typing [chat-id] ...)
-
-   ;; Long-polling loop
    (defn start-polling [handler] ...)
    ```
 
-2. **Test**: Send/receive messages, typing indicators.
+2. **Create** `repl.clj`:
+   ```clojure
+   (ns nanoclaw.repl
+     (:require [nrepl.server :as nrepl]))
 
-**Deliverable**: Can send/receive Telegram messages.
+   (defn start-nrepl! [port] ...)
+   ```
 
-#### Phase 3: Container Management (Week 3)
+3. **Test**: Send/receive messages, connect via CIDER/Calva.
 
-**Goal**: Migrate container spawning and IPC.
+**Deliverable**: Telegram working, nREPL accessible.
+
+#### Phase 3: Container Management + clojure-mcp (Week 3)
+
+**Goal**: Migrate container spawning and set up clojure-mcp.
 
 1. **Migrate**:
-   - `container-runner.ts` → `container.clj`
-   - IPC watcher → `ipc.clj` (using fswatcher pod)
+   - `container-runner.ts` → `container.clj` (ProcessBuilder)
+   - IPC watcher → `ipc.clj` (hawk)
 
-2. **Test**: Spawn containers, handle stdin/stdout, parse output.
+2. **Add** `mcp.clj`:
+   ```clojure
+   (ns nanoclaw.mcp
+     (:require [clojure-mcp.core :as mcp]))
 
-**Deliverable**: Can run agent containers from Babashka.
+   (defn start-mcp-server! [] ...)
+   (defn register-tool! [name handler schema] ...)
+   ```
+
+3. **Test**: Spawn containers, register MCP tools dynamically.
+
+**Deliverable**: Containers running, MCP tools registerable at runtime.
 
 #### Phase 4: Scheduler & Main Loop (Week 4)
 
 **Goal**: Complete the migration.
 
 1. **Migrate**:
-   - `task-scheduler.ts` → `scheduler.clj`
+   - `task-scheduler.ts` → `scheduler.clj` (chime)
    - `index.ts` main loop → `core.clj`
 
 2. **Integration testing**: End-to-end message flow.
 
-**Deliverable**: Fully functional Babashka-based NanoClaw.
+3. **Self-modification test**: Agent modifies its own behavior via nREPL.
 
-#### Phase 5: Container Agent (Optional)
+**Deliverable**: Fully functional, self-modifying NanoClaw.
 
-**Goal**: Migrate container-side code.
+#### Phase 5: Agent Self-Evolution (Week 5)
 
-**Note**: This is optional. The container agent can remain in TypeScript since it runs in isolation and the Claude Agent SDK is Node.js-based.
+**Goal**: Enable agent to modify host system from container.
 
-If migrating:
-1. Use nbb inside container for ClojureScript
-2. Implement MCP server using `modex` or `mcp-clj`
+1. **Container nREPL client**: Agent connects to host nREPL
+2. **Safe eval boundaries**: Define what agent can/cannot modify
+3. **Persistence**: Agent-created modifications persist across restarts
+
+**Deliverable**: Agent can evolve NanoClaw's capabilities.
 
 ---
 
@@ -870,7 +1057,7 @@ If migrating:
 
 **Current**: `@whiskeysockets/baileys` - Pure JavaScript WebSocket implementation for WhatsApp.
 
-**Migration**: Telegram Bot API via `babashka.http-client` - **Direct HTTP calls, no libraries needed.**
+**Migration**: Telegram Bot API via `clj-http` - **Direct HTTP calls, mature Clojure library.**
 
 **Why Telegram is easier**:
 - HTTP/JSON API (no WebSocket protocol to implement)
@@ -881,7 +1068,7 @@ If migrating:
 ```clojure
 ;; telegram.clj - Full implementation
 (ns nanoclaw.telegram
-  (:require [babashka.http-client :as http]
+  (:require [clj-http.client :as http]
             [cheshire.core :as json]
             [taoensso.timbre :as log]))
 
@@ -889,11 +1076,12 @@ If migrating:
 (def base-url (str "https://api.telegram.org/bot" token))
 
 (defn api-call [method params]
-  (let [response (http/post (str base-url "/" method)
-                   {:headers {"Content-Type" "application/json"}
-                    :body (json/generate-string params)
-                    :throw false})]
-    (-> response :body (json/parse-string true))))
+  (-> (http/post (str base-url "/" method)
+        {:content-type :json
+         :body (json/generate-string params)
+         :as :json
+         :throw-exceptions false})
+      :body))
 
 (defn send-message [chat-id text]
   (api-call "sendMessage" {:chat_id chat-id :text text}))
@@ -904,12 +1092,13 @@ If migrating:
 (defn get-updates
   "Long polling with 30 second timeout"
   [offset]
-  (let [response (http/get (str base-url "/getUpdates")
-                   {:query-params (cond-> {:timeout 30}
-                                    offset (assoc :offset offset))
-                    :timeout 35000  ; slightly longer than API timeout
-                    :throw false})]
-    (-> response :body (json/parse-string true))))
+  (-> (http/get (str base-url "/getUpdates")
+        {:query-params (cond-> {:timeout 30}
+                         offset (assoc :offset offset))
+         :socket-timeout 35000
+         :as :json
+         :throw-exceptions false})
+      :body))
 
 (defn extract-message [update]
   (when-let [msg (:message update)]
@@ -936,7 +1125,7 @@ If migrating:
             (try
               (handler msg)
               (catch Exception e
-                (log/error "Error handling message" {:error (.getMessage e)})))))
+                (log/error e "Error handling message")))))
         (recur (when (seq result)
                  (inc (:update_id (last result)))))))))
 ```
@@ -947,9 +1136,94 @@ If migrating:
 |--------|-------------------|------------------|
 | Protocol | WebSocket + custom | HTTP/JSON |
 | Auth | QR code scan | Bot token (string) |
-| Library needed | Yes (baileys) | No (just HTTP) |
-| Babashka support | None | Native |
+| Library needed | Yes (baileys) | clj-http (standard) |
+| Clojure support | None | Native |
 | Complexity | High | Low |
+
+### Component: nREPL + Self-Modification (NEW - KEY FEATURE)
+
+**Purpose**: Allow the agent to modify the running NanoClaw system.
+
+```clojure
+;; repl.clj
+(ns nanoclaw.repl
+  (:require [nrepl.server :as nrepl]
+            [cider.nrepl :refer [cider-nrepl-handler]]
+            [taoensso.timbre :as log]))
+
+(defonce server (atom nil))
+
+(defn start!
+  "Start nREPL server on specified port."
+  [port]
+  (when-not @server
+    (reset! server
+      (nrepl/start-server
+        :port port
+        :handler cider-nrepl-handler))
+    (log/info "nREPL server started on port" port)))
+
+(defn stop! []
+  (when @server
+    (nrepl/stop-server @server)
+    (reset! server nil)
+    (log/info "nREPL server stopped")))
+```
+
+**What the agent can do via nREPL**:
+1. **Add new message handlers**: `(defn handle-weather [msg] ...)`
+2. **Modify configuration**: `(swap! config assoc :trigger "@NewBot")`
+3. **Register new MCP tools**: `(mcp/register-tool! "weather" ...)`
+4. **Hot-reload namespaces**: `(require 'nanoclaw.telegram :reload)`
+5. **Inspect state**: `@registered-groups`, `@sessions`
+
+### Component: clojure-mcp (NEW - SELF-EXTENDING)
+
+**Purpose**: Agent can add new tools to itself at runtime.
+
+```clojure
+;; mcp.clj
+(ns nanoclaw.mcp
+  (:require [clojure-mcp.core :as mcp]
+            [taoensso.timbre :as log]))
+
+(defonce server (atom nil))
+(defonce tools (atom {}))
+
+(defn register-tool!
+  "Register a new MCP tool. Can be called by agent via nREPL."
+  [tool-name description handler input-schema]
+  (swap! tools assoc tool-name
+    {:name tool-name
+     :description description
+     :handler handler
+     :inputSchema input-schema})
+  (log/info "Registered MCP tool:" tool-name))
+
+(defn start! []
+  ;; Initialize with base tools
+  (register-tool! "send_message"
+    "Send a Telegram message"
+    (fn [{:keys [chat_id text]}]
+      (telegram/send-message chat_id text))
+    {:type "object"
+     :properties {:chat_id {:type "integer"}
+                  :text {:type "string"}}
+     :required ["chat_id" "text"]})
+
+  ;; Start MCP server
+  (reset! server (mcp/start-server {:tools @tools}))
+  (log/info "MCP server started"))
+
+;; Example: Agent adds a new tool to itself via nREPL
+;; (mcp/register-tool! "search_codebase"
+;;   "Search the codebase for a pattern"
+;;   (fn [{:keys [pattern]}]
+;;     (shell/sh "grep" "-r" pattern "src/"))
+;;   {:type "object"
+;;    :properties {:pattern {:type "string"}}
+;;    :required ["pattern"]})
+```
 
 ### Component: Database (LOW RISK)
 
@@ -1154,37 +1428,61 @@ If migrating:
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Claude Agent SDK changes | Container agent breaks | Keep container in TypeScript |
+| Agent self-modification abuse | System instability | Sandboxed eval, audit logging |
 
 ### Medium Risk
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Cron parsing edge cases | Missed scheduled tasks | Port comprehensive tests |
-| Process management complexity | Orphaned processes | Proper cleanup, process groups |
-| State serialization differences | Data corruption | Version state files, migration |
+| nREPL security exposure | Unauthorized access | Bind to localhost only, auth tokens |
+| JVM memory usage | Higher than Node.js | Tune JVM heap, monitor usage |
 | Telegram API rate limits | Messages blocked | Implement backoff, queue messages |
+| Process management complexity | Orphaned processes | Proper cleanup, process groups |
 
 ### Low Risk
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Telegram API connectivity | HTTP calls fail | Built-in retry, error handling |
-| SQLite API differences | Query failures | pod has similar API |
+| Telegram API connectivity | HTTP calls fail | clj-http retry, error handling |
+| SQLite API differences | Query failures | next.jdbc is mature, well-tested |
 | JSON parsing differences | Parse errors | cheshire handles edge cases |
-| Logging format changes | Log analysis breaks | Use structured logging |
+| JVM startup time | Slow restarts | Irrelevant for long-running service |
 
-### Eliminated Risks (WhatsApp → Telegram)
+### New Risks (Self-Modification)
 
-The following risks from the original plan are **no longer applicable**:
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Unintended code changes | System breaks | Persist changes to files, rollback |
+| Runaway modifications | Resource exhaustion | Rate limit nREPL evals |
+| Breaking changes persist | Can't restart | Separate "core" from "extensions" |
+
+### Mitigation: Safe Self-Modification
+
+```clojure
+;; Only allow modifications to specific namespaces
+(def modifiable-namespaces
+  #{'nanoclaw.extensions
+    'nanoclaw.custom-handlers
+    'nanoclaw.custom-tools})
+
+(defn safe-eval [form]
+  (let [ns-sym (first form)]
+    (when (and (= 'in-ns (first form))
+               (not (modifiable-namespaces (second form))))
+      (throw (ex-info "Cannot modify protected namespace"
+               {:namespace (second form)})))))
+```
+
+### Eliminated Risks (WhatsApp → Telegram, Babashka → JVM Clojure)
 
 | Eliminated Risk | Why |
 |-----------------|-----|
 | WhatsApp library compatibility | Telegram uses simple HTTP API |
-| Hybrid architecture complexity | Pure Babashka, single runtime |
+| Hybrid architecture complexity | Pure JVM Clojure, single runtime |
 | nbb runtime stability | Not needed |
 | WebSocket protocol issues | HTTP only |
 | QR code authentication | Bot token (string) |
+| Babashka pod limitations | Full JVM library access |
 
 ---
 
@@ -1192,91 +1490,162 @@ The following risks from the original plan are **no longer applicable**:
 
 ### Short-Term (Immediate)
 
-1. **Keep container agent in TypeScript**: The Claude Agent SDK is Node.js-native. Migrating the container code provides minimal benefit.
+1. **Use JVM Clojure**: Full library access, nREPL for self-modification, mature ecosystem.
 
-2. **Use pure Babashka**: With Telegram, no hybrid architecture needed. Single runtime, single language.
+2. **Start nREPL on startup**: Always run with nREPL server for development and agent self-modification.
 
-3. **Maintain compatibility**: Keep the same SQLite schema to allow rollback. State files can migrate from JSON to EDN.
+3. **Telegram Bot API**: Create a BotFather bot, get token, start building.
 
-4. **Start with Telegram Bot API**: Create a BotFather bot, get token, start building.
+4. **Maintain compatibility**: Keep the same SQLite schema to allow rollback.
 
 ### Medium-Term (Post-Migration)
 
-1. **Explore MCP in Clojure**: Once stable, consider migrating container MCP server to `modex` or `mcp-clj`.
+1. **Implement clojure-mcp**: Allow agent to register new tools at runtime.
 
 2. **Add property-based testing**: Use `test.check` for schema validation and state transitions.
 
-3. **Implement message queuing**: Handle Telegram rate limits gracefully with a message queue.
+3. **Implement message queuing**: Handle Telegram rate limits gracefully with core.async channels.
+
+4. **Agent persistence**: Save agent-created modifications to files for restart persistence.
 
 ### Long-Term
 
-1. **Evaluate GraalVM native-image**: Could compile Babashka scripts to native binaries for faster startup.
+1. **Self-evolving system**: Agent learns from usage patterns and optimizes its own handlers.
 
-2. **Consider sci-based plugins**: Allow users to extend NanoClaw with Clojure scripts evaluated at runtime.
+2. **Multi-platform support**: Add Discord, Slack via similar HTTP clients (agent could add these itself).
 
-3. **Multi-platform support**: Telegram's simple API makes it easy to add other platforms later (Discord, Slack) via similar HTTP clients.
+3. **Distributed agents**: Multiple containers can connect to same nREPL for coordinated evolution.
+
+4. **GraalVM native-image**: Consider for faster startup if needed (loses some dynamic capabilities).
+
+### Development Workflow
+
+```bash
+# Terminal 1: Run NanoClaw with nREPL
+clj -M -m nanoclaw.core
+
+# Terminal 2: Connect CIDER/Calva to nREPL
+# Or agent connects from container
+
+# Hot reload during development
+(require 'nanoclaw.telegram :reload)
+
+# Agent can do the same from container
+(nrepl/connect :host "host.docker.internal" :port 7888)
+```
 
 ---
 
-## Appendix A: Complete bb.edn Configuration
+## Appendix A: Complete deps.edn Configuration
 
 ```clojure
-{:paths ["src"]
- :deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        metosin/malli {:mvn/version "0.13.0"}
-        cheshire/cheshire {:mvn/version "5.12.0"}
-        com.taoensso/timbre {:mvn/version "6.3.1"}
-        overtone/at-at {:mvn/version "1.2.0"}}
- :pods {org.babashka/go-sqlite3 {:version "0.3.13"}
-        org.babashka/fswatcher {:version "0.0.5"}}
- :tasks
- {dev {:doc "Run in development mode"
-       :task (shell "bb -m nanoclaw.core")}
+{:paths ["src" "resources"]
 
-  test {:doc "Run tests"
-        :task (shell "bb test/runner.clj")}
+ :deps
+ {org.clojure/clojure          {:mvn/version "1.12.0"}
+  org.clojure/core.async       {:mvn/version "1.6.681"}
 
-  repl {:doc "Start a REPL"
-        :task (clojure "-M:repl")}}}
+  ;; HTTP
+  clj-http/clj-http            {:mvn/version "3.12.3"}
+  cheshire/cheshire            {:mvn/version "5.13.0"}
+
+  ;; Database
+  com.github.seancorfield/next.jdbc {:mvn/version "1.3.909"}
+  org.xerial/sqlite-jdbc       {:mvn/version "3.45.1.0"}
+
+  ;; Validation
+  metosin/malli                {:mvn/version "0.14.0"}
+
+  ;; Logging
+  com.taoensso/timbre          {:mvn/version "6.5.0"}
+
+  ;; Scheduling
+  jarohen/chime                {:mvn/version "0.3.3"}
+  tick/tick                    {:mvn/version "0.7.5"}
+
+  ;; File watching
+  hawk/hawk                    {:mvn/version "0.2.11"}
+
+  ;; nREPL
+  nrepl/nrepl                  {:mvn/version "1.1.1"}
+  cider/cider-nrepl            {:mvn/version "0.47.1"}
+
+  ;; MCP (check for latest clojure-mcp version)
+  ;; com.github.bhauman/clojure-mcp {:mvn/version "0.1.0"}
+  }
+
+ :aliases
+ {:dev
+  {:extra-paths ["dev"]
+   :extra-deps {djblue/portal {:mvn/version "0.55.1"}}}
+
+  :test
+  {:extra-paths ["test"]
+   :extra-deps {lambdaisland/kaocha {:mvn/version "1.88.1376"}}}
+
+  :build
+  {:deps {io.github.clojure/tools.build {:mvn/version "0.9.6"}}
+   :ns-default build}
+
+  :uberjar
+  {:main-opts ["-m" "build" "uber"]}}}
 ```
 
-**Note**: No `package.json` or Node.js dependencies needed for the host application.
+**Run commands**:
+```bash
+clj -M -m nanoclaw.core              # Run app
+clj -M:dev -m nanoclaw.core          # Run with dev tools
+clj -M:test -m kaocha.runner         # Run tests
+clj -T:build uber                     # Build uberjar
+```
 
 ## Appendix B: File Structure After Migration
 
 ```
 nanoclaw/
-├── bb.edn                          # Babashka configuration
+├── deps.edn                        # Clojure dependencies
 ├── src/
-│   └── nanoclaw/                   # Babashka (Clojure)
-│       ├── core.clj                # Main entry point
-│       ├── config.clj              # Configuration
+│   └── nanoclaw/
+│       ├── core.clj                # Main entry point + main loop
+│       ├── config.clj              # Configuration (env vars, defaults)
 │       ├── schemas.clj             # Malli schemas
-│       ├── db.clj                  # SQLite operations
+│       ├── db.clj                  # SQLite operations (next.jdbc)
 │       ├── telegram.clj            # Telegram Bot API client
-│       ├── container.clj           # Container runner
-│       ├── scheduler.clj           # Task scheduler
-│       ├── ipc.clj                 # IPC watcher
+│       ├── container.clj           # Container runner (ProcessBuilder)
+│       ├── scheduler.clj           # Task scheduler (chime)
+│       ├── ipc.clj                 # IPC watcher (hawk)
+│       ├── repl.clj                # nREPL server
+│       ├── mcp.clj                 # clojure-mcp integration
 │       ├── mount_security.clj      # Mount validation
 │       └── utils.clj               # Utilities
+├── dev/
+│   └── user.clj                    # REPL helpers, dev utilities
 ├── test/
 │   └── nanoclaw/
 │       ├── telegram_test.clj
 │       ├── db_test.clj
+│       ├── container_test.clj
 │       └── ...
+├── resources/
+│   └── logback.xml                 # Logging config (optional)
 ├── container/                      # Unchanged (TypeScript)
 │   └── agent-runner/
-├── groups/                         # Unchanged (per-group memory)
-├── data/                           # Unchanged (sessions, IPC)
-│   ├── sessions/
-│   ├── ipc/
-│   └── env/
+├── groups/                         # Per-group memory
+├── data/
+│   ├── nanoclaw.db                 # SQLite database
+│   ├── sessions/                   # Claude sessions
+│   ├── ipc/                        # IPC files
+│   └── env/                        # Environment files
 └── docs/
     └── plans/
-        └── 2026-02-02-babashka-migration-plan.md
+        └── 2026-02-02-clojure-migration-plan.md
 ```
 
-**Key difference from original plan**: No `whatsapp_bridge.cljs`, no `package.json` for host.
+**Key features**:
+- `repl.clj` - nREPL server for self-modification
+- `mcp.clj` - clojure-mcp for runtime tool registration
+- `dev/user.clj` - REPL utilities for development
+- Standard Clojure project structure with deps.edn
 
 ---
 
@@ -1285,21 +1654,80 @@ nanoclaw/
 | Phase | Duration | FTEs | Deliverables |
 |-------|----------|------|--------------|
 | Phase 1: Core Infrastructure | 1 week | 1 | Schemas, DB, config, utils |
-| Phase 2: Telegram Client | 1 week | 1 | HTTP client, long polling |
-| Phase 3: Container Management | 1 week | 1 | Container runner, IPC watcher |
+| Phase 2: Telegram + nREPL | 1 week | 1 | HTTP client, long polling, nREPL server |
+| Phase 3: Container + MCP | 1 week | 1 | Container runner, IPC watcher, clojure-mcp |
 | Phase 4: Main Loop | 1 week | 1 | Scheduler, full integration |
-| Phase 5: Container Agent (Optional) | 2 weeks | 1 | MCP server in Clojure |
+| Phase 5: Self-Evolution | 1 week | 1 | Agent can modify host via nREPL |
 
-**Total**: 4 weeks for full migration (excluding optional Phase 5)
+**Total**: 5 weeks for full migration (including self-modification capabilities)
 
-### Comparison: WhatsApp vs Telegram Timeline
+### Comparison: Migration Approaches
 
-| Approach | Estimated Time | Complexity |
-|----------|---------------|------------|
-| WhatsApp (hybrid nbb) | 6-8 weeks | High (two runtimes, IPC) |
-| Telegram (pure Babashka) | **4 weeks** | **Low (single runtime, HTTP)** |
+| Approach | Estimated Time | Complexity | Self-Modification |
+|----------|---------------|------------|-------------------|
+| WhatsApp + Babashka | 6-8 weeks | High (hybrid) | No |
+| Telegram + Babashka | 4 weeks | Low | No |
+| **Telegram + JVM Clojure** | **5 weeks** | **Low** | **Yes (nREPL)** |
 
-**Time saved**: ~50% reduction by switching to Telegram
+**Added value**: +1 week for nREPL/MCP gives self-modifying capabilities.
+
+## Appendix D: Self-Modification Examples
+
+### Example 1: Agent adds a new command handler
+
+```clojure
+;; Agent evaluates this via nREPL connection:
+(in-ns 'nanoclaw.core)
+
+(defmethod handle-command :weather
+  [{:keys [chat-id args]}]
+  (let [location (first args)
+        weather (fetch-weather location)]
+    (telegram/send-message chat-id
+      (format "Weather in %s: %s" location weather))))
+
+(log/info "Added /weather command handler")
+```
+
+### Example 2: Agent modifies its trigger pattern
+
+```clojure
+;; Agent evaluates via nREPL:
+(swap! nanoclaw.config/config
+  assoc :trigger-pattern #"(?i)^@?(claude|assistant)\b")
+
+(log/info "Updated trigger pattern")
+```
+
+### Example 3: Agent adds a new MCP tool
+
+```clojure
+;; Agent evaluates via nREPL:
+(nanoclaw.mcp/register-tool!
+  "search_messages"
+  "Search past messages in the database"
+  (fn [{:keys [query limit]}]
+    (nanoclaw.db/search-messages query (or limit 10)))
+  {:type "object"
+   :properties {:query {:type "string"}
+                :limit {:type "integer"}}
+   :required ["query"]})
+```
+
+### Example 4: Agent persists its modifications
+
+```clojure
+;; Agent saves its modifications to a file for persistence:
+(spit "src/nanoclaw/extensions.clj"
+  (pr-str
+    {:handlers @custom-handlers
+     :tools @custom-tools
+     :config-overrides @config-overrides}))
+
+;; On startup, load persisted extensions:
+(when (.exists (io/file "src/nanoclaw/extensions.clj"))
+  (load-extensions! (read-string (slurp "src/nanoclaw/extensions.clj"))))
+```
 
 ---
 
