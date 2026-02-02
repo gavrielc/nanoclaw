@@ -1,7 +1,9 @@
-# NanoClaw: TypeScript to Clojure Migration Plan
+# Tura: TypeScript to Clojure Migration Plan
+
+*Named after Futamura projections - self-application of interpreters*
 
 **Date**: 2026-02-02
-**Updated**: 2026-02-02 (Telegram replaces WhatsApp, JVM Clojure replaces Babashka)
+**Updated**: 2026-02-02 (Telegram, JVM Clojure, containerized architecture)
 **Author**: Claude
 **Status**: Planning Phase
 
@@ -23,11 +25,16 @@
 
 ## Executive Summary
 
-This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **JVM Clojure**, replacing WhatsApp with Telegram as the messaging platform.
+This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **JVM Clojure** (renamed **Tura**), replacing WhatsApp with Telegram as the messaging platform.
 
 **Key Decisions**:
 1. **Telegram** replaces WhatsApp - Simple HTTP API, no complex WebSocket protocols
 2. **JVM Clojure** instead of Babashka - Enables **nREPL for self-modification** and full library access
+3. **Containerized Tura** - The Clojure process runs in a container for sandboxing, with a thin host launcher
+
+### Why "Tura"?
+
+Named after Yoshihiko Futamura, whose Futamura projections describe self-application of partial evaluators. Tura is a self-modifying system where agents can evolve their own code via nREPL - a form of computational self-application.
 
 ### Why JVM Clojure over Babashka?
 
@@ -47,7 +54,7 @@ This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **J
 |-----------|---------------|------------|
 | Telegram Client | clj-http or hato | **Low** |
 | SQLite Database | next.jdbc + SQLite JDBC | Low |
-| Container Runner | clojure.java.shell / ProcessBuilder | Low |
+| Container Runner | IPC to host launcher | Low |
 | Task Scheduler | chime or quartzite | Low |
 | IPC Watcher | hawk or directory-watcher | Low |
 | JSON Handling | cheshire | Low |
@@ -55,34 +62,38 @@ This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **J
 | **MCP Server** | **clojure-mcp** | **Low** |
 | **nREPL** | **nrepl + cider-nrepl** | **Low** |
 
-### Architecture: Self-Modifying Clojure System
+### Architecture: Containerized Self-Modifying System
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    JVM CLOJURE (Long-running Process)                │
+│  HOST (macOS) - Thin Launcher Only                                   │
+│  • Watches IPC directory for container spawn requests               │
+│  • Spawns containers via `container run`                            │
+│  • Runs socat relay for container-to-container nREPL                │
+│  • NO business logic, NO nREPL exposure on host                     │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Telegram Bot API ←──HTTP──→ clj-http                               │
-│  SQLite           ←──JDBC──→ next.jdbc                              │
-│  Containers       ←─────────→ ProcessBuilder                        │
-│  File Watching    ←─────────→ hawk                                  │
-│  Scheduling       ←─────────→ chime                                 │
-│                                                                      │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  nREPL Server (port 7888)                                    │   │
-│  │  • Hot code reload                                           │   │
-│  │  • Agent can eval code to modify running system              │   │
-│  │  • CIDER/Calva integration for development                   │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                      │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  clojure-mcp Server                                          │   │
-│  │  • Agent can register new tools at runtime                   │   │
-│  │  • Self-extending capabilities                               │   │
-│  └─────────────────────────────────────────────────────────────┘   │
+│                      vmnet (192.168.64.0/24)                        │
+│                               │                                      │
+│          ┌────────────────────┴────────────────────┐                │
+│          │                                          │                │
+│  ┌───────┴───────┐                        ┌────────┴────────┐       │
+│  │ TURA CONTAINER│                        │ AGENT CONTAINER │       │
+│  │ (long-running)│                        │ (ephemeral)     │       │
+│  │               │                        │                 │       │
+│  │ • Telegram    │   ◀──────────────────  │ • Claude Agent  │       │
+│  │ • SQLite      │   (via host relay)     │   SDK           │       │
+│  │ • Scheduler   │                        │ • Connects to   │       │
+│  │ • nREPL :7888 │                        │   192.168.64.1: │       │
+│  │ • clojure-mcp │                        │   7888          │       │
+│  │               │   Writes IPC files ──▶ │                 │       │
+│  │               │   to shared volume     │                 │       │
+│  └───────────────┘                        └─────────────────┘       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**The bot can modify its own source code and behavior via nREPL.**
+**Container-to-container communication**: macOS 15 blocks direct container networking. Agent connects to `192.168.64.1:7888` (host), which relays via socat to Tura's nREPL.
+
+**The agent can modify Tura's code via nREPL - but Tura is sandboxed in a container.**
 
 ---
 
@@ -117,13 +128,24 @@ This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **J
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Target (JVM Clojure + Telegram + nREPL)
+### Target (Tura: Containerized JVM Clojure)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        HOST (macOS)                                  │
-│                    (JVM Clojure Process)                            │
+│  HOST (macOS) - THIN LAUNCHER ONLY (~100 lines)                     │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐ │
+│  │  launcher.clj (or shell script)                                 │ │
+│  │  • Watches data/ipc/spawn/ for container spawn requests        │ │
+│  │  • Spawns containers via `container run`                       │ │
+│  │  • Runs socat: TCP-LISTEN:7888,bind=192.168.64.1 →            │ │
+│  │               TCP:${TURA_IP}:7888                              │ │
+│  │  • NO nREPL, NO business logic, NO Telegram                    │ │
+│  └────────────────────────────────────────────────────────────────┘ │
 ├─────────────────────────────────────────────────────────────────────┤
+│                      vmnet (192.168.64.0/24)                        │
+├─────────────────────────────────────────────────────────────────────┤
+│  TURA CONTAINER (192.168.64.2) - Long-running JVM Clojure          │
 │                                                                      │
 │  ┌──────────────┐    ┌────────────────────┐    ┌───────────────┐   │
 │  │  Telegram    │    │   SQLite Database  │    │  Registered   │   │
@@ -135,24 +157,29 @@ This document outlines a plan to migrate NanoClaw from TypeScript/Node.js to **J
 │  │  (30s timeout)   │  │  (chime)      │  │  (hawk)           │   │
 │  └────────┬─────────┘  └───────┬───────┘  └─────────┬─────────┘   │
 │           │                    │                    │              │
-│           └────────────────────┴────────────────────┘              │
+│  ┌────────┴────────────────────┴────────────────────┴────────┐     │
+│  │  nREPL Server (:7888)  +  clojure-mcp                     │     │
+│  │  • Live code modification (sandboxed in container)        │     │
+│  │  • Agent can add/modify tools                             │     │
+│  │  • Self-evolving system                                   │     │
+│  └───────────────────────────────────────────────────────────┘     │
 │                                │                                    │
-│  ┌────────────────────────────┴────────────────────────────────┐   │
-│  │  nREPL Server (:7888)  +  clojure-mcp                       │   │
-│  │  • Live code modification                                    │   │
-│  │  • Agent can add/modify tools                                │   │
-│  │  • Self-evolving system                                      │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                │                                    │
-│                       Container Runner                              │
-│                    (ProcessBuilder)                                 │
+│            Writes to data/ipc/spawn/ to request agent containers   │
 ├─────────────────────────────────────────────────────────────────────┤
-│                  APPLE CONTAINER (Linux VM)                         │
-├─────────────────────────────────────────────────────────────────────┤
-│  Agent connects to host nREPL → can modify NanoClaw at runtime     │
-│  Agent Runner + Claude Agent SDK + clojure-mcp                     │
+│  AGENT CONTAINER (192.168.64.3+) - Ephemeral                       │
+│                                                                      │
+│  • Claude Agent SDK                                                 │
+│  • Connects to 192.168.64.1:7888 (host relay → Tura nREPL)         │
+│  • Can modify Tura via nREPL eval                                  │
+│  • Communicates results via IPC files                              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**Why containerize Tura?**
+- nREPL is powerful - agent can eval arbitrary code
+- Container sandboxes file system access
+- Agent modifications can't escape to host system
+- Apple Container provides VM-level isolation
 
 ### Source File Inventory
 
@@ -910,23 +937,25 @@ The agent can add new tools to itself at runtime:
 
 ## Migration Strategy
 
-### Recommended Approach: JVM Clojure with nREPL
+### Recommended Approach: Containerized Tura with Thin Host Launcher
 
-With JVM Clojure, we get a **self-modifying system** where the agent can evolve its own behavior via nREPL.
+Tura runs in a container for security (sandboxed nREPL). A thin launcher on the host handles container spawning since Apple Container doesn't support nested containers.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        HOST (macOS)                                  │
-│                    (JVM Clojure Process)                            │
+│  HOST (macOS) - Thin Launcher                                        │
+│  • bb launcher.clj OR shell script                                  │
+│  • Watches IPC, spawns containers, runs socat relay                 │
+│  • ~100 lines, no business logic                                    │
 ├─────────────────────────────────────────────────────────────────────┤
+│                         vmnet bridge                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  TURA CONTAINER (JVM Clojure)                                       │
 │                                                                      │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │           CLOJURE (clj -M -m nanoclaw.core)                   │  │
-│  │                                                                │  │
 │  │  • Telegram Bot API (clj-http)                                │  │
 │  │  • SQLite database (next.jdbc)                                │  │
 │  │  • Task scheduling (chime)                                     │  │
-│  │  • Container spawning (ProcessBuilder)                         │  │
 │  │  • IPC file watching (hawk)                                   │  │
 │  │  • Mount security validation                                   │  │
 │  │  • State management (atoms)                                   │  │
@@ -935,12 +964,104 @@ With JVM Clojure, we get a **self-modifying system** where the agent can evolve 
 │  │  │  nREPL (:7888) - Agent can modify running system        │  │  │
 │  │  │  clojure-mcp   - Agent can add tools to itself          │  │  │
 │  │  └─────────────────────────────────────────────────────────┘  │  │
+│  │                                                                │  │
+│  │  Writes spawn requests to data/ipc/spawn/*.json               │  │
 │  └───────────────────────────────────────────────────────────────┘  │
-│                                                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│  AGENT CONTAINER (spawned by host launcher)                         │
+│  • Connects to 192.168.64.1:7888 → socat → Tura nREPL              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### Container-to-Container Communication
+
+macOS 15 (Sequoia) does not allow direct container-to-container networking. Solution:
+
+```bash
+# Host runs socat relay (started by launcher)
+socat TCP-LISTEN:7888,fork,bind=192.168.64.1 TCP:192.168.64.2:7888
+```
+
+Agent connects to `192.168.64.1:7888` (host gateway), which relays to Tura's nREPL.
+
+**macOS 26 (Tahoe)**: Direct container networking supported; socat not needed.
+
+### Thin Host Launcher Implementation
+
+```clojure
+#!/usr/bin/env bb
+;; launcher.clj - Thin host-side launcher (~100 lines)
+;; Only job: watch IPC, spawn containers, relay nREPL
+
+(ns launcher
+  (:require [babashka.process :as p]
+            [babashka.fs :as fs]
+            [cheshire.core :as json]))
+
+(def tura-ip (atom nil))
+(def ipc-dir "data/ipc/spawn")
+
+;; Start Tura container
+(defn start-tura! []
+  (let [proc (p/process
+               ["container" "run" "-d"
+                "-v" "data:/workspace/data"
+                "-v" "groups:/workspace/groups"
+                "-p" "7888:7888"
+                "tura:latest"])]
+    ;; Get Tura's IP
+    (reset! tura-ip (get-container-ip "tura"))
+    (start-socat-relay! @tura-ip)))
+
+;; Relay nREPL traffic from 192.168.64.1 to Tura
+(defn start-socat-relay! [tura-ip]
+  (p/process
+    ["socat"
+     "TCP-LISTEN:7888,fork,bind=192.168.64.1,reuseaddr"
+     (str "TCP:" tura-ip ":7888")]
+    {:out :inherit :err :inherit}))
+
+;; Watch for spawn requests from Tura
+(defn watch-spawn-requests! []
+  (fs/create-dirs ipc-dir)
+  (loop []
+    (doseq [f (fs/list-dir ipc-dir)]
+      (when (str/ends-with? (str f) ".json")
+        (let [req (json/parse-string (slurp f) true)]
+          (spawn-agent-container! req)
+          (fs/delete f))))
+    (Thread/sleep 1000)
+    (recur)))
+
+;; Spawn agent container per Tura's request
+(defn spawn-agent-container! [{:keys [image mounts env input]}]
+  (let [args (into ["container" "run" "-i" "--rm"]
+                   (concat
+                     (mapcat (fn [[h c]] ["-v" (str h ":" c)]) mounts)
+                     (mapcat (fn [[k v]] ["-e" (str k "=" v)]) env)
+                     [image]))]
+    (p/process args {:in input :out :pipe :err :inherit})))
+
+(defn -main []
+  (start-tura!)
+  (watch-spawn-requests!))
+```
+
 ### Migration Phases
+
+#### Phase 0: Thin Launcher (Week 0.5)
+
+**Goal**: Create minimal host-side launcher that can spawn containers.
+
+1. **Implement** `launcher.clj` (Babashka script, ~100 lines):
+   - Watch `data/ipc/spawn/` for JSON requests
+   - Spawn Tura container on startup
+   - Start socat relay for nREPL
+   - Spawn agent containers on request
+
+2. **Test**: Launcher starts Tura, Tura requests agent spawn, agent runs.
+
+**Deliverable**: Host can orchestrate containers without business logic.
 
 #### Phase 1: Core Infrastructure (Week 1)
 
@@ -1521,17 +1642,31 @@ With JVM Clojure, we get a **self-modifying system** where the agent can evolve 
 ### Development Workflow
 
 ```bash
-# Terminal 1: Run NanoClaw with nREPL
-clj -M -m nanoclaw.core
+# Terminal 1: Start the launcher (spawns Tura + socat)
+bb launcher.clj
 
-# Terminal 2: Connect CIDER/Calva to nREPL
-# Or agent connects from container
+# Terminal 2: Connect CIDER/Calva to Tura's nREPL
+# From host: connect to 192.168.64.1:7888 (via socat)
+# Or: container exec into Tura and connect locally
 
-# Hot reload during development
-(require 'nanoclaw.telegram :reload)
+# Hot reload during development (from nREPL)
+(require 'tura.telegram :reload)
 
-# Agent can do the same from container
-(nrepl/connect :host "host.docker.internal" :port 7888)
+# Agent connects from its container
+(nrepl/connect :host "192.168.64.1" :port 7888)
+```
+
+### Container Communication Flow
+
+```
+1. User sends Telegram message
+2. Tura (container) receives via long-polling
+3. Tura writes spawn request to data/ipc/spawn/req-123.json
+4. Launcher (host) sees file, spawns Agent container
+5. Agent runs, connects to 192.168.64.1:7888 (socat relay)
+6. Agent modifies Tura via nREPL if needed
+7. Agent writes result to data/ipc/messages/resp-123.json
+8. Tura reads response, sends to Telegram
 ```
 
 ---
@@ -1602,16 +1737,20 @@ clj -T:build uber                     # Build uberjar
 ## Appendix B: File Structure After Migration
 
 ```
-nanoclaw/
-├── deps.edn                        # Clojure dependencies
+tura/
+├── launcher.clj                    # Babashka thin launcher (HOST ONLY)
+├── deps.edn                        # Clojure dependencies (for Tura container)
+├── Dockerfile.tura                 # Tura container image
+├── Dockerfile.agent                # Agent container image
+│
 ├── src/
-│   └── nanoclaw/
+│   └── tura/
 │       ├── core.clj                # Main entry point + main loop
 │       ├── config.clj              # Configuration (env vars, defaults)
 │       ├── schemas.clj             # Malli schemas
 │       ├── db.clj                  # SQLite operations (next.jdbc)
 │       ├── telegram.clj            # Telegram Bot API client
-│       ├── container.clj           # Container runner (ProcessBuilder)
+│       ├── spawn.clj               # Request agent spawns via IPC
 │       ├── scheduler.clj           # Task scheduler (chime)
 │       ├── ipc.clj                 # IPC watcher (hawk)
 │       ├── repl.clj                # nREPL server
@@ -1621,31 +1760,46 @@ nanoclaw/
 ├── dev/
 │   └── user.clj                    # REPL helpers, dev utilities
 ├── test/
-│   └── nanoclaw/
+│   └── tura/
 │       ├── telegram_test.clj
 │       ├── db_test.clj
-│       ├── container_test.clj
 │       └── ...
 ├── resources/
 │   └── logback.xml                 # Logging config (optional)
-├── container/                      # Unchanged (TypeScript)
+│
+├── container/                      # Agent runner (can stay TypeScript)
 │   └── agent-runner/
-├── groups/                         # Per-group memory
+│       └── src/
+│           ├── index.ts            # Agent entry point
+│           └── nrepl-client.ts     # Connect to Tura's nREPL
+│
+├── groups/                         # Per-group memory (mounted to containers)
 ├── data/
-│   ├── nanoclaw.db                 # SQLite database
+│   ├── tura.db                     # SQLite database
 │   ├── sessions/                   # Claude sessions
-│   ├── ipc/                        # IPC files
+│   ├── ipc/
+│   │   ├── spawn/                  # Agent spawn requests (Tura → Launcher)
+│   │   ├── messages/               # Message IPC (Agent → Tura)
+│   │   └── tasks/                  # Task IPC (Agent → Tura)
 │   └── env/                        # Environment files
+│
+├── launchd/
+│   └── com.tura.launcher.plist     # launchd config for launcher
+│
 └── docs/
     └── plans/
-        └── 2026-02-02-clojure-migration-plan.md
+        └── 2026-02-02-tura-migration-plan.md
 ```
 
+**Architecture**:
+- `launcher.clj` - Runs on HOST (Babashka), spawns containers
+- `src/tura/` - Runs in TURA CONTAINER (JVM Clojure)
+- `container/agent-runner/` - Runs in AGENT CONTAINERS (Node.js or Clojure)
+
 **Key features**:
-- `repl.clj` - nREPL server for self-modification
-- `mcp.clj` - clojure-mcp for runtime tool registration
-- `dev/user.clj` - REPL utilities for development
-- Standard Clojure project structure with deps.edn
+- `spawn.clj` - Writes to `data/ipc/spawn/` to request agent containers
+- `repl.clj` - nREPL server (sandboxed in container)
+- `nrepl-client.ts` - Agent connects to Tura via `192.168.64.1:7888`
 
 ---
 
