@@ -159,7 +159,9 @@ Example folder name conventions:
 
 #### Adding Additional Directories for a Group
 
-Groups can have extra directories mounted. Add `containerConfig` to their entry:
+**Note:** This requires the `/add-mount` skill to be installed first. Run it in Claude Code to enable directory mounting.
+
+Once installed, groups can have extra directories mounted. Add `containerConfig` to their entry:
 
 ```json
 {

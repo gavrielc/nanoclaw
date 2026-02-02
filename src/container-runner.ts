@@ -16,7 +16,6 @@ import {
   DATA_DIR
 } from './config.js';
 import { RegisteredGroup } from './types.js';
-import { validateAdditionalMounts } from './mount-security.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -141,16 +140,6 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
         readonly: true
       });
     }
-  }
-
-  // Additional mounts validated against external allowlist (tamper-proof from containers)
-  if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isMain
-    );
-    mounts.push(...validatedMounts);
   }
 
   return mounts;

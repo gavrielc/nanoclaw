@@ -55,7 +55,7 @@ A personal Claude assistant accessible via WhatsApp, with persistent memory per 
 │  │    • groups/{name}/ → /workspace/group                         │   │
 │  │    • groups/global/ → /workspace/global/ (non-main only)        │   │
 │  │    • data/sessions/{group}/.claude/ → /home/node/.claude/      │   │
-│  │    • Additional dirs → /workspace/extra/*                      │   │
+│  │    • Additional dirs → /workspace/extra/* (via /add-mount)     │   │
 │  │                                                                │   │
 │  │  Tools (all groups):                                           │   │
 │  │    • Bash (safe - sandboxed in container!)                     │   │
@@ -191,7 +191,7 @@ export const TRIGGER_PATTERN = new RegExp(`^@${ASSISTANT_NAME}\\b`, 'i');
 
 ### Container Configuration
 
-Groups can have additional directories mounted via `containerConfig` in `data/registered_groups.json`:
+Groups can have custom timeout settings via `containerConfig` in `data/registered_groups.json`:
 
 ```json
 {
@@ -201,20 +201,13 @@ Groups can have additional directories mounted via `containerConfig` in `data/re
     "trigger": "@Andy",
     "added_at": "2026-01-31T12:00:00Z",
     "containerConfig": {
-      "additionalMounts": [
-        {
-          "hostPath": "/Users/gavriel/projects/webapp",
-          "containerPath": "webapp",
-          "readonly": false
-        }
-      ],
       "timeout": 600000
     }
   }
 }
 ```
 
-Additional mounts appear at `/workspace/extra/{containerPath}` inside the container.
+**Additional Directory Mounts:** To mount directories outside the project (e.g., `~/projects`), run the `/add-mount` skill first. This adds secure mount validation with an external allowlist.
 
 **Apple Container mount syntax note:** Read-write mounts use `-v host:container`, but readonly mounts require `--mount "type=bind,source=...,target=...,readonly"` (the `:ro` suffix doesn't work).
 
@@ -571,12 +564,11 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 - Only registered groups are processed
 - Trigger word required (reduces accidental processing)
 - Agents can only access their group's mounted directories
-- Main can configure additional directories per group
 - Claude's built-in safety training
 
 **Recommendations:**
 - Only register trusted groups
-- Review additional directory mounts carefully
+- If using /add-mount skill, review directory mounts carefully
 - Review scheduled tasks periodically
 - Monitor logs for unusual activity
 

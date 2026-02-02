@@ -21,7 +21,9 @@ Agents execute in Apple Container (lightweight Linux VMs), providing:
 
 This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
 
-### 2. Mount Security
+### 2. Mount Security (Optional - via /add-mount skill)
+
+By default, containers can only access their group folder and core NanoClaw paths. Additional directory mounting is available via the `/add-mount` skill, which provides:
 
 **External Allowlist** - Mount permissions stored at `~/.config/nanoclaw/mount-allowlist.json`, which is:
 - Outside project root
@@ -39,6 +41,8 @@ private_key, .secret
 - Symlink resolution before validation (prevents traversal attacks)
 - Container path validation (rejects `..` and absolute paths)
 - `nonMainReadOnly` option forces read-only for non-main groups
+
+To enable additional directory mounting, run the `/add-mount` skill.
 
 ### 3. Session Isolation
 
@@ -85,7 +89,7 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 | Project root access | `/workspace/project` (rw) | None |
 | Group folder | `/workspace/group` (rw) | `/workspace/group` (rw) |
 | Global memory | Implicit via project | `/workspace/global` (ro) |
-| Additional mounts | Configurable | Read-only unless allowed |
+| Additional mounts | Via /add-mount skill | Via /add-mount skill (read-only) |
 | Network access | Unrestricted | Unrestricted |
 | MCP tools | All | All |
 
@@ -102,7 +106,7 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 │                     HOST PROCESS (TRUSTED)                        │
 │  • Message routing                                                │
 │  • IPC authorization                                              │
-│  • Mount validation (external allowlist)                          │
+│  • Mount validation (if /add-mount skill installed)               │
 │  • Container lifecycle                                            │
 │  • Credential filtering                                           │
 └────────────────────────────────┬─────────────────────────────────┘

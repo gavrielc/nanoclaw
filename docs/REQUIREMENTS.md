@@ -124,14 +124,14 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 - New groups are added explicitly via the main channel
 - Groups are registered by editing `data/registered_groups.json`
 - Each group gets a dedicated folder under `groups/`
-- Groups can have additional directories mounted via `containerConfig`
+- Groups can have additional directories mounted via `/add-mount` skill
 
 ### Main Channel Privileges
 - Main channel is the admin/control group (typically self-chat)
 - Can write to global memory (`groups/CLAUDE.md`)
 - Can schedule tasks for any group
 - Can view and manage tasks from all groups
-- Can configure additional directory mounts for any group
+- Can configure additional directory mounts (if /add-mount skill installed)
 
 ---
 
