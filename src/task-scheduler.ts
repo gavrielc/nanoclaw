@@ -1,7 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
-import pino from 'pino';
 
 import {
   DATA_DIR,
@@ -18,12 +17,8 @@ import {
   logTaskRun,
   updateTaskAfterRun,
 } from './db.js';
+import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
-
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  transport: { target: 'pino-pretty', options: { colorize: true } },
-});
 
 export interface SchedulerDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;

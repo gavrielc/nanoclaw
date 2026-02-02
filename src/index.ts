@@ -1,7 +1,6 @@
 import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import pino from 'pino';
 
 import makeWASocket, {
   DisconnectReason,
@@ -42,13 +41,9 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup, Session } from './types.js';
 import { loadJson, saveJson } from './utils.js';
+import { logger } from './logger.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  transport: { target: 'pino-pretty', options: { colorize: true } },
-});
 
 let sock: WASocket;
 let lastTimestamp = '';
