@@ -1,14 +1,14 @@
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { proto } from '@whiskeysockets/baileys';
-import { NewMessage, ScheduledTask, TaskRunLog } from './types.js';
-import { STORE_DIR } from './config.js';
+import Database from "better-sqlite3";
+import fs from "fs";
+import path from "path";
+import { proto } from "@whiskeysockets/baileys";
+import { NewMessage, ScheduledTask, TaskRunLog } from "./types.js";
+import { STORE_DIR } from "./config.js";
 
 let db: Database.Database;
 
 export function initDatabase(): void {
-  const dbPath = path.join(STORE_DIR, 'messages.db');
+  const dbPath = path.join(STORE_DIR, "messages.db");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
@@ -63,34 +63,48 @@ export function initDatabase(): void {
   // Add sender_name column if it doesn't exist (migration for existing DBs)
   try {
     db.exec(`ALTER TABLE messages ADD COLUMN sender_name TEXT`);
-  } catch { /* column already exists */ }
+  } catch {
+    /* column already exists */
+  }
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
   try {
-    db.exec(`ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`);
-  } catch { /* column already exists */ }
+    db.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
+    );
+  } catch {
+    /* column already exists */
+  }
 }
 
 /**
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
  */
-export function storeChatMetadata(chatJid: string, timestamp: string, name?: string): void {
+export function storeChatMetadata(
+  chatJid: string,
+  timestamp: string,
+  name?: string,
+): void {
   if (name) {
     // Update with name, preserving existing timestamp if newer
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
         name = excluded.name,
         last_message_time = MAX(last_message_time, excluded.last_message_time)
-    `).run(chatJid, name, timestamp);
+    `,
+    ).run(chatJid, name, timestamp);
   } else {
     // Update timestamp only, preserve existing name if any
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
         last_message_time = MAX(last_message_time, excluded.last_message_time)
-    `).run(chatJid, chatJid, timestamp);
+    `,
+    ).run(chatJid, chatJid, timestamp);
   }
 }
 
@@ -100,10 +114,12 @@ export function storeChatMetadata(chatJid: string, timestamp: string, name?: str
  * Used during group metadata sync.
  */
 export function updateChatName(chatJid: string, name: string): void {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET name = excluded.name
-  `).run(chatJid, name, new Date().toISOString());
+  `,
+  ).run(chatJid, name, new Date().toISOString());
 }
 
 export interface ChatInfo {
@@ -116,11 +132,15 @@ export interface ChatInfo {
  * Get all known chats, ordered by most recent activity.
  */
 export function getAllChats(): ChatInfo[] {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT jid, name, last_message_time
     FROM chats
     ORDER BY last_message_time DESC
-  `).all() as ChatInfo[];
+  `,
+    )
+    .all() as ChatInfo[];
 }
 
 /**
@@ -128,7 +148,9 @@ export function getAllChats(): ChatInfo[] {
  */
 export function getLastGroupSync(): string | null {
   // Store sync time in a special chat entry
-  const row = db.prepare(`SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`).get() as { last_message_time: string } | undefined;
+  const row = db
+    .prepare(`SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`)
+    .get() as { last_message_time: string } | undefined;
   return row?.last_message_time || null;
 }
 
@@ -137,14 +159,21 @@ export function getLastGroupSync(): string | null {
  */
 export function setLastGroupSync(): void {
   const now = new Date().toISOString();
-  db.prepare(`INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES ('__group_sync__', '__group_sync__', ?)`).run(now);
+  db.prepare(
+    `INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES ('__group_sync__', '__group_sync__', ?)`,
+  ).run(now);
 }
 
 /**
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
  */
-export function storeMessage(msg: proto.IWebMessageInfo, chatJid: string, isFromMe: boolean, pushName?: string): void {
+export function storeMessage(
+  msg: proto.IWebMessageInfo,
+  chatJid: string,
+  isFromMe: boolean,
+  pushName?: string,
+): void {
   if (!msg.key) return;
 
   const content =
@@ -152,21 +181,59 @@ export function storeMessage(msg: proto.IWebMessageInfo, chatJid: string, isFrom
     msg.message?.extendedTextMessage?.text ||
     msg.message?.imageMessage?.caption ||
     msg.message?.videoMessage?.caption ||
-    '';
+    "";
 
   const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
-  const sender = msg.key.participant || msg.key.remoteJid || '';
-  const senderName = pushName || sender.split('@')[0];
-  const msgId = msg.key.id || '';
+  const sender = msg.key.participant || msg.key.remoteJid || "";
+  const senderName = pushName || sender.split("@")[0];
+  const msgId = msg.key.id || "";
 
-  db.prepare(`INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(msgId, chatJid, sender, senderName, content, timestamp, isFromMe ? 1 : 0);
+  db.prepare(
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    msgId,
+    chatJid,
+    sender,
+    senderName,
+    content,
+    timestamp,
+    isFromMe ? 1 : 0,
+  );
 }
 
-export function getNewMessages(jids: string[], lastTimestamp: string, botPrefix: string): { messages: NewMessage[]; newTimestamp: string } {
+/**
+ * Store a message directly from parsed values (for non-WhatsApp channels).
+ */
+export function storeMessageDirect(msg: {
+  id: string;
+  chat_jid: string;
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_me: boolean;
+}): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    msg.id,
+    msg.chat_jid,
+    msg.sender,
+    msg.sender_name,
+    msg.content,
+    msg.timestamp,
+    msg.is_from_me ? 1 : 0,
+  );
+}
+
+export function getNewMessages(
+  jids: string[],
+  lastTimestamp: string,
+  botPrefix: string,
+): { messages: NewMessage[]; newTimestamp: string } {
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
-  const placeholders = jids.map(() => '?').join(',');
+  const placeholders = jids.map(() => "?").join(",");
   // Filter out bot's own messages by checking content prefix (not is_from_me, since user shares the account)
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
@@ -175,7 +242,9 @@ export function getNewMessages(jids: string[], lastTimestamp: string, botPrefix:
     ORDER BY timestamp
   `;
 
-  const rows = db.prepare(sql).all(lastTimestamp, ...jids, `${botPrefix}:%`) as NewMessage[];
+  const rows = db
+    .prepare(sql)
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -185,7 +254,11 @@ export function getNewMessages(jids: string[], lastTimestamp: string, botPrefix:
   return { messages: rows, newTimestamp };
 }
 
-export function getMessagesSince(chatJid: string, sinceTimestamp: string, botPrefix: string): NewMessage[] {
+export function getMessagesSince(
+  chatJid: string,
+  sinceTimestamp: string,
+  botPrefix: string,
+): NewMessage[] {
   // Filter out bot's own messages by checking content prefix
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
@@ -193,92 +266,154 @@ export function getMessagesSince(chatJid: string, sinceTimestamp: string, botPre
     WHERE chat_jid = ? AND timestamp > ? AND content NOT LIKE ?
     ORDER BY timestamp
   `;
-  return db.prepare(sql).all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
+  return db
+    .prepare(sql)
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
 }
 
-export function createTask(task: Omit<ScheduledTask, 'last_run' | 'last_result'>): void {
-  db.prepare(`
+export function createTask(
+  task: Omit<ScheduledTask, "last_run" | "last_result">,
+): void {
+  db.prepare(
+    `
     INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     task.id,
     task.group_folder,
     task.chat_jid,
     task.prompt,
     task.schedule_type,
     task.schedule_value,
-    task.context_mode || 'isolated',
+    task.context_mode || "isolated",
     task.next_run,
     task.status,
-    task.created_at
+    task.created_at,
   );
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as ScheduledTask | undefined;
+  return db.prepare("SELECT * FROM scheduled_tasks WHERE id = ?").get(id) as
+    | ScheduledTask
+    | undefined;
 }
 
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC').all(groupFolder) as ScheduledTask[];
+  return db
+    .prepare(
+      "SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC",
+    )
+    .all(groupFolder) as ScheduledTask[];
 }
 
 export function getAllTasks(): ScheduledTask[] {
-  return db.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC').all() as ScheduledTask[];
+  return db
+    .prepare("SELECT * FROM scheduled_tasks ORDER BY created_at DESC")
+    .all() as ScheduledTask[];
 }
 
-export function updateTask(id: string, updates: Partial<Pick<ScheduledTask, 'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'>>): void {
+export function updateTask(
+  id: string,
+  updates: Partial<
+    Pick<
+      ScheduledTask,
+      "prompt" | "schedule_type" | "schedule_value" | "next_run" | "status"
+    >
+  >,
+): void {
   const fields: string[] = [];
   const values: unknown[] = [];
 
-  if (updates.prompt !== undefined) { fields.push('prompt = ?'); values.push(updates.prompt); }
-  if (updates.schedule_type !== undefined) { fields.push('schedule_type = ?'); values.push(updates.schedule_type); }
-  if (updates.schedule_value !== undefined) { fields.push('schedule_value = ?'); values.push(updates.schedule_value); }
-  if (updates.next_run !== undefined) { fields.push('next_run = ?'); values.push(updates.next_run); }
-  if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status); }
+  if (updates.prompt !== undefined) {
+    fields.push("prompt = ?");
+    values.push(updates.prompt);
+  }
+  if (updates.schedule_type !== undefined) {
+    fields.push("schedule_type = ?");
+    values.push(updates.schedule_type);
+  }
+  if (updates.schedule_value !== undefined) {
+    fields.push("schedule_value = ?");
+    values.push(updates.schedule_value);
+  }
+  if (updates.next_run !== undefined) {
+    fields.push("next_run = ?");
+    values.push(updates.next_run);
+  }
+  if (updates.status !== undefined) {
+    fields.push("status = ?");
+    values.push(updates.status);
+  }
 
   if (fields.length === 0) return;
 
   values.push(id);
-  db.prepare(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  db.prepare(
+    `UPDATE scheduled_tasks SET ${fields.join(", ")} WHERE id = ?`,
+  ).run(...values);
 }
 
 export function deleteTask(id: string): void {
   // Delete child records first (FK constraint)
-  db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  db.prepare("DELETE FROM task_run_logs WHERE task_id = ?").run(id);
+  db.prepare("DELETE FROM scheduled_tasks WHERE id = ?").run(id);
 }
 
 export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT * FROM scheduled_tasks
     WHERE status = 'active' AND next_run IS NOT NULL AND next_run <= ?
     ORDER BY next_run
-  `).all(now) as ScheduledTask[];
+  `,
+    )
+    .all(now) as ScheduledTask[];
 }
 
-export function updateTaskAfterRun(id: string, nextRun: string | null, lastResult: string): void {
+export function updateTaskAfterRun(
+  id: string,
+  nextRun: string | null,
+  lastResult: string,
+): void {
   const now = new Date().toISOString();
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE scheduled_tasks
     SET next_run = ?, last_run = ?, last_result = ?, status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END
     WHERE id = ?
-  `).run(nextRun, now, lastResult, nextRun, id);
+  `,
+  ).run(nextRun, now, lastResult, nextRun, id);
 }
 
 export function logTaskRun(log: TaskRunLog): void {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(log.task_id, log.run_at, log.duration_ms, log.status, log.result, log.error);
+  `,
+  ).run(
+    log.task_id,
+    log.run_at,
+    log.duration_ms,
+    log.status,
+    log.result,
+    log.error,
+  );
 }
 
 export function getTaskRunLogs(taskId: string, limit = 10): TaskRunLog[] {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT task_id, run_at, duration_ms, status, result, error
     FROM task_run_logs
     WHERE task_id = ?
     ORDER BY run_at DESC
     LIMIT ?
-  `).all(taskId, limit) as TaskRunLog[];
+  `,
+    )
+    .all(taskId, limit) as TaskRunLog[];
 }
