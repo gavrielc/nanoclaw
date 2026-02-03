@@ -57,13 +57,27 @@ If dotenv is not already installed, add it:
 npm install dotenv
 ```
 
-At the top of `src/index.ts`, add this import (if not already present):
+**CRITICAL:** Check if `src/index.ts` has dotenv import at the very top:
+
+```bash
+head -1 src/index.ts
+```
+
+If it doesn't show `import 'dotenv/config';`, add it:
 
 ```typescript
 import 'dotenv/config';
 ```
 
-This ensures your `.env` file is loaded before any other code runs.
+This MUST be the first import so `.env` is loaded before any other code runs.
+
+**Also verify the plist has NO secrets:**
+
+```bash
+grep -A5 EnvironmentVariables ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+Should only show: PATH, HOME, LOG_LEVEL (no tokens or API keys).
 
 ### 2. Create Telegram Bot
 
@@ -100,10 +114,17 @@ First, add it to your `.env` file:
 echo 'TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234..."' >> .env
 ```
 
-Verify it's set:
+**CRITICAL:** The container reads from `data/env/env`, not `.env`. Sync them:
+
+```bash
+cp .env data/env/env
+```
+
+Verify both files have the token:
 
 ```bash
 grep TELEGRAM_BOT_TOKEN .env
+grep TELEGRAM_BOT_TOKEN data/env/env
 ```
 
 Then validate the token by testing it:
@@ -155,6 +176,55 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 ```
 
 This prevents two instances of NanoClaw from running simultaneously.
+
+---
+
+## Architecture Notes (Read This First!)
+
+### Environment Variables: Single Source of Truth
+
+**All secrets belong in `.env` ONLY:**
+- TELEGRAM_BOT_TOKEN
+- PARALLEL_API_KEY
+- CLAUDE_CODE_OAUTH_TOKEN
+- ASSISTANT_NAME
+
+**The plist should ONLY contain non-secret environment variables:**
+- PATH
+- HOME
+- LOG_LEVEL
+
+**Critical:** After modifying `.env`, always sync to the container:
+```bash
+cp .env data/env/env
+```
+
+The host process (src/index.ts) loads `.env` via `import 'dotenv/config'` at the top of the file (verify this import exists!).
+
+The container reads `data/env/env` (mounted at `/workspace/env-dir/env` and sourced by the entrypoint script).
+
+### Message Handling (No Action Needed!)
+
+The container automatically handles message extraction correctly:
+
+1. **Extracts assistant messages** - The actual response content the user should see
+2. **Ignores result messages** - Internal meta-commentary, not shown to users
+3. **Blocks `send_message` tool** - Only available for scheduled tasks, preventing duplicate messages
+
+**You don't need to do anything special** - just call `runAgent()` and send the response. The container handles it.
+
+### Tool Restrictions (Already Configured!)
+
+Regular chat has access to:
+- All standard tools (Bash, Read, Write, etc.)
+- Task management (`schedule_task`, `list_tasks`, `pause_task`, etc.)
+- **NOT** `send_message` (blocked to prevent duplicates)
+
+Scheduled tasks have access to:
+- All the above, PLUS
+- `send_message` (so they can notify users when complete)
+
+This is configured in `container/agent-runner/src/index.ts` and requires no changes during Telegram integration.
 
 ---
 
