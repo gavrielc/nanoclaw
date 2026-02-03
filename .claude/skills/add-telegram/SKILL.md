@@ -1,0 +1,1047 @@
+---
+name: add-telegram
+description: Add Telegram as a communication channel (replace WhatsApp, additional channel, control channel, or action-only)
+---
+
+# Add Telegram Integration
+
+This skill adds Telegram capabilities to NanoClaw. It can be configured in four modes:
+
+1. **Replace WhatsApp** - Telegram becomes the primary channel
+2. **Additional Channel** - Run alongside WhatsApp
+3. **Control Channel** - Telegram triggers actions, WhatsApp continues
+4. **Action-Only** - Used for notifications triggered elsewhere
+
+## Initial Questions
+
+Ask the user:
+
+> How do you want to use Telegram with NanoClaw?
+>
+> **Option 1: Replace WhatsApp**
+> - Telegram becomes your primary channel
+> - All agent interactions go through Telegram instead of WhatsApp
+>
+> **Option 2: Additional Channel**
+> - Run both Telegram and WhatsApp simultaneously
+> - Switch between channels as needed
+> - Same agent context across both
+>
+> **Option 3: Control Channel**
+> - Telegram is for sending commands and trigger actions
+> - WhatsApp remains the primary channel
+> - Use Telegram when you need quick access
+>
+> **Option 4: Action-Only**
+> - Telegram is used only for notifications/alerts
+> - No incoming messages (no handler needed)
+> - Triggered from scheduled tasks or other channels
+
+Store their choice and proceed to the appropriate section.
+
+---
+
+## Prerequisites (All Modes)
+
+### 1. Install Dependencies
+
+Install Telegraf library:
+
+```bash
+npm install telegraf
+```
+
+If dotenv is not already installed, add it:
+
+```bash
+npm install dotenv
+```
+
+**CRITICAL:** Check if `src/index.ts` has dotenv import at the very top:
+
+```bash
+head -1 src/index.ts
+```
+
+If it doesn't show `import 'dotenv/config';`, add it:
+
+```typescript
+import 'dotenv/config';
+```
+
+This MUST be the first import so `.env` is loaded before any other code runs.
+
+**Also verify the plist has NO secrets:**
+
+```bash
+grep -A5 EnvironmentVariables ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+Should only show: PATH, HOME, LOG_LEVEL (no tokens or API keys).
+
+### 2. Create Telegram Bot
+
+Tell the user:
+
+> I need you to create a Telegram bot. Here's how:
+>
+> 1. Open Telegram and search for `@BotFather`
+> 2. Click on it and start a chat
+> 3. Send: `/newbot`
+> 4. Follow the prompts:
+>    - **"Give your bot a name:"** - Something friendly (can be anthropomorphic, e.g., "Sara" or "Pii" rather than "My NanoClaw Bot")
+>    - **"Give your bot a username:"** - Must end with "bot" and be unique (e.g., "sara_ai_bot" or "pii_assistant_bot")
+> 5. BotFather will give you a token - it looks like: `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`
+> 6. **COPY THIS TOKEN** - you'll need it in a moment
+
+Wait for user to complete this.
+
+### 3. Store Bot Token
+
+Tell the user:
+
+> Now I'll save your bot token. You can either:
+> - Tell me the token and I'll save it
+> - Or point me to a file where you saved it
+>
+> Where is your token?
+
+If user provides the token directly:
+
+First, add it to your `.env` file:
+
+```bash
+echo 'TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234..."' >> .env
+```
+
+**CRITICAL:** The container reads from `data/env/env`, not `.env`. Sync them:
+
+```bash
+cp .env data/env/env
+```
+
+Verify both files have the token:
+
+```bash
+grep TELEGRAM_BOT_TOKEN .env
+grep TELEGRAM_BOT_TOKEN data/env/env
+```
+
+Then validate the token by testing it:
+
+```bash
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | jq '.result.username'
+```
+
+This should return your bot's username (e.g., `"my_nanoclaw_bot"`). If you get an error like `{"ok":false,"error_code":401,"description":"Unauthorized"}`, the token is invalid.
+
+### 4. Get Your Chat ID
+
+Tell the user:
+
+> I need your personal or group chat ID to enable message handling. Here's how to find it:
+>
+> 1. **In Telegram**, search for your bot by username (e.g., `@my_nanoclaw_bot`)
+> 2. **Send any message** to the bot
+> 3. **Run this command** in your terminal:
+
+```bash
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" | jq '.result[-1].message.chat.id'
+```
+
+> The number returned (e.g., `79057070`) is your **personal chat ID**.
+>
+> **For groups:** Add your bot to a group and send it a message, then run the same command. The ID will be a negative number (e.g., `-987654321`).
+
+Save this chat ID - you'll use it when registering the group.
+
+---
+
+## Important: Service Conflict (If NanoClaw is Already Running)
+
+If NanoClaw is already running as a background service (e.g., via launchctl), stop it **before testing**:
+
+```bash
+# Stop the existing NanoClaw service
+launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+Now you can run `npm run dev` without conflicts.
+
+**After testing is complete**, restart the service:
+
+```bash
+# Restart the background service
+launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+This prevents two instances of NanoClaw from running simultaneously.
+
+---
+
+## Architecture Notes (Read This First!)
+
+### Environment Variables: Single Source of Truth
+
+**All secrets belong in `.env` ONLY:**
+- TELEGRAM_BOT_TOKEN
+- PARALLEL_API_KEY
+- CLAUDE_CODE_OAUTH_TOKEN
+- ASSISTANT_NAME
+
+**The plist should ONLY contain non-secret environment variables:**
+- PATH
+- HOME
+- LOG_LEVEL
+
+**Critical:** After modifying `.env`, always sync to the container:
+```bash
+cp .env data/env/env
+```
+
+The host process (src/index.ts) loads `.env` via `import 'dotenv/config'` at the top of the file (verify this import exists!).
+
+The container reads `data/env/env` (mounted at `/workspace/env-dir/env` and sourced by the entrypoint script).
+
+### Message Handling (No Action Needed!)
+
+The container automatically handles message extraction correctly:
+
+1. **Extracts assistant messages** - The actual response content the user should see
+2. **Ignores result messages** - Internal meta-commentary, not shown to users
+3. **Blocks `send_message` tool** - Only available for scheduled tasks, preventing duplicate messages
+
+**You don't need to do anything special** - just call `runAgent()` and send the response. The container handles it.
+
+### Tool Restrictions (Already Configured!)
+
+Regular chat has access to:
+- All standard tools (Bash, Read, Write, etc.)
+- Task management (`schedule_task`, `list_tasks`, `pause_task`, etc.)
+- **NOT** `send_message` (blocked to prevent duplicates)
+
+Scheduled tasks have access to:
+- All the above, PLUS
+- `send_message` (so they can notify users when complete)
+
+This is configured in `container/agent-runner/src/index.ts` and requires no changes during Telegram integration.
+
+---
+
+## Replace WhatsApp Mode
+
+Replace WhatsApp entirely with Telegram.
+
+### Step 1: Add Imports and Bot Instance
+
+At the top of `src/index.ts`, add the imports:
+
+```typescript
+import 'dotenv/config';
+import { Telegraf } from 'telegraf';
+```
+
+After the logger setup, create the bot instance:
+
+```typescript
+// Initialize Telegram bot
+const telegrafBot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+```
+
+### Step 2: Add Helper Functions
+
+Add these helper functions (e.g., after `setTyping` function):
+
+```typescript
+async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+  try {
+    await telegrafBot.telegram.sendMessage(chatId, text);
+    logger.info({ chatId, length: text.length }, 'Telegram message sent');
+  } catch (error) {
+    logger.error({ error, chatId }, 'Failed to send Telegram message');
+    throw error;
+  }
+}
+
+async function setTelegramTyping(chatId: string): Promise<void> {
+  try {
+    await telegrafBot.telegram.sendChatAction(chatId, 'typing');
+  } catch (error) {
+    logger.error({ error, chatId }, 'Failed to set typing indicator');
+  }
+}
+```
+
+### Step 3: Update Existing Functions
+
+Update `setTyping` to support Telegram:
+
+```typescript
+async function setTyping(jid: string, isTyping: boolean): Promise<void> {
+  // Telegram uses chat ID format: telegram:123456789
+  if (jid.startsWith('telegram:')) {
+    const chatId = jid.replace('telegram:', '');
+    await setTelegramTyping(chatId);
+  } else {
+    // WhatsApp
+    try {
+      await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
+    } catch (err) {
+      logger.debug({ jid, err }, 'Failed to update typing status');
+    }
+  }
+}
+```
+
+Update `sendMessage` to route to the correct platform:
+
+```typescript
+async function sendMessage(jid: string, text: string): Promise<void> {
+  if (jid.startsWith('telegram:')) {
+    const chatId = jid.replace('telegram:', '');
+    await sendTelegramMessage(chatId, text);
+  } else {
+    // WhatsApp
+    try {
+      await sock.sendMessage(jid, { text });
+      logger.info({ jid, length: text.length }, 'Message sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send message');
+    }
+  }
+}
+```
+
+### Step 4: Fix Message Prefix
+
+Update `processMessage` to not add prefix for Telegram (bots send as themselves):
+
+```typescript
+if (response) {
+  lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
+  // Telegram bots send as themselves, no prefix needed. WhatsApp needs prefix since you message yourself.
+  const message = msg.chat_jid.startsWith('telegram:') ? response : `${ASSISTANT_NAME}: ${response}`;
+  await sendMessage(msg.chat_jid, message);
+}
+```
+
+Also update the IPC message handler:
+
+```typescript
+// In the IPC message handler
+const message = data.chatJid.startsWith('telegram:') ? data.text : `${ASSISTANT_NAME}: ${data.text}`;
+await sendMessage(data.chatJid, message);
+```
+
+### Step 5: Add Telegram Message Handler
+
+**CRITICAL**: Add this handler BEFORE `connectWhatsApp()` function. Build the prompt DIRECTLY from the message - do NOT use `processMessage()` or store in database:
+
+```typescript
+// Telegram message handler
+telegrafBot.on('message', async (ctx) => {
+  if (!ctx.message || !('text' in ctx.message)) return;
+
+  const chatId = String(ctx.chat.id);
+  const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+  // Extract sender information
+  const senderId = String(ctx.from?.id || ctx.chat.id);
+  const senderName = ctx.from?.first_name || ctx.from?.username || 'User';
+
+  logger.info(
+    { chatId, isGroup, senderName },
+    `Telegram message: ${ctx.message.text}`
+  );
+
+  const timestamp = new Date(ctx.message.date * 1000).toISOString();
+  const telegramJid = `telegram:${chatId}`;
+
+  try {
+    // Check if this chat is registered
+    if (!registeredGroups[telegramJid]) {
+      logger.debug({ chatId }, 'Message from unregistered Telegram chat');
+      return;
+    }
+
+    // Show typing indicator
+    await setTelegramTyping(chatId);
+
+    // Store chat metadata (but NOT the message itself - we process immediately)
+    storeChatMetadata(telegramJid, timestamp);
+
+    // Build prompt directly for Telegram (don't use database since we don't store messages)
+    const group = registeredGroups[telegramJid];
+    const escapeXml = (s: string) => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+    const prompt = `<messages>\n<message sender="${escapeXml(senderName)}" time="${timestamp}">${escapeXml(ctx.message.text)}</message>\n</messages>`;
+
+    logger.info({ group: group.name, senderName }, 'Processing Telegram message');
+
+    await setTyping(telegramJid, true);
+    const response = await runAgent(group, prompt, telegramJid);
+    await setTyping(telegramJid, false);
+
+    if (response) {
+      lastAgentTimestamp[telegramJid] = timestamp;
+      // No prefix for Telegram (bot sends as itself)
+      await sendMessage(telegramJid, response);
+    }
+  } catch (error) {
+    logger.error({ error, chatId }, 'Error processing Telegram message');
+    await telegrafBot.telegram.sendMessage(chatId, 'Sorry, something went wrong.');
+  }
+});
+```
+
+**Why we build prompt directly**:
+1. We don't store Telegram messages in the database (to avoid duplicates with message loop)
+2. If we call `processMessage()`, it uses `getMessagesSince()` which queries the database
+3. Empty database = empty prompt = agent says "No new messages to respond to"
+4. Solution: Build the XML prompt directly from the current message
+
+**Why we don't use processMessage()**:
+- `processMessage()` expects messages to be in the database
+- For Telegram, we process immediately without database storage
+- We build the prompt manually and call `runAgent()` directly
+
+### Step 6: Update main() Function
+
+Find the `main()` function and update it to start Telegram instead of WhatsApp:
+
+```typescript
+async function main(): Promise<void> {
+  ensureContainerSystemRunning();
+  initDatabase();
+  logger.info('Database initialized');
+  loadState();
+
+  // Start Telegram bot
+  try {
+    telegrafBot.launch();
+    logger.info('Telegram bot started (Bot Name)');
+
+    // Start message loop and other services
+    startIpcWatcher();
+    startSchedulerLoop({
+      sendMessage,
+      registeredGroups: () => registeredGroups,
+      getSessions: () => sessions
+    });
+    startMessageLoop();
+
+    // Graceful shutdown handlers
+    process.once('SIGINT', () => {
+      logger.info('Shutting down Telegram bot');
+      telegrafBot.stop('SIGINT');
+    });
+    process.once('SIGTERM', () => {
+      logger.info('Shutting down Telegram bot');
+      telegrafBot.stop('SIGTERM');
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to start Telegram bot');
+    process.exit(1);
+  }
+
+  // WhatsApp connection disabled (replaced with Telegram)
+  // await connectWhatsApp();
+}
+```
+
+### Step 7: Update launchd Plist (macOS)
+
+Update `~/Library/LaunchAgents/com.nanoclaw.plist` to include environment variables:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/Users/USERNAME/.local/bin</string>
+    <key>HOME</key>
+    <string>/Users/USERNAME</string>
+    <key>ASSISTANT_NAME</key>
+    <string>BotName</string>
+    <key>TELEGRAM_BOT_TOKEN</key>
+    <string>YOUR_BOT_TOKEN_HERE</string>
+</dict>
+```
+
+Replace `USERNAME` with your actual username and `BotName` with your bot's name.
+
+### Step 8: Rebuild and Restart
+
+```bash
+npm run build
+launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+### Step 9: Update Group Memory
+
+Update `groups/main/CLAUDE.md`:
+
+```markdown
+## Communication
+
+You are accessed via **Telegram** using the bot **@bot_username** (display name: BotName).
+
+Users will message you through Telegram, and you respond there. Messages support standard Telegram formatting:
+- **Bold** (asterisks or double asterisks)
+- *Italic* (underscores or single asterisks)
+- `Code` (backticks)
+- ```Code blocks``` (triple backticks)
+- [Links](https://example.com)
+
+Keep messages clean and readable for Telegram chat.
+```
+
+### Step 10: Test
+
+Send a message to your bot in Telegram. Verify:
+- Bot responds without "BotName:" prefix
+- Only ONE response per message (no duplicates)
+- Typing indicator appears
+- No errors in logs
+
+Check logs: `tail -f logs/nanoclaw.log`
+
+---
+
+## Additional Channel Mode
+
+Run Telegram and WhatsApp simultaneously.
+
+### Step 1: Add Telegram Handler
+
+Follow **Replace WhatsApp Mode → Step 1** above to add the Telegram handler.
+
+Do NOT remove any WhatsApp code.
+
+### Step 2: Wire Both Channels
+
+Both handlers should call the same `processIncomingMessage` function:
+
+```typescript
+// WhatsApp handler still calls:
+await processIncomingMessage({ platform: 'whatsapp', ... });
+
+// Telegram handler calls:
+await processIncomingMessage({ platform: 'telegram', ... });
+```
+
+The routing should use `chat_jid` (or similar) to store the platform and chat ID:
+- WhatsApp: `whatsapp:1234567890` or just the phone number
+- Telegram: `telegram:123456789` or `telegram:-987654321` for groups
+
+### Step 3: Update Send Functions
+
+When the agent sends a reply, route to the correct platform. **Important**: Telegram bots send messages from themselves, so don't add the assistant name prefix:
+
+```typescript
+async function sendMessage(
+  chatJid: string,
+  text: string
+): Promise<void> {
+  if (chatJid.startsWith('telegram:')) {
+    const chatId = chatJid.replace('telegram:', '');
+    // Telegram: bot sends as itself, no ASSISTANT_NAME prefix
+    await sendTelegramMessage(chatId, text);
+  } else {
+    // WhatsApp: include ASSISTANT_NAME prefix
+    const message = `${ASSISTANT_NAME}: ${text}`;
+    await sendWhatsAppMessage(chatJid, message);
+  }
+}
+```
+
+Also update IPC message sending with the same pattern - if the target is Telegram, don't include the `ASSISTANT_NAME:` prefix in the response.
+
+### Step 4: Update Memory
+
+Update `groups/main/CLAUDE.md`:
+
+```markdown
+## Communication
+
+You are accessed via Telegram and WhatsApp. Users can reach you on either platform.
+
+### Telegram
+- Bot username: [@your_bot_username](https://t.me/your_bot_username)
+- Personal chat ID: [USER_TELEGRAM_ID]
+
+### WhatsApp
+- Phone: [USER_PHONE]
+```
+
+### Step 5: Test Both Channels
+
+Run the service:
+
+```bash
+npm run dev
+```
+
+Test by:
+1. Sending a message on WhatsApp - verify it works
+2. Sending a message on Telegram - verify it works
+3. Check that context is shared (if one stores state, the other sees it)
+
+---
+
+## Control Channel Mode
+
+Telegram triggers actions, WhatsApp remains primary.
+
+### Step 1: Add Minimal Telegram Handler
+
+Add to `src/index.ts`:
+
+```typescript
+import { Telegraf } from 'telegraf';
+
+const telegrafBot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+
+telegrafBot.on('message', async (ctx) => {
+  if (!ctx.message || !('text' in ctx.message)) return;
+  
+  const chatId = String(ctx.chat.id);
+  const content = ctx.message.text;
+  
+  logger.info({ chatId, content }, 'Telegram control message');
+  
+  try {
+    // Trigger action in main group context
+    // This routes Telegram input to your WhatsApp group
+    const mainGroup = getRegisteredGroup('main');
+    
+    if (!mainGroup) {
+      await telegrafBot.telegram.sendMessage(chatId, 'Agent not configured');
+      return;
+    }
+    
+    const response = await runContainerAgent(mainGroup, {
+      prompt: content,
+      chatJid: `telegram:${chatId}`,
+      isScheduledTask: false
+    });
+    
+    if (response.status === 'success') {
+      await telegrafBot.telegram.sendMessage(chatId, response.result);
+    } else {
+      await telegrafBot.telegram.sendMessage(chatId, 'Error processing command');
+    }
+  } catch (error) {
+    logger.error({ error, chatId }, 'Error in Telegram control handler');
+    await telegrafBot.telegram.sendMessage(chatId, 'An error occurred');
+  }
+});
+```
+
+### Step 2: Start the Bot
+
+Add bot startup (same as Replace WhatsApp mode).
+
+### Step 3: Keep WhatsApp Running
+
+Do NOT remove WhatsApp code. Let it continue as the primary channel.
+
+### Step 4: Update Memory
+
+Update `groups/main/CLAUDE.md`:
+
+```markdown
+## Communication
+
+Primary channel: WhatsApp
+Control channel: Telegram (send commands to trigger actions)
+
+Telegram bot: [@your_bot_username](https://t.me/your_bot_username)
+```
+
+### Step 5: Test
+
+Send a command through Telegram - it should trigger the agent and reply on Telegram.
+
+---
+
+## Action-Only Mode
+
+Telegram used only for notifications.
+
+### Step 1: Bot Token Only
+
+Create a Telegram bot and store the token (steps from Prerequisites).
+
+Do NOT add any message handlers. Only add the send function.
+
+### Step 2: Add Send Function
+
+Add to `src/index.ts`:
+
+```typescript
+import { Telegraf } from 'telegraf';
+
+const telegrafBot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+
+async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+  try {
+    await telegrafBot.telegram.sendMessage(chatId, text);
+    logger.info({ chatId }, 'Telegram notification sent');
+  } catch (error) {
+    logger.error({ error, chatId }, 'Failed to send Telegram notification');
+  }
+}
+```
+
+### Step 3: Trigger Notifications
+
+When you want to send a notification (e.g., from a scheduled task):
+
+```typescript
+// In your task scheduler or notification code:
+await sendTelegramMessage(
+  process.env.TELEGRAM_NOTIFICATION_CHAT_ID!,
+  'Task completed successfully'
+);
+```
+
+### Step 4: No Need to Start Bot
+
+Since there's no message handler, you don't need to launch the bot. Just import Telegraf and use the send function.
+
+### Step 5: Update Memory
+
+Update `groups/main/CLAUDE.md`:
+
+```markdown
+## Notifications
+
+Notifications are sent to Telegram chat ID: ${TELEGRAM_NOTIFICATION_CHAT_ID}
+```
+
+---
+
+## Privacy Model: How Registered Chats Work
+
+When you set up Telegram with NanoClaw, understand the privacy model:
+
+### Public Discovery
+- Your bot's username is **public** - anyone can find it and message it
+- Example: `@my_nanoclaw_bot` is searchable and discoverable
+
+### Private Access Control
+- **Only registered chat IDs get responses** from your agent
+- All other messages are **silently ignored** and logged as "Message from unregistered Telegram chat"
+- This makes your bot effectively **private** even though it's discoverable
+
+### Registered Groups Format
+
+When you register a chat with NanoClaw, it's stored in `data/registered_groups.json`:
+
+```json
+{
+  "telegram:79057070": {
+    "name": "main",
+    "folder": "main",
+    "trigger": "@Sara",
+    "added_at": "2026-02-02T14:30:00.000Z"
+  }
+}
+```
+
+**Key fields:**
+- `telegram:79057070` - Chat ID prefixed with `telegram:`
+- `name` - Human-readable group name
+- `folder` - Where agent context is stored
+- `trigger` - Keyword/mention to activate the agent (e.g., `@Sara` for groups)
+- `added_at` - When the chat was registered
+
+### Example: Multiple Registered Chats
+
+```json
+{
+  "telegram:79057070": {
+    "name": "personal",
+    "folder": "main",
+    "trigger": "@Sara",
+    "added_at": "2026-02-02T14:30:00.000Z"
+  },
+  "telegram:-987654321": {
+    "name": "team_group",
+    "folder": "team",
+    "trigger": "@Sara",
+    "added_at": "2026-02-02T15:45:00.000Z"
+  }
+}
+```
+
+### Security Implications
+
+- **Registered chats**: Full two-way communication with your agent
+- **Unregistered chats**: Silently ignored (no response, no error message)
+- **Bot discovery**: Anyone finding your bot sees the description but gets no response
+- **Group privacy**: Even if added to a group, bot only responds to registered group IDs
+
+This design prevents accidental exposure while keeping the bot easy to manage.
+
+---
+
+## Group Privacy Mode (Important Gotcha)
+
+If using Telegram groups, be aware of **privacy mode**:
+
+**Default behavior**: Bot only sees messages mentioning it or commands (starting with `/`)
+
+**To see all messages**: You have two options:
+
+**Option A: Disable privacy mode (recommended for this use case)**
+
+1. Message `@BotFather` again
+2. Select your bot
+3. Send `/setprivacy`
+4. Select your bot
+5. Choose **"Disable"**
+
+Now the bot will see all messages in the group.
+
+**Option B: Make bot admin**
+
+1. Add bot to group
+2. Make it an admin
+3. Privacy mode is bypassed for admins
+
+---
+
+## Rate Limits
+
+Telegram has rate limits to prevent abuse:
+
+- **30 messages/second** per bot (broadcast)
+- **1 message/second** per chat (in same group)
+- **20 messages/minute** in groups (per user)
+
+If you hit these limits, you'll get a `429 Too Many Requests` error. Wait a few seconds before retrying.
+
+For notifications, batch them or add small delays:
+
+```typescript
+// Bad: Sends 100 messages instantly
+for (const userId of userIds) {
+  await sendTelegramMessage(userId, 'Alert');
+}
+
+// Good: Rate-limited
+for (const userId of userIds) {
+  await sendTelegramMessage(userId, 'Alert');
+  await new Promise(r => setTimeout(r, 100)); // 100ms between messages
+}
+```
+
+---
+
+## Chat ID Formats
+
+Telegram uses these chat ID formats:
+
+| Type | Format | Example |
+|------|--------|---------|
+| Personal DM | Positive integer | `123456789` |
+| Group | Negative integer | `-987654321` |
+| Supergroup | Negative integer | `-1001234567890` |
+| Channel | Negative integer | `-1009876543210` |
+
+Store all chat IDs as **strings** in your database to avoid JavaScript number precision issues.
+
+---
+
+## Testing Procedure
+
+### For Replace WhatsApp or Additional Channel:
+
+1. **Start the service:**
+   ```bash
+   npm run dev
+   ```
+
+2. **Find your bot in Telegram:**
+   - Search for your bot username (e.g., `@my_nanoclaw_bot`)
+   - Or use the link: `https://t.me/your_bot_username`
+
+3. **Send a test message:**
+   ```
+   hello
+   ```
+
+4. **Verify bot responds:**
+   - Should see typing indicator
+   - Should get a response
+   - No errors in logs
+
+5. **Test groups (if applicable):**
+   - Create a test group
+   - Add your bot
+   - If privacy mode is on: Send `@botname hello`
+   - If privacy mode is off: Send `hello`
+   - Bot should respond
+
+6. **Monitor logs:**
+   ```bash
+   tail -f logs/nanoclaw.log | grep -i telegram
+   ```
+
+### For Control Channel:
+
+1. **Verify WhatsApp works first**
+2. **Send a message via Telegram**
+3. **Check that the main group receives input and responds back on Telegram**
+
+### For Action-Only:
+
+1. **Trigger a scheduled task**
+2. **Verify Telegram message arrives**
+3. **Check logs for send confirmation**
+
+---
+
+## Known Issues & Fixes
+
+### Bot doesn't respond to messages
+
+**Cause**: Privacy mode is on, message doesn't mention bot or start with `/`
+
+**Fix**: 
+- Add `@botname` prefix: `@my_nanoclaw_bot hello`
+- Or disable privacy mode (see Group Privacy Mode section)
+- Or make bot admin
+
+### "Unauthorized" error
+
+**Cause**: Bot token is invalid or malformed
+
+**Fix**:
+```bash
+# Verify token format
+echo $TELEGRAM_BOT_TOKEN
+# Should be: 123456:ABC-DEF...
+# Check .env file
+grep TELEGRAM_BOT_TOKEN .env
+```
+
+### Bot doesn't start
+
+**Cause**: Token is missing or invalid
+
+**Fix**:
+```bash
+# Check environment variable
+env | grep TELEGRAM_BOT_TOKEN
+
+# Test token manually
+curl https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe
+```
+
+### Group chat ID is not negative
+
+**Cause**: Using the wrong ID format
+
+**Fix**:
+- For groups created after 2015: ID is negative (e.g., `-123456789`)
+- For older groups: May use a different format
+- Always test by getting updates: `curl https://api.telegram.org/bot${TOKEN}/getUpdates`
+
+### Rate limit errors
+
+**Cause**: Sending too many messages too fast
+
+**Fix**: Add delays between messages (see Rate Limits section)
+
+---
+
+## Troubleshooting Commands
+
+### Test bot token:
+```bash
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | jq
+```
+
+Should return bot info if token is valid.
+
+### Get recent messages (to find chat ID):
+```bash
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" | jq '.result[] | {chat_id: .message.chat.id, text: .message.text}'
+```
+
+### Check container logs:
+```bash
+cat groups/main/logs/container-*.log | tail -50
+```
+
+### Restart Telegram bot:
+```bash
+npm run build
+npm run dev
+```
+
+---
+
+## Removing Telegram Integration
+
+To remove Telegram entirely:
+
+1. **Remove from `src/index.ts`:**
+   - Delete `import { Telegraf } from 'telegraf'`
+   - Delete bot initialization
+   - Delete message handler
+   - Delete `sendTelegramMessage` and related functions
+   - Delete bot startup code
+
+2. **Remove from `.env`:**
+   ```bash
+   # Remove this line:
+   # TELEGRAM_BOT_TOKEN="..."
+   ```
+
+3. **Remove package:**
+   ```bash
+   npm uninstall telegraf
+   ```
+
+4. **Update memory files:**
+   - Remove Telegram section from `groups/*/CLAUDE.md`
+
+5. **Rebuild:**
+   ```bash
+   npm run build
+   ```
+
+---
+
+## Tool Availability by Context
+
+The IPC MCP server conditionally exposes tools based on execution context:
+
+### Regular Chat (isScheduledTask: false)
+- `send_message` tool is **NOT available**
+- Agent MUST return response as return value
+- Return value is delivered via Telegram/WhatsApp handler
+
+### Scheduled Tasks (isScheduledTask: true)
+- `send_message` tool **IS available**
+- Agent MUST use send_message to communicate
+- No synchronous return channel exists
+
+This prevents duplicate messages by technically enforcing communication patterns rather than relying on prompt instructions.
+
+---
+
+## Additional Resources
+
+- [Telegraf.js Documentation](https://telegraf.js.org/)
+- [Telegram Bot API](https://core.telegram.org/bots/api)
+- [Telegram Bot Best Practices](https://core.telegram.org/bots#bot-api)
+- [BotFather Commands](https://core.telegram.org/bots#creating-a-new-bot)

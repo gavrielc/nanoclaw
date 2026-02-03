@@ -17,6 +17,7 @@ export interface IpcMcpContext {
   chatJid: string;
   groupFolder: string;
   isMain: boolean;
+  isScheduledTask: boolean;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -34,15 +35,17 @@ function writeIpcFile(dir: string, data: object): string {
 }
 
 export function createIpcMcp(ctx: IpcMcpContext) {
-  const { chatJid, groupFolder, isMain } = ctx;
+  const { chatJid, groupFolder, isMain, isScheduledTask } = ctx;
 
-  return createSdkMcpServer({
-    name: 'nanoclaw',
-    version: '1.0.0',
-    tools: [
+  // Build tools array based on context - use any[] to avoid TypeScript union type issues
+  const tools: any[] = [];
+
+  // Only expose send_message in scheduled task context
+  if (isScheduledTask) {
+    tools.push(
       tool(
         'send_message',
-        'Send a message to the current WhatsApp group. Use this to proactively share information or updates.',
+        'Send a message back to the chat. Use this for scheduled tasks or long-running operations.',
         {
           text: z.string().describe('The message text to send')
         },
@@ -64,8 +67,11 @@ export function createIpcMcp(ctx: IpcMcpContext) {
             }]
           };
         }
-      ),
+      )
+    );
+  }
 
+  tools.push(
       tool(
         'schedule_task',
         `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
@@ -316,6 +322,11 @@ Use available_groups.json to find the JID for a group. The folder name should be
           };
         }
       )
-    ]
+  );
+
+  return createSdkMcpServer({
+    name: 'nanoclaw',
+    version: '1.0.0',
+    tools
   });
 }

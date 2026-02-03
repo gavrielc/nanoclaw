@@ -1,3 +1,5 @@
+import 'dotenv/config';
+import { Telegraf } from 'telegraf';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -32,6 +34,9 @@ const logger = pino({
   transport: { target: 'pino-pretty', options: { colorize: true } }
 });
 
+// Initialize Telegram bot
+const telegrafBot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+
 let sock: WASocket;
 let lastTimestamp = '';
 let sessions: Session = {};
@@ -39,10 +44,35 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
+  // Telegram uses chat ID format: telegram:123456789
+  if (jid.startsWith('telegram:')) {
+    const chatId = jid.replace('telegram:', '');
+    await setTelegramTyping(chatId);
+  } else {
+    // WhatsApp
+    try {
+      await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
+    } catch (err) {
+      logger.debug({ jid, err }, 'Failed to update typing status');
+    }
+  }
+}
+
+async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
   try {
-    await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
-  } catch (err) {
-    logger.debug({ jid, err }, 'Failed to update typing status');
+    await telegrafBot.telegram.sendMessage(chatId, text);
+    logger.info({ chatId, length: text.length }, 'Telegram message sent');
+  } catch (error) {
+    logger.error({ error, chatId }, 'Failed to send Telegram message');
+    throw error;
+  }
+}
+
+async function setTelegramTyping(chatId: string): Promise<void> {
+  try {
+    await telegrafBot.telegram.sendChatAction(chatId, 'typing');
+  } catch (error) {
+    logger.error({ error, chatId }, 'Failed to set typing indicator');
   }
 }
 
@@ -163,7 +193,9 @@ async function processMessage(msg: NewMessage): Promise<void> {
 
   if (response) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
+    // Telegram bots send as themselves, no prefix needed. WhatsApp needs prefix since you message yourself.
+    const message = msg.chat_jid.startsWith('telegram:') ? response : `${ASSISTANT_NAME}: ${response}`;
+    await sendMessage(msg.chat_jid, message);
   }
 }
 
@@ -214,11 +246,17 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
 }
 
 async function sendMessage(jid: string, text: string): Promise<void> {
-  try {
-    await sock.sendMessage(jid, { text });
-    logger.info({ jid, length: text.length }, 'Message sent');
-  } catch (err) {
-    logger.error({ jid, err }, 'Failed to send message');
+  if (jid.startsWith('telegram:')) {
+    const chatId = jid.replace('telegram:', '');
+    await sendTelegramMessage(chatId, text);
+  } else {
+    // WhatsApp
+    try {
+      await sock.sendMessage(jid, { text });
+      logger.info({ jid, length: text.length }, 'Message sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send message');
+    }
   }
 }
 
@@ -257,7 +295,9 @@ function startIpcWatcher(): void {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
-                  await sendMessage(data.chatJid, `${ASSISTANT_NAME}: ${data.text}`);
+                  // Telegram bots send as themselves, no prefix needed. WhatsApp needs prefix since you message yourself.
+                  const message = data.chatJid.startsWith('telegram:') ? data.text : `${ASSISTANT_NAME}: ${data.text}`;
+                  await sendMessage(data.chatJid, message);
                   logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
                 } else {
                   logger.warn({ chatJid: data.chatJid, sourceGroup }, 'Unauthorized IPC message attempt blocked');
@@ -472,6 +512,65 @@ async function processTaskIpc(
   }
 }
 
+// Telegram message handler
+telegrafBot.on('message', async (ctx) => {
+  if (!ctx.message || !('text' in ctx.message)) return;
+
+  const chatId = String(ctx.chat.id);
+  const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+  // Extract sender information
+  const senderId = String(ctx.from?.id || ctx.chat.id);
+  const senderName = ctx.from?.first_name || ctx.from?.username || 'User';
+
+  logger.info(
+    { chatId, isGroup, senderName },
+    `Telegram message: ${ctx.message.text}`
+  );
+
+  const timestamp = new Date(ctx.message.date * 1000).toISOString();
+  const telegramJid = `telegram:${chatId}`;
+
+  try {
+    // Check if this chat is registered
+    if (!registeredGroups[telegramJid]) {
+      logger.debug({ chatId }, 'Message from unregistered Telegram chat');
+      return;
+    }
+
+    // Show typing indicator
+    await setTelegramTyping(chatId);
+
+    // Store chat metadata (but NOT the message itself - we process immediately)
+    storeChatMetadata(telegramJid, timestamp);
+
+    // Build prompt directly for Telegram (don't use database since we don't store messages)
+    const group = registeredGroups[telegramJid];
+    const escapeXml = (s: string) => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+    const prompt = `<messages>\n<message sender="${escapeXml(senderName)}" time="${timestamp}">${escapeXml(ctx.message.text)}</message>\n</messages>`;
+
+    logger.info({ group: group.name, senderName }, 'Processing Telegram message');
+
+    await setTyping(telegramJid, true);
+    const response = await runAgent(group, prompt, telegramJid);
+    await setTyping(telegramJid, false);
+
+    if (response) {
+      lastAgentTimestamp[telegramJid] = timestamp;
+      // No prefix for Telegram (bot sends as itself)
+      await sendMessage(telegramJid, response);
+    }
+  } catch (error) {
+    logger.error({ error, chatId }, 'Error processing Telegram message');
+    await telegrafBot.telegram.sendMessage(chatId, 'Sorry, something went wrong.');
+  }
+});
+
 async function connectWhatsApp(): Promise<void> {
   const authDir = path.join(STORE_DIR, 'auth');
   fs.mkdirSync(authDir, { recursive: true });
@@ -603,7 +702,37 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
-  await connectWhatsApp();
+
+  // Start Telegram bot
+  try {
+    telegrafBot.launch();
+    logger.info('Telegram bot started (Pii)');
+
+    // Start message loop and other services
+    startIpcWatcher();
+    startSchedulerLoop({
+      sendMessage,
+      registeredGroups: () => registeredGroups,
+      getSessions: () => sessions
+    });
+    startMessageLoop();
+
+    // Graceful shutdown handlers
+    process.once('SIGINT', () => {
+      logger.info('Shutting down Telegram bot');
+      telegrafBot.stop('SIGINT');
+    });
+    process.once('SIGTERM', () => {
+      logger.info('Shutting down Telegram bot');
+      telegrafBot.stop('SIGTERM');
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to start Telegram bot');
+    process.exit(1);
+  }
+
+  // WhatsApp connection disabled (replaced with Telegram)
+  // await connectWhatsApp();
 }
 
 main().catch(err => {
