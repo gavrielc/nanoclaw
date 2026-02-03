@@ -34,9 +34,11 @@ const logger = pino({
 
 let sock: WASocket;
 let lastTimestamp = '';
+let lastId = '';
 let sessions: Session = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let lastAgentId: Record<string, string> = {};
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
   try {
@@ -48,16 +50,28 @@ async function setTyping(jid: string, isTyping: boolean): Promise<void> {
 
 function loadState(): void {
   const statePath = path.join(DATA_DIR, 'router_state.json');
-  const state = loadJson<{ last_timestamp?: string; last_agent_timestamp?: Record<string, string> }>(statePath, {});
+  const state = loadJson<{
+    last_timestamp?: string;
+    last_id?: string;
+    last_agent_timestamp?: Record<string, string>;
+    last_agent_id?: Record<string, string>;
+  }>(statePath, {});
   lastTimestamp = state.last_timestamp || '';
+  lastId = state.last_id || '';
   lastAgentTimestamp = state.last_agent_timestamp || {};
+  lastAgentId = state.last_agent_id || {};
   sessions = loadJson(path.join(DATA_DIR, 'sessions.json'), {});
   registeredGroups = loadJson(path.join(DATA_DIR, 'registered_groups.json'), {});
   logger.info({ groupCount: Object.keys(registeredGroups).length }, 'State loaded');
 }
 
 function saveState(): void {
-  saveJson(path.join(DATA_DIR, 'router_state.json'), { last_timestamp: lastTimestamp, last_agent_timestamp: lastAgentTimestamp });
+  saveJson(path.join(DATA_DIR, 'router_state.json'), {
+    last_timestamp: lastTimestamp,
+    last_id: lastId,
+    last_agent_timestamp: lastAgentTimestamp,
+    last_agent_id: lastAgentId
+  });
   saveJson(path.join(DATA_DIR, 'sessions.json'), sessions);
 }
 
@@ -139,8 +153,10 @@ async function processMessage(msg: NewMessage): Promise<void> {
   if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return;
 
   // Get all messages since last agent interaction so the session has full context
+  // Use composite cursor (timestamp, id) to avoid losing messages with identical timestamps
   const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
-  const missedMessages = getMessagesSince(msg.chat_jid, sinceTimestamp, ASSISTANT_NAME);
+  const sinceId = lastAgentId[msg.chat_jid] || '';
+  const missedMessages = getMessagesSince(msg.chat_jid, sinceTimestamp, sinceId, ASSISTANT_NAME);
 
   const lines = missedMessages.map(m => {
     // Escape XML special characters in content
@@ -163,6 +179,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
 
   if (response) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
+    lastAgentId[msg.chat_jid] = msg.id;
     await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
   }
 }
@@ -552,14 +569,15 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
+      const { messages } = getNewMessages(jids, lastTimestamp, lastId, ASSISTANT_NAME);
 
       if (messages.length > 0) logger.info({ count: messages.length }, 'New messages');
       for (const msg of messages) {
         try {
           await processMessage(msg);
-          // Only advance timestamp after successful processing for at-least-once delivery
+          // Only advance cursor after successful processing for at-least-once delivery
           lastTimestamp = msg.timestamp;
+          lastId = msg.id;
           saveState();
         } catch (err) {
           logger.error({ err, msg: msg.id }, 'Error processing message, will retry');
