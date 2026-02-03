@@ -1,11 +1,25 @@
 import path from 'path';
 import { execSync } from 'child_process';
+import { logger } from './logger.js';
 
 type Runtime = 'container' | 'podman' | 'docker';
 
+const VALID_RUNTIMES: readonly Runtime[] = ['container', 'podman', 'docker'] as const;
+
+function isValidRuntime(value: string): value is Runtime {
+  return (VALID_RUNTIMES as readonly string[]).includes(value);
+}
+
 function detectContainerRuntime(): Runtime {
   if (process.env.CONTAINER_RUNTIME) {
-    return process.env.CONTAINER_RUNTIME as Runtime;
+    const envRuntime = process.env.CONTAINER_RUNTIME;
+    if (!isValidRuntime(envRuntime)) {
+      throw new Error(
+        `Invalid CONTAINER_RUNTIME="${envRuntime}". Must be one of: ${VALID_RUNTIMES.join(', ')}`
+      );
+    }
+    logger.debug({ runtime: envRuntime }, 'Using container runtime from CONTAINER_RUNTIME env var');
+    return envRuntime;
   }
 
   const runtimes = process.platform === 'darwin'
@@ -17,7 +31,9 @@ function detectContainerRuntime(): Runtime {
       execSync(`command -v ${rt}`, { stdio: 'ignore' });
       execSync(`${rt} version`, { stdio: 'ignore' });
       return rt;
-    } catch {}
+    } catch (err) {
+      logger.debug({ runtime: rt, error: err instanceof Error ? err.message : String(err) }, 'Runtime not available, trying next');
+    }
   }
 
   throw new Error('No container runtime found. Install Podman or Docker.');
