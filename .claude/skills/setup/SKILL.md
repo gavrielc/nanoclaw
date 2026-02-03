@@ -7,69 +7,125 @@ description: Run initial NanoClaw setup. Use when user wants to install dependen
 
 Run all commands automatically. Only pause when user action is required (scanning QR codes).
 
-## 1. Install Dependencies
+## 1. Capability Detection
+
+**Run this first to understand the environment:**
+
+```bash
+echo "=== NanoClaw Capability Detection ==="
+echo ""
+echo "Platform: $(uname -s) $(uname -m)"
+echo ""
+
+echo "Container Runtimes:"
+if command -v container &>/dev/null && container --version &>/dev/null 2>&1; then
+  echo "  ✓ Apple Container: $(container --version 2>/dev/null | head -1)"
+  APPLE_OK=1
+else
+  echo "  ✗ Apple Container: not installed"
+  APPLE_OK=0
+fi
+
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+  echo "  ✓ Docker: $(docker --version | head -1)"
+  DOCKER_OK=1
+else
+  if command -v docker &>/dev/null; then
+    echo "  △ Docker: installed but not running"
+  else
+    echo "  ✗ Docker: not installed"
+  fi
+  DOCKER_OK=0
+fi
+
+if command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+  echo "  ✓ Podman: $(podman --version | head -1)"
+  PODMAN_OK=1
+else
+  echo "  ✗ Podman: not installed"
+  PODMAN_OK=0
+fi
+
+echo ""
+echo "Claude Authentication:"
+if [ -f ~/.claude/.credentials.json ]; then
+  TOKEN=$(cat ~/.claude/.credentials.json 2>/dev/null | jq -r '.claudeAiOauth.accessToken // empty')
+  if [ -n "$TOKEN" ]; then
+    echo "  ✓ OAuth token found"
+  else
+    echo "  ✗ No OAuth token (run 'claude' and log in)"
+  fi
+else
+  echo "  ✗ No credentials file"
+fi
+
+echo ""
+echo "=== Detection Complete ==="
+```
+
+**Present the results to the user:**
+
+> **Environment detected:**
+> - Platform: [macOS/Linux] [architecture]
+> - Apple Container: [✓ available | ✗ not available]
+> - Docker: [✓ running | △ installed but not running | ✗ not installed]
+> - Podman: [✓ available | ✗ not available]
+> - Claude Auth: [✓ OAuth token | ✗ needs setup]
+
+## 2. Choose Container Runtime
+
+Based on detection, present available options:
+
+**If multiple runtimes available:**
+> Which container runtime do you want to use?
+>
+> [List only the ones that are ✓ available or can be started]
+> 1. **Apple Container** - macOS-native, lightweight (recommended for macOS)
+> 2. **Docker** - Cross-platform, widely used
+> 3. **Podman** - Rootless containers, Docker-compatible
+
+**If only one runtime available:**
+> I'll use [runtime] since that's what's available.
+
+**If NO runtime available:**
+> No container runtime found. You need one of these:
+>
+> **macOS options:**
+> - Apple Container: https://github.com/apple/container/releases (download .pkg)
+> - Docker Desktop: https://www.docker.com/products/docker-desktop/
+>
+> **Linux options:**
+> - Docker: `curl -fsSL https://get.docker.com | sh`
+> - Podman: `sudo apt install podman` (Debian/Ubuntu) or `sudo dnf install podman` (Fedora)
+>
+> Install one and run `/setup` again.
+
+**If Docker installed but not running:**
+> Docker is installed but not running.
+> - macOS: Start Docker Desktop from Applications
+> - Linux: `sudo systemctl start docker`
+>
+> Start it and let me know when ready.
+
+### Set the runtime environment variable
+
+Once chosen, set it for this session and persist it:
+
+```bash
+# Set for this session
+export CONTAINER_RUNTIME=docker  # or 'container' or 'podman'
+
+# Persist in .env
+grep -q "^CONTAINER_RUNTIME=" .env 2>/dev/null && \
+  sed -i '' "s/^CONTAINER_RUNTIME=.*/CONTAINER_RUNTIME=$CONTAINER_RUNTIME/" .env || \
+  echo "CONTAINER_RUNTIME=$CONTAINER_RUNTIME" >> .env
+```
+
+## 3. Install Dependencies
 
 ```bash
 npm install
 ```
-
-## 2. Install Container Runtime
-
-First, detect the platform and check what's available:
-
-```bash
-echo "Platform: $(uname -s)"
-which container && echo "Apple Container: installed" || echo "Apple Container: not installed"
-which docker && docker info >/dev/null 2>&1 && echo "Docker: installed and running" || echo "Docker: not installed or not running"
-```
-
-### If NOT on macOS (Linux, etc.)
-
-Apple Container is macOS-only. Use Docker instead.
-
-Tell the user:
-> You're on Linux, so we'll use Docker for container isolation. Let me set that up now.
-
-**Use the `/convert-to-docker` skill** to convert the codebase to Docker, then continue to Section 3.
-
-### If on macOS
-
-**If Apple Container is already installed:** Continue to Section 3.
-
-**If Apple Container is NOT installed:** Ask the user:
-> NanoClaw needs a container runtime for isolated agent execution. You have two options:
->
-> 1. **Apple Container** (default) - macOS-native, lightweight, designed for Apple silicon
-> 2. **Docker** - Cross-platform, widely used, works on macOS and Linux
->
-> Which would you prefer?
-
-#### Option A: Apple Container
-
-Tell the user:
-> Apple Container is required for running agents in isolated environments.
->
-> 1. Download the latest `.pkg` from https://github.com/apple/container/releases
-> 2. Double-click to install
-> 3. Run `container system start` to start the service
->
-> Let me know when you've completed these steps.
-
-Wait for user confirmation, then verify:
-
-```bash
-container system start
-container --version
-```
-
-**Note:** NanoClaw automatically starts the Apple Container system when it launches, so you don't need to start it manually after reboots.
-
-#### Option B: Docker
-
-Tell the user:
-> You've chosen Docker. Let me set that up now.
-
-**Use the `/convert-to-docker` skill** to convert the codebase to Docker, then continue to Section 3.
 
 ## 3. Configure Claude Authentication
 
@@ -322,9 +378,22 @@ Tell the user:
 > }
 > ```
 
-## 9. Configure launchd Service
+## 9. Configure Background Service
 
-Generate the plist file with correct paths automatically:
+Build first:
+
+```bash
+npm run build
+mkdir -p logs
+```
+
+Detect platform and configure the appropriate service:
+
+```bash
+echo "Platform: $(uname -s)"
+```
+
+### macOS: launchd
 
 ```bash
 NODE_PATH=$(which node)
@@ -364,25 +433,50 @@ cat > ~/Library/LaunchAgents/com.nanoclaw.plist << EOF
 </plist>
 EOF
 
-echo "Created launchd plist with:"
-echo "  Node: ${NODE_PATH}"
-echo "  Project: ${PROJECT_PATH}"
-```
-
-Build and start the service:
-
-```bash
-npm run build
-mkdir -p logs
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-```
-
-Verify it's running:
-```bash
 launchctl list | grep nanoclaw
 ```
 
-## 11. Test
+### Linux: systemd
+
+```bash
+NODE_PATH=$(which node)
+PROJECT_PATH=$(pwd)
+HOME_PATH=$HOME
+
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/nanoclaw.service << EOF
+[Unit]
+Description=NanoClaw WhatsApp Assistant
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=${PROJECT_PATH}
+ExecStart=${NODE_PATH} ${PROJECT_PATH}/dist/index.js
+Restart=always
+RestartSec=10
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME_PATH}/.local/bin
+Environment=HOME=${HOME_PATH}
+
+StandardOutput=append:${PROJECT_PATH}/logs/nanoclaw.log
+StandardError=append:${PROJECT_PATH}/logs/nanoclaw.error.log
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable nanoclaw
+systemctl --user start nanoclaw
+systemctl --user status nanoclaw
+
+# Allow service to run without being logged in
+sudo loginctl enable-linger $USER
+```
+
+## 10. Test
 
 Tell the user (using the assistant name they configured):
 > Send `@ASSISTANT_NAME hello` in your registered chat.
@@ -396,12 +490,15 @@ The user should receive a response in WhatsApp.
 
 ## Troubleshooting
 
-**Service not starting**: Check `logs/nanoclaw.error.log`
+**Service not starting**:
+- macOS: `cat logs/nanoclaw.error.log`
+- Linux: `journalctl --user -u nanoclaw -f`
 
 **Container agent fails with "Claude Code process exited with code 1"**:
-- Ensure the container runtime is running:
+- Check your runtime is running:
   - Apple Container: `container system start`
   - Docker: `docker info` (start Docker Desktop on macOS, or `sudo systemctl start docker` on Linux)
+  - Podman: `podman info`
 - Check container logs: `cat groups/main/logs/container-*.log | tail -50`
 
 **No response to messages**:
@@ -410,11 +507,17 @@ The user should receive a response in WhatsApp.
 - Check `logs/nanoclaw.log` for errors
 
 **WhatsApp disconnected**:
-- The service will show a macOS notification
 - Run `npm run auth` to re-authenticate
-- Restart the service: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
+- Restart:
+  - macOS: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
+  - Linux: `systemctl --user restart nanoclaw`
 
-**Unload service**:
+**Stop/disable service**:
+- macOS: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist`
+- Linux: `systemctl --user stop nanoclaw && systemctl --user disable nanoclaw`
+
+**Run manually (for debugging)**:
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+# Stop the service first
+npm run dev
 ```

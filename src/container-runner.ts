@@ -12,6 +12,7 @@ import {
   CONTAINER_IMAGE,
   CONTAINER_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_RUNTIME,
   GROUPS_DIR,
   DATA_DIR
 } from './config.js';
@@ -201,7 +202,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn(CONTAINER_RUNTIME, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe']
     });
 

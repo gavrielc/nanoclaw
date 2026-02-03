@@ -20,7 +20,7 @@ cd nanoclaw
 claude
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+Then run `/setup`. Claude Code detects your platform and available runtimes (Apple Container, Docker, Podman) automatically.
 
 ## Philosophy
 
