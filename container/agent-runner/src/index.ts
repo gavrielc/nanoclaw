@@ -237,6 +237,7 @@ async function main(): Promise<void> {
     for await (const message of query({
       prompt,
       options: {
+        maxTurns: 10, // Prevent runaway loops (see issue #30)
         cwd: '/workspace/group',
         resume: input.sessionId,
         allowedTools: [

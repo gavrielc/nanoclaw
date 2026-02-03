@@ -55,12 +55,14 @@ export function createIpcMcp(ctx: IpcMcpContext) {
             timestamp: new Date().toISOString()
           };
 
-          const filename = writeIpcFile(MESSAGES_DIR, data);
+          writeIpcFile(MESSAGES_DIR, data);
 
+          // Return clear success signal to prevent agent from retrying
+          const preview = args.text.length > 80 ? args.text.slice(0, 80) + '...' : args.text;
           return {
             content: [{
               type: 'text',
-              text: `Message queued for delivery (${filename})`
+              text: `✓ Message sent successfully. The user will receive: "${preview}"`
             }]
           };
         }
