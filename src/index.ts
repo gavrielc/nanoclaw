@@ -203,8 +203,10 @@ async function processMessage(msg: TelegramMessage): Promise<void> {
     saveState();
   }
 
-  if (response) {
+  if (response && response.trim()) {
     await sendMessage(msg.chatId, response);
+  } else if (response !== null) {
+    logger.warn({ chatId: msg.chatId }, 'Agent returned empty/whitespace response');
   }
 }
 

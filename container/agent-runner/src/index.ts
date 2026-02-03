@@ -394,6 +394,10 @@ async function main(): Promise<void> {
       temperature: config.temperature
     });
     responseText = await result.getText();
+
+    if (!responseText || !responseText.trim()) {
+      log(`Warning: Model returned empty/whitespace response. Raw length: ${responseText?.length ?? 0}`);
+    }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMessage}`);
@@ -427,9 +431,12 @@ async function main(): Promise<void> {
     }
   }
 
+  // Normalize empty/whitespace-only responses to null
+  const finalResult = responseText && responseText.trim() ? responseText : null;
+
   writeOutput({
     status: 'success',
-    result: responseText || null,
+    result: finalResult,
     newSessionId: isNew ? sessionCtx.sessionId : undefined
   });
 }
