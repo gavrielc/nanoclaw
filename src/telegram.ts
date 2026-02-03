@@ -25,7 +25,7 @@ import { ASSISTANT_NAME, DATA_DIR } from './config.js';
 import { RegisteredGroup } from './types.js';
 import { runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import { getAllTasks } from './db.js';
-import { loadJson, saveJson } from './utils.js';
+import { loadJson, saveJson, escapeXml } from './utils.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -154,7 +154,7 @@ export async function startTelegramBot(): Promise<void> {
       })));
 
       // Build prompt with context
-      const prompt = `<message from="${username}" timestamp="${new Date().toISOString()}">\n${text}\n</message>`;
+      const prompt = `<message from="${escapeXml(username)}" timestamp="${new Date().toISOString()}">\n${escapeXml(text)}\n</message>`;
 
       const result = await runContainerAgent(telegramGroup, {
         prompt,

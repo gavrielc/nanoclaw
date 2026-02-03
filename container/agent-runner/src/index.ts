@@ -241,9 +241,15 @@ async function main(): Promise<void> {
         cwd: '/workspace/group',
         resume: input.sessionId,
         allowedTools: [
-          'Bash',
-          'Read', 'Write', 'Edit', 'Glob', 'Grep',
-          'WebSearch', 'WebFetch',
+          'Bash', 'bash',
+          'Read', 'readFile',
+          'Write', 'writeFile',
+          'Edit', 'editFile',
+          'Glob', 'glob',
+          'Grep', 'grep',
+          'ls', 'cat',
+          'WebSearch', 'webSearch',
+          'WebFetch', 'webFetch',
           'mcp__nanoclaw__*',
           'mcp__browser__*'
         ],
@@ -278,7 +284,8 @@ async function main(): Promise<void> {
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    log(`Agent error: ${errorMessage}`);
+    const stack = err instanceof Error ? err.stack : '';
+    log(`Agent error: ${errorMessage}${stack ? `\n${stack}` : ''}`);
     writeOutput({
       status: 'error',
       result: null,
