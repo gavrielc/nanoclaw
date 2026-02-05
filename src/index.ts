@@ -37,6 +37,7 @@ let lastTimestamp = '';
 let sessions: Session = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let loopsStarted = false;
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
   try {
@@ -511,17 +512,21 @@ async function connectWhatsApp(): Promise<void> {
       logger.info('Connected to WhatsApp');
       // Sync group metadata on startup (respects 24h cache)
       syncGroupMetadata().catch(err => logger.error({ err }, 'Initial group sync failed'));
-      // Set up daily sync timer
-      setInterval(() => {
-        syncGroupMetadata().catch(err => logger.error({ err }, 'Periodic group sync failed'));
-      }, GROUP_SYNC_INTERVAL_MS);
-      startSchedulerLoop({
-        sendMessage,
-        registeredGroups: () => registeredGroups,
-        getSessions: () => sessions
-      });
-      startIpcWatcher();
-      startMessageLoop();
+
+      if (!loopsStarted) {
+        loopsStarted = true;
+        // Set up daily sync timer
+        setInterval(() => {
+          syncGroupMetadata().catch(err => logger.error({ err }, 'Periodic group sync failed'));
+        }, GROUP_SYNC_INTERVAL_MS);
+        startSchedulerLoop({
+          sendMessage,
+          registeredGroups: () => registeredGroups,
+          getSessions: () => sessions
+        });
+        startIpcWatcher();
+        startMessageLoop();
+      }
     }
   });
 
