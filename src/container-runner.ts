@@ -36,7 +36,7 @@ export interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
-  chatJid: string;
+  chatId: string;
   isMain: boolean;
   isScheduledTask?: boolean;
 }
@@ -219,7 +219,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn('docker', containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -451,7 +451,7 @@ export function writeTasksSnapshot(
 }
 
 export interface AvailableGroup {
-  jid: string;
+  chatId: number; // Telegram chat ID
   name: string;
   lastActivity: string;
   isRegistered: boolean;

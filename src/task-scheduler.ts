@@ -90,7 +90,7 @@ async function runTask(
       prompt: task.prompt,
       sessionId,
       groupFolder: task.group_folder,
-      chatJid: task.chat_jid,
+      chatId: task.chat_id.toString(),
       isMain,
       isScheduledTask: true,
     });
