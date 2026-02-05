@@ -8,6 +8,7 @@ import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { createIpcMcp } from './ipc-mcp.js';
 import { createCalendarMcp } from './calendar-mcp.js';
+import { createPushoverMcp } from './pushover-mcp.js';
 
 interface ContainerInput {
   prompt: string;
@@ -235,6 +236,13 @@ async function main(): Promise<void> {
     mcpServers.calendar = createCalendarMcp();
   }
 
+  // Add Pushover MCP if credentials are present (main channel only)
+  const pushoverEnabled = !!(process.env.PUSHOVER_USER_KEY && process.env.PUSHOVER_APP_TOKEN);
+  if (pushoverEnabled) {
+    log('Pushover notifications enabled');
+    mcpServers.pushover = createPushoverMcp();
+  }
+
   // Build allowed tools list
   const allowedTools = [
     'Bash',
@@ -245,6 +253,10 @@ async function main(): Promise<void> {
 
   if (calendarEnabled) {
     allowedTools.push('mcp__calendar__*');
+  }
+
+  if (pushoverEnabled) {
+    allowedTools.push('mcp__pushover__*');
   }
 
   let result: string | null = null;

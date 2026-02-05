@@ -18,6 +18,10 @@ import {
   ICLOUD_CALENDAR_ENABLED,
   ICLOUD_CALENDARS,
   ICLOUD_USERNAME,
+  PUSHOVER_APP_TOKEN,
+  PUSHOVER_DEVICE,
+  PUSHOVER_ENABLED,
+  PUSHOVER_USER_KEY,
   TIMEZONE,
 } from './config.js';
 import { logger } from './logger.js';
@@ -217,6 +221,15 @@ export async function runContainerAgent(
     envVars.ICLOUD_APP_PASSWORD = ICLOUD_APP_PASSWORD!;
     if (ICLOUD_CALENDARS) {
       envVars.ICLOUD_CALENDARS = ICLOUD_CALENDARS;
+    }
+  }
+
+  // Pass Pushover credentials to main channel containers only
+  if (input.isMain && PUSHOVER_ENABLED) {
+    envVars.PUSHOVER_USER_KEY = PUSHOVER_USER_KEY!;
+    envVars.PUSHOVER_APP_TOKEN = PUSHOVER_APP_TOKEN!;
+    if (PUSHOVER_DEVICE) {
+      envVars.PUSHOVER_DEVICE = PUSHOVER_DEVICE;
     }
   }
 
