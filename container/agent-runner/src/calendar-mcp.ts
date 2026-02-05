@@ -130,6 +130,15 @@ interface ParsedEvent {
 function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): ParsedEvent[] {
   const events: ParsedEvent[] = [];
 
+  // Expand with a wider window to catch RECURRENCE-ID overrides.
+  // When an instance of a recurring event is moved (e.g., from Tuesday to Friday),
+  // node-ical's expandRecurringEvent only includes the override if the ORIGINAL
+  // recurrence date is within the query window. So we expand with extra padding
+  // and then filter the results to the actual requested window.
+  const paddingMs = 7 * 24 * 60 * 60 * 1000; // 7 days padding
+  const expandFrom = new Date(from.getTime() - paddingMs);
+  const expandTo = new Date(to.getTime() + paddingMs);
+
   for (const obj of calendarObjects) {
     if (!obj.data) continue;
 
@@ -140,16 +149,24 @@ function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): Par
         if (!component || component.type !== 'VEVENT') continue;
         const vevent = component as VEvent;
 
-        // Expand recurring events into individual instances
+        // Expand recurring events into individual instances with wider window
         const instances: EventInstance[] = ical.expandRecurringEvent(vevent, {
-          from,
-          to,
+          from: expandFrom,
+          to: expandTo,
           includeOverrides: true,
           excludeExdates: true,
           expandOngoing: true,
         });
 
         for (const instance of instances) {
+          const instanceStart = instance.start instanceof Date ? instance.start : new Date(String(instance.start));
+          const instanceEnd = instance.end instanceof Date ? instance.end : new Date(String(instance.end));
+
+          // Filter to requested window (instance overlaps with [from, to])
+          if (instanceEnd <= from || instanceStart >= to) {
+            continue;
+          }
+
           // Helper to extract string from ParameterValue
           const getStr = (v: unknown): string | undefined => {
             if (!v) return undefined;
@@ -164,8 +181,8 @@ function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): Par
             summary: getStr(instance.summary) || '(No title)',
             description: getStr(instance.event.description),
             location: getStr(instance.event.location),
-            start: instance.start instanceof Date ? instance.start.toISOString() : String(instance.start),
-            end: instance.end instanceof Date ? instance.end.toISOString() : String(instance.end),
+            start: instanceStart.toISOString(),
+            end: instanceEnd.toISOString(),
             allDay: instance.isFullDay,
           });
         }
@@ -310,7 +327,7 @@ export function createCalendarMcp() {
         'get_events',
         `Fetch events from a calendar. Optionally filter by date range.
 
-Note: iCloud CalDAV has a ~4-year query window limitation. For best results, query specific date ranges rather than "all events".`,
+Recurring events with moved instances (RECURRENCE-ID overrides) are properly expanded.`,
         {
           calendar: z.string().describe('Calendar name or URL'),
           start_date: z.string().optional().describe('Start of date range (ISO 8601, e.g., "2026-02-05")'),
@@ -340,13 +357,11 @@ Note: iCloud CalDAV has a ~4-year query window limitation. For best results, que
 
             log(`Fetching events from ${calendar.displayName}: ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
-            const objects = await client.fetchCalendarObjects({
-              calendar,
-              timeRange: {
-                start: startDate.toISOString(),
-                end: endDate.toISOString(),
-              },
-            });
+            // Fetch ALL calendar objects without time range filter.
+            // This is necessary because recurring events with RECURRENCE-ID overrides
+            // (moved instances) won't be returned by CalDAV time-range queries if the
+            // master event started outside the query window.
+            const objects = await client.fetchCalendarObjects({ calendar });
 
             const events = parseIcsEvents(objects, startDate, endDate);
 

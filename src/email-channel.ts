@@ -29,6 +29,7 @@ class ImapWatcher {
   private running = false;
   private reconnectDelay = 5000;
   private onEmails: (emails: IncomingEmail[]) => Promise<void>;
+  private processingLock: Promise<void> = Promise.resolve();
 
   constructor(
     config: EmailConfig,
@@ -67,11 +68,12 @@ class ImapWatcher {
         const lock = await this.client.getMailboxLock(this.folder);
         try {
           // Process existing unseen messages
-          await this.processNewMessages();
+          await this.processNewMessagesWithLock();
 
           // Listen for new messages via IDLE
+          // Use a lock to prevent duplicate processing when multiple 'exists' events fire rapidly
           this.client.on('exists', () => {
-            this.processNewMessages().catch((err) =>
+            this.processNewMessagesWithLock().catch((err) =>
               logger.error({ err, folder: this.folder }, 'Error processing new emails'),
             );
           });
@@ -95,6 +97,25 @@ class ImapWatcher {
 
       await new Promise((r) => setTimeout(r, this.reconnectDelay));
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 300000);
+    }
+  }
+
+  /**
+   * Process new messages with a lock to prevent duplicate processing.
+   * Multiple 'exists' events can fire rapidly (e.g., when marking as seen triggers another update).
+   * This ensures only one processNewMessages runs at a time.
+   */
+  private async processNewMessagesWithLock(): Promise<void> {
+    // Chain onto the existing lock - if another call is in progress, wait for it
+    const previousLock = this.processingLock;
+    let resolve: () => void;
+    this.processingLock = new Promise((r) => { resolve = r; });
+
+    try {
+      await previousLock;
+      await this.processNewMessages();
+    } finally {
+      resolve!();
     }
   }
 

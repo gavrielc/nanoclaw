@@ -387,13 +387,11 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
   console.log(`  (${days} days starting from local midnight)\n`);
 
   try {
-    const objects = await client.fetchCalendarObjects({
-      calendar,
-      timeRange: {
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-      },
-    });
+    // Fetch ALL calendar objects without time range filter.
+    // This is necessary because recurring events with RECURRENCE-ID overrides
+    // (moved instances) won't be returned by CalDAV time-range queries if the
+    // master event started outside the query window.
+    const objects = await client.fetchCalendarObjects({ calendar });
 
     console.log(`  Found ${objects.length} calendar objects\n`);
 
@@ -426,6 +424,15 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
     // Collect all expanded instances
     const allInstances: Array<{ instance: any; url: string }> = [];
 
+    // Expand with a wider window to catch RECURRENCE-ID overrides.
+    // When an instance of a recurring event is moved (e.g., from Tuesday to Friday),
+    // node-ical's expandRecurringEvent only includes the override if the ORIGINAL
+    // recurrence date is within the query window. So we expand with extra padding
+    // and then filter the results to the actual requested window.
+    const paddingMs = 7 * 24 * 60 * 60 * 1000; // 7 days padding
+    const expandFrom = new Date(startDate.getTime() - paddingMs);
+    const expandTo = new Date(endDate.getTime() + paddingMs);
+
     for (const obj of objects) {
       if (!obj.data) continue;
 
@@ -435,16 +442,22 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
           if ((component as any).type === 'VEVENT') {
             const event = component as VEvent;
 
-            // Expand recurring events
+            // Expand recurring events with wider window
             const instances = ical.expandRecurringEvent(event, {
-              from: startDate,
-              to: endDate,
+              from: expandFrom,
+              to: expandTo,
               includeOverrides: true,
               excludeExdates: true,
               expandOngoing: true,
             });
 
             for (const instance of instances) {
+              // Filter to requested window
+              const instStart = instance.start instanceof Date ? instance.start : new Date(String(instance.start));
+              const instEnd = instance.end instanceof Date ? instance.end : new Date(String(instance.end));
+              if (instEnd <= startDate || instStart >= endDate) {
+                continue;
+              }
               allInstances.push({ instance, url: obj.url });
             }
           }
@@ -455,7 +468,11 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
     }
 
     // Sort by start time
-    allInstances.sort((a, b) => a.instance.start.getTime() - b.instance.start.getTime());
+    allInstances.sort((a, b) => {
+      const aStart = a.instance.start instanceof Date ? a.instance.start : new Date(String(a.instance.start));
+      const bStart = b.instance.start instanceof Date ? b.instance.start : new Date(String(b.instance.start));
+      return aStart.getTime() - bStart.getTime();
+    });
 
     // Display
     for (const { instance, url } of allInstances) {
