@@ -19,6 +19,7 @@ import {
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  PUSHOVER_ENABLED,
   STORE_DIR,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -48,6 +49,7 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup, Session } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
+import { sendErrorNotification, sendNotification } from './pushover.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -217,14 +219,24 @@ async function processMessage(msg: NewMessage): Promise<void> {
     'Processing message',
   );
 
+  // WhatsApp reactions provide visual feedback, no need for Pushover notifications
+  // on routine message processing. Only errors get notified.
   await sendReaction(msg, '\u{1F440}'); // 👀
   await setTyping(msg.chat_jid, true);
+  const startTime = Date.now();
   const response = await runAgent(group, prompt, msg.chat_jid);
+  const durationSec = Math.round((Date.now() - startTime) / 1000);
   await setTyping(msg.chat_jid, false);
 
   if (response) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
     await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
+  } else {
+    // Only notify on failures - WhatsApp reactions handle success feedback
+    sendErrorNotification(
+      `\u{274C} ${ASSISTANT_NAME} \u2014 ${group.name}`,
+      `Failed after ${durationSec}s`,
+    );
   }
   await sendReaction(msg, '\u{2705}'); // ✅
 }
@@ -379,7 +391,55 @@ Example log entries:
     'Processing email batch through agent',
   );
 
+  // Build summary of incoming emails for notification
+  const emailSummaries = emails.map((e) => `• ${e.fromName || e.from}: ${e.subject}`).join('\n');
+  sendNotification(
+    `\u{1F4E7} ${ASSISTANT_NAME} \u2014 Email`,
+    `Processing ${emails.length} email${emails.length > 1 ? 's' : ''}:\n${emailSummaries}`,
+  );
+
+  // Track existing log lines to find new entries after processing
+  const logFile = path.join(GROUPS_DIR, 'main', 'email-activity', `${today}.jsonl`);
+  let existingLines = 0;
+  try {
+    if (fs.existsSync(logFile)) {
+      existingLines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean).length;
+    }
+  } catch {
+    // Ignore read errors
+  }
+
+  const startTime = Date.now();
   await runAgent(mainGroup, prompt, mainJid);
+  const durationSec = Math.round((Date.now() - startTime) / 1000);
+
+  // Read agent's action log to include in notification
+  let actionSummary = '';
+  try {
+    if (fs.existsSync(logFile)) {
+      const allLines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean);
+      const newLines = allLines.slice(existingLines);
+      if (newLines.length > 0) {
+        actionSummary = newLines.map((line) => {
+          try {
+            const entry = JSON.parse(line);
+            return `• ${entry.from}: ${entry.action}`;
+          } catch {
+            return `• ${line}`;
+          }
+        }).join('\n');
+      }
+    }
+  } catch {
+    // Ignore read errors
+  }
+
+  sendNotification(
+    `\u{2709}\u{FE0F} ${ASSISTANT_NAME} \u2014 Email`,
+    actionSummary
+      ? `Processed in ${durationSec}s:\n${actionSummary}`
+      : `Processed ${emails.length} email${emails.length > 1 ? 's' : ''} in ${durationSec}s`,
+  );
 }
 
 async function sendDailyEmailSummary(): Promise<void> {
@@ -841,7 +901,13 @@ async function connectWhatsApp(): Promise<void> {
       }
     } else if (connection === 'open') {
       logger.info('Connected to WhatsApp');
-      
+
+      // Notify startup
+      sendNotification(
+        `\u{1F7E2} ${ASSISTANT_NAME} Online`,
+        `WhatsApp connected${PUSHOVER_ENABLED ? ', notifications enabled' : ''}`,
+      );
+
       // Build LID to phone mapping from auth state for self-chat translation
       if (sock.user) {
         const phoneUser = sock.user.id.split(':')[0];

@@ -14,6 +14,11 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  ICLOUD_APP_PASSWORD,
+  ICLOUD_CALENDAR_ENABLED,
+  ICLOUD_CALENDARS,
+  ICLOUD_USERNAME,
+  TIMEZONE,
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -163,7 +168,10 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[]): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  envVars?: Record<string, string>,
+): string[] {
   const args: string[] = ['run', '-i', '--rm'];
 
   // Podman: -v with :ro suffix for readonly
@@ -172,6 +180,13 @@ function buildContainerArgs(mounts: VolumeMount[]): string[] {
       args.push('-v', `${mount.hostPath}:${mount.containerPath}:ro`);
     } else {
       args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+    }
+  }
+
+  // Add environment variables
+  if (envVars) {
+    for (const [key, value] of Object.entries(envVars)) {
+      args.push('-e', `${key}=${value}`);
     }
   }
 
@@ -190,7 +205,22 @@ export async function runContainerAgent(
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group, input.isMain);
-  const containerArgs = buildContainerArgs(mounts);
+
+  // Pass timezone to all containers for correct date handling
+  const envVars: Record<string, string> = {
+    TZ: TIMEZONE,
+  };
+
+  // Pass iCloud credentials to main channel containers only
+  if (input.isMain && ICLOUD_CALENDAR_ENABLED) {
+    envVars.ICLOUD_USERNAME = ICLOUD_USERNAME!;
+    envVars.ICLOUD_APP_PASSWORD = ICLOUD_APP_PASSWORD!;
+    if (ICLOUD_CALENDARS) {
+      envVars.ICLOUD_CALENDARS = ICLOUD_CALENDARS;
+    }
+  }
+
+  const containerArgs = buildContainerArgs(mounts, envVars);
 
   logger.debug(
     {

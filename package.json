@@ -27,7 +27,11 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "@types/qrcode-terminal": "^0.12.2",
+    "dotenv": "^17.2.3",
+    "node-ical": "^0.25.0",
     "prettier": "^3.8.1",
+    "ts-node": "^10.9.2",
+    "tsdav": "^2.1.6",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   },

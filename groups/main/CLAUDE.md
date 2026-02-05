@@ -42,7 +42,25 @@ When you learn something important:
 
 You may receive incoming emails as prompts. Process them silently — do NOT send WhatsApp messages unless something is genuinely urgent.
 
-For each email, decide what to do:
+### Email Processing Rules
+
+**Delivery/Tracking Emails** (CTT, DHL, UPS, Amazon, etc.):
+- Send WhatsApp message with tracking number and PIN (if present)
+- Mark as read and leave in inbox (user will move after adding to Parcel app)
+- Log action in daily activity file
+
+**Invoice Emails** (with direct debit/already paid):
+- Mark as read and move to Documents folder
+- Log action in daily activity file
+- Do NOT notify unless there's an issue
+
+**Netflix Login Authorization Emails:**
+- Extract the login authorization link from the email
+- Send WhatsApp message with the link
+- Mark as read and leave in inbox
+- Log action in daily activity file
+
+**Other Emails:**
 - **Leave it alone** — work emails, personal/health emails, and anything that doesn't need your involvement. Just log it.
 - **Organize info** — save travel itineraries, receipts, confirmations, etc. to relevant files.
 - **Draft a reply** — if warranted, use `mcp__nanoclaw__create_email_draft`. Include `in_reply_to` and `references` for threading. **NEVER send email directly.**

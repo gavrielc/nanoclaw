@@ -29,23 +29,24 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install pnpm and global tools
+RUN npm install -g pnpm typescript agent-browser @anthropic-ai/claude-code
 
 # Create app directory
 WORKDIR /app
 
 # Copy package files first for better caching
-COPY agent-runner/package*.json ./
+COPY agent-runner/package.json ./
 
-# Install dependencies
-RUN npm install
+# Install all dependencies (fresh lockfile for Linux)
+RUN pnpm install
 
 # Copy source code
-COPY agent-runner/ ./
+COPY agent-runner/src ./src
+COPY agent-runner/tsconfig.json ./
 
 # Build TypeScript
-RUN npm run build
+RUN pnpm exec tsc
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks

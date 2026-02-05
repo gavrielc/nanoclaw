@@ -66,6 +66,20 @@ export const TRIGGER_PATTERN = new RegExp(
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// Pushover notifications (optional)
+export const PUSHOVER_USER_KEY = process.env.PUSHOVER_USER_KEY;
+export const PUSHOVER_APP_TOKEN = process.env.PUSHOVER_APP_TOKEN;
+export const PUSHOVER_ENABLED = !!(PUSHOVER_USER_KEY && PUSHOVER_APP_TOKEN);
+export const PUSHOVER_DEVICE = process.env.PUSHOVER_DEVICE; // Target specific device (optional)
+export const PUSHOVER_PRIORITY = parseInt(process.env.PUSHOVER_PRIORITY || '0', 10) as -2 | -1 | 0 | 1 | 2;
+export const PUSHOVER_ERROR_PRIORITY = parseInt(process.env.PUSHOVER_ERROR_PRIORITY || '1', 10) as -2 | -1 | 0 | 1 | 2;
+
+// iCloud Calendar (optional, main channel only)
+export const ICLOUD_USERNAME = process.env.ICLOUD_USERNAME;
+export const ICLOUD_APP_PASSWORD = process.env.ICLOUD_APP_PASSWORD;
+export const ICLOUD_CALENDAR_ENABLED = !!(ICLOUD_USERNAME && ICLOUD_APP_PASSWORD);
+export const ICLOUD_CALENDARS = process.env.ICLOUD_CALENDARS; // Comma-separated calendar names to enable (optional, all if not set)
+
 // Email channel (optional)
 import type { EmailConfig } from './types.js';
 

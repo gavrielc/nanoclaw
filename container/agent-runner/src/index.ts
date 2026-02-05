@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { createIpcMcp } from './ipc-mcp.js';
+import { createCalendarMcp } from './calendar-mcp.js';
 
 interface ContainerInput {
   prompt: string;
@@ -222,6 +223,30 @@ async function main(): Promise<void> {
     isMain: input.isMain
   });
 
+  // Build MCP servers config
+  const mcpServers: Record<string, ReturnType<typeof createIpcMcp>> = {
+    nanoclaw: ipcMcp,
+  };
+
+  // Add calendar MCP if iCloud credentials are present (main channel only)
+  const calendarEnabled = !!(process.env.ICLOUD_USERNAME && process.env.ICLOUD_APP_PASSWORD);
+  if (calendarEnabled) {
+    log('iCloud calendar enabled');
+    mcpServers.calendar = createCalendarMcp();
+  }
+
+  // Build allowed tools list
+  const allowedTools = [
+    'Bash',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    'WebSearch', 'WebFetch',
+    'mcp__nanoclaw__*',
+  ];
+
+  if (calendarEnabled) {
+    allowedTools.push('mcp__calendar__*');
+  }
+
   let result: string | null = null;
   let newSessionId: string | undefined;
 
@@ -239,18 +264,11 @@ async function main(): Promise<void> {
       options: {
         cwd: '/workspace/group',
         resume: input.sessionId,
-        allowedTools: [
-          'Bash',
-          'Read', 'Write', 'Edit', 'Glob', 'Grep',
-          'WebSearch', 'WebFetch',
-          'mcp__nanoclaw__*'
-        ],
+        allowedTools,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         settingSources: ['project'],
-        mcpServers: {
-          nanoclaw: ipcMcp
-        },
+        mcpServers,
         hooks: {
           PreCompact: [{ hooks: [createPreCompactHook()] }]
         }

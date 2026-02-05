@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ASSISTANT_NAME,
   DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
@@ -18,6 +19,7 @@ import {
   updateTaskAfterRun,
 } from './db.js';
 import { logger } from './logger.js';
+import { sendErrorNotification, sendNotification } from './pushover.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
@@ -120,6 +122,21 @@ async function runTask(
     result,
     error,
   });
+
+  // Notify task completion
+  const promptSnippet = task.prompt.slice(0, 40) + (task.prompt.length > 40 ? '...' : '');
+  const durationSec = Math.round(durationMs / 1000);
+  if (error) {
+    sendErrorNotification(
+      `\u{274C} ${ASSISTANT_NAME} Task`,
+      `${task.id}: "${promptSnippet}" failed (${durationSec}s)`,
+    );
+  } else {
+    sendNotification(
+      `\u{23F0} ${ASSISTANT_NAME} Task`,
+      `${task.id}: "${promptSnippet}" (${durationSec}s)`,
+    );
+  }
 
   let nextRun: string | null = null;
   if (task.schedule_type === 'cron') {
