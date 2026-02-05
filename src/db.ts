@@ -77,6 +77,21 @@ export function initDatabase(): void {
   } catch {
     /* column already exists */
   }
+
+  initEmailTable();
+}
+
+function initEmailTable(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS processed_emails (
+      message_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      subject TEXT,
+      processed_at TEXT NOT NULL,
+      response_sent INTEGER DEFAULT 0
+    )
+  `);
 }
 
 /**
@@ -393,4 +408,31 @@ export function getTaskRunLogs(taskId: string, limit = 10): TaskRunLog[] {
   `,
     )
     .all(taskId, limit) as TaskRunLog[];
+}
+
+export function isEmailProcessed(messageId: string): boolean {
+  // Only consider fully processed (response_sent = 1). Emails that were
+  // started but never replied to (response_sent = 0) will be retried.
+  const row = db
+    .prepare('SELECT 1 FROM processed_emails WHERE message_id = ? AND response_sent = 1')
+    .get(messageId);
+  return !!row;
+}
+
+export function markEmailProcessed(
+  messageId: string,
+  threadId: string,
+  sender: string,
+  subject: string,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO processed_emails (message_id, thread_id, sender, subject, processed_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(messageId, threadId, sender, subject, new Date().toISOString());
+}
+
+export function markEmailResponded(messageId: string): void {
+  db.prepare(
+    'UPDATE processed_emails SET response_sent = 1 WHERE message_id = ?',
+  ).run(messageId);
 }

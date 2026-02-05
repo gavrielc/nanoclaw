@@ -45,3 +45,14 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Add recurring context directly to this CLAUDE.md
 - Always index new memory files at the top of CLAUDE.md
+
+## Email (Gmail)
+
+You have access to Gmail via MCP tools:
+- `mcp__gmail__search_emails` — Search emails with a query string
+- `mcp__gmail__get_email` — Get full email content by message ID
+- `mcp__gmail__send_email` — Send an email
+- `mcp__gmail__draft_email` — Create a draft
+- `mcp__gmail__list_labels` — List available labels
+
+Example triggers: "Check my unread emails from today", "Send an email to john@example.com about the meeting", "List my Gmail labels".

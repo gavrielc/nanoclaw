@@ -1,5 +1,7 @@
 import path from 'path';
 
+import { EmailChannelConfig } from './types.js';
+
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
@@ -45,3 +47,12 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+export const EMAIL_CHANNEL: EmailChannelConfig = {
+  enabled: true,
+  triggerMode: 'label',
+  triggerValue: 'Nanoclaw',
+  contextMode: 'sender',
+  pollIntervalMs: 60000,
+  replyPrefix: '[Andy] ',
+};

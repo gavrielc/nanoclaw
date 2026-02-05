@@ -243,13 +243,15 @@ async function main(): Promise<void> {
           'Bash',
           'Read', 'Write', 'Edit', 'Glob', 'Grep',
           'WebSearch', 'WebFetch',
-          'mcp__nanoclaw__*'
+          'mcp__nanoclaw__*',
+          'mcp__gmail__*'
         ],
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         settingSources: ['project'],
         mcpServers: {
-          nanoclaw: ipcMcp
+          nanoclaw: ipcMcp,
+          gmail: { command: 'npx', args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'] }
         },
         hooks: {
           PreCompact: [{ hooks: [createPreCompactHook()] }]

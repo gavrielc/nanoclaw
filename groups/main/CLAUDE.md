@@ -192,3 +192,20 @@ When scheduling tasks for other groups, use the `target_group` parameter:
 - `schedule_task(prompt: "...", schedule_type: "cron", schedule_value: "0 9 * * 1", target_group: "family-chat")`
 
 The task will run in that group's context with access to their files and memory.
+
+---
+
+## Email (Gmail)
+
+You have access to Gmail via MCP tools:
+- `mcp__gmail__search_emails` — Search emails with a query string
+- `mcp__gmail__get_email` — Get full email content by message ID
+- `mcp__gmail__send_email` — Send an email
+- `mcp__gmail__draft_email` — Create a draft
+- `mcp__gmail__list_labels` — List available labels
+
+### Email Channel (automatic)
+
+Emails labeled **Nanoclaw** are automatically picked up and routed to the agent. Context is grouped per sender — each sender gets their own persistent session under `groups/email-sender-<address>/`.
+
+The agent's reply is sent back as an email. Reply subjects are automatically prefixed with `Re:` and the body is prefixed with `[Andy] `.

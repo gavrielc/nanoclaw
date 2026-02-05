@@ -77,3 +77,12 @@ export interface TaskRunLog {
   result: string | null;
   error: string | null;
 }
+
+export interface EmailChannelConfig {
+  enabled: boolean;
+  triggerMode: 'label' | 'address' | 'subject';
+  triggerValue: string;
+  contextMode: 'thread' | 'sender' | 'single';
+  pollIntervalMs: number;
+  replyPrefix?: string;
+}
