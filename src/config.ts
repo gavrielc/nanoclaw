@@ -87,6 +87,10 @@ export const ICLOUD_CALENDAR_ENABLED = !!(
 );
 export const ICLOUD_CALENDARS = process.env.ICLOUD_CALENDARS; // Comma-separated calendar names to enable (optional, all if not set)
 
+// Telegram bot (optional)
+export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+export const TELEGRAM_ENABLED = !!TELEGRAM_BOT_TOKEN;
+
 // Email channel (optional)
 import type { EmailConfig } from './types.js';
 

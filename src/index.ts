@@ -21,10 +21,13 @@ import {
   POLL_INTERVAL,
   PUSHOVER_ENABLED,
   STORE_DIR,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_ENABLED,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import { EmailChannel } from './email-channel.js';
+import { TelegramChannel } from './telegram-channel.js';
 import type { IncomingEmail } from './types.js';
 import {
   AvailableGroup,
@@ -42,6 +45,7 @@ import {
   initDatabase,
   setLastGroupSync,
   storeChatMetadata,
+  storeGenericMessage,
   storeMessage,
   updateChatName,
 } from './db.js';
@@ -54,6 +58,8 @@ import { sendErrorNotification, sendNotification } from './pushover.js';
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 let sock: WASocket;
+let whatsAppConnected = false;
+let telegramChannel: TelegramChannel | null = null;
 let lastTimestamp = '';
 let sessions: Session = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -79,7 +85,13 @@ function translateJid(jid: string): string {
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
   try {
-    await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
+    if (jid.startsWith('tg:')) {
+      if (isTyping && telegramChannel) {
+        await telegramChannel.setTyping(jid.slice(3));
+      }
+    } else if (whatsAppConnected) {
+      await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
+    }
   } catch (err) {
     logger.debug({ jid, err }, 'Failed to update typing status');
   }
@@ -173,7 +185,11 @@ function getAvailableGroups(): AvailableGroup[] {
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.jid.endsWith('@g.us'))
+    .filter(
+      (c) =>
+        c.jid !== '__group_sync__' &&
+        (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:')),
+    )
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -304,6 +320,10 @@ async function runAgent(
 }
 
 async function sendReaction(msg: NewMessage, emoji: string): Promise<void> {
+  // Telegram Bot API doesn't support message reactions in standard bot mode
+  if (msg.chat_jid.startsWith('tg:')) return;
+  if (!whatsAppConnected) return;
+
   try {
     await sock.sendMessage(msg.chat_jid, {
       react: {
@@ -323,7 +343,22 @@ async function sendReaction(msg: NewMessage, emoji: string): Promise<void> {
 
 async function sendMessage(jid: string, text: string): Promise<void> {
   try {
-    await sock.sendMessage(jid, { text });
+    if (jid.startsWith('tg:')) {
+      if (telegramChannel) {
+        await telegramChannel.sendMessage(jid.slice(3), text);
+      } else {
+        logger.warn(
+          { jid },
+          'Telegram message dropped - channel not connected',
+        );
+        return;
+      }
+    } else if (whatsAppConnected) {
+      await sock.sendMessage(jid, { text });
+    } else {
+      logger.warn({ jid }, 'WhatsApp message dropped - not connected');
+      return;
+    }
     logger.info({ jid, length: text.length }, 'Message sent');
   } catch (err) {
     logger.error({ jid, err }, 'Failed to send message');
@@ -915,6 +950,7 @@ async function connectWhatsApp(): Promise<void> {
     }
 
     if (connection === 'close') {
+      whatsAppConnected = false;
       const reason = (lastDisconnect?.error as any)?.output?.statusCode;
       const shouldReconnect = reason !== DisconnectReason.loggedOut;
       logger.info({ reason, shouldReconnect }, 'Connection closed');
@@ -927,9 +963,9 @@ async function connectWhatsApp(): Promise<void> {
         process.exit(0);
       }
     } else if (connection === 'open') {
+      whatsAppConnected = true;
       logger.info('Connected to WhatsApp');
 
-      // Notify startup
       sendNotification(
         `\u{1F7E2} ${ASSISTANT_NAME} Online`,
         `WhatsApp connected${PUSHOVER_ENABLED ? ', notifications enabled' : ''}`,
@@ -949,32 +985,11 @@ async function connectWhatsApp(): Promise<void> {
       syncGroupMetadata().catch((err) =>
         logger.error({ err }, 'Initial group sync failed'),
       );
-      // Set up daily sync timer
       setInterval(() => {
         syncGroupMetadata().catch((err) =>
           logger.error({ err }, 'Periodic group sync failed'),
         );
       }, GROUP_SYNC_INTERVAL_MS);
-      startSchedulerLoop({
-        sendMessage,
-        registeredGroups: () => registeredGroups,
-        getSessions: () => sessions,
-      });
-      startIpcWatcher();
-      startMessageLoop();
-
-      // Start email channel if configured
-      if (EMAIL_ENABLED && EMAIL_CONFIG) {
-        emailChannel = new EmailChannel(EMAIL_CONFIG, {
-          processEmails,
-        });
-        emailChannel
-          .start()
-          .catch((err) =>
-            logger.error({ err }, 'Email channel failed to start'),
-          );
-        startEmailSummaryTimer();
-      }
     }
   });
 
@@ -1079,8 +1094,74 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
-  await connectWhatsApp();
+
+  // Start Telegram channel if configured
+  if (TELEGRAM_ENABLED && TELEGRAM_BOT_TOKEN) {
+    telegramChannel = new TelegramChannel(TELEGRAM_BOT_TOKEN, {
+      onMessage: (
+        chatJid,
+        chatName,
+        senderId,
+        senderName,
+        content,
+        messageId,
+      ) => {
+        const timestamp = new Date().toISOString();
+        storeChatMetadata(chatJid, timestamp, chatName);
+
+        if (registeredGroups[chatJid]) {
+          storeGenericMessage(
+            messageId,
+            chatJid,
+            senderId,
+            senderName,
+            content,
+            timestamp,
+            false,
+          );
+        }
+      },
+    });
+    await telegramChannel.start();
+    logger.info('Telegram channel started');
+    sendNotification(
+      `\u{1F7E2} ${ASSISTANT_NAME} Online`,
+      `Telegram connected${PUSHOVER_ENABLED ? ', notifications enabled' : ''}`,
+    );
+  }
+
+  // Start WhatsApp connection (non-blocking — reconnects automatically)
+  connectWhatsApp();
+
+  // Start shared services immediately — independent of any single channel
+  startSchedulerLoop({
+    sendMessage,
+    registeredGroups: () => registeredGroups,
+    getSessions: () => sessions,
+  });
+  startIpcWatcher();
+  startMessageLoop();
+
+  // Start email channel if configured
+  if (EMAIL_ENABLED && EMAIL_CONFIG) {
+    emailChannel = new EmailChannel(EMAIL_CONFIG, {
+      processEmails,
+    });
+    emailChannel
+      .start()
+      .catch((err) => logger.error({ err }, 'Email channel failed to start'));
+    startEmailSummaryTimer();
+  }
 }
+
+function shutdown(): void {
+  logger.info('Shutting down...');
+  if (telegramChannel) telegramChannel.stop();
+  process.exit(0);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 main().catch((err) => {
   logger.error({ err }, 'Failed to start NanoClaw');
