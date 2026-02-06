@@ -296,7 +296,9 @@ async function runAgent(
 async function sendMessage(chatId: number | string, text: string): Promise<void> {
   try {
     const chatIdNum = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
-    await bot.telegram.sendMessage(chatIdNum, text);
+    await bot.telegram.sendMessage(chatIdNum, text, {
+      parse_mode: 'Markdown',
+    });
     logger.info({ chatId: chatIdNum, length: text.length }, 'Message sent');
   } catch (err) {
     logger.error({ chatId, err }, 'Failed to send message');
