@@ -21,6 +21,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import {
+  AgentResponse,
   AvailableGroup,
   runContainerAgent,
   writeGroupsSnapshot,
@@ -236,22 +237,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const response = await runAgent(group, prompt, chatJid);
   await setTyping(chatJid, false);
 
-  if (response) {
-    // Fix batching bug: advance to latest message in batch, not just the trigger
-    lastAgentTimestamp[chatJid] =
-      missedMessages[missedMessages.length - 1].timestamp;
-    saveState();
-    await sendMessage(chatJid, `${ASSISTANT_NAME}: ${response}`);
-    return true;
+  if (response === 'error') {
+    // Container or agent error — signal failure so queue can retry with backoff
+    return false;
   }
-  return false;
+
+  // Agent processed messages successfully (whether it responded or stayed silent)
+  lastAgentTimestamp[chatJid] =
+    missedMessages[missedMessages.length - 1].timestamp;
+  saveState();
+
+  if (response.status === 'responded' && response.userMessage) {
+    await sendMessage(chatJid, `${ASSISTANT_NAME}: ${response.userMessage}`);
+  }
+
+  if (response.internalLog) {
+    logger.info(
+      { group: group.name, agentStatus: response.status },
+      `Agent: ${response.internalLog}`,
+    );
+  }
+
+  return true;
 }
 
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
-): Promise<string | null> {
+): Promise<AgentResponse | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
 
@@ -303,13 +317,13 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      return null;
+      return 'error';
     }
 
-    return output.result;
+    return output.result ?? { status: 'silent' };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    return null;
+    return 'error';
   }
 }
 

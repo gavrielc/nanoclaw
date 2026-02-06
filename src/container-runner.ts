@@ -40,9 +40,15 @@ export interface ContainerInput {
   isMain: boolean;
 }
 
+export interface AgentResponse {
+  status: 'responded' | 'silent';
+  userMessage?: string;
+  internalLog?: string;
+}
+
 export interface ContainerOutput {
   status: 'success' | 'error';
-  result: string | null;
+  result: AgentResponse | null;
   newSessionId?: string;
   error?: string;
 }

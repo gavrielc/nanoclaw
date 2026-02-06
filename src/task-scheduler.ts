@@ -103,8 +103,8 @@ async function runTask(
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
-    } else {
-      result = output.result;
+    } else if (output.result) {
+      result = output.result.userMessage || output.result.internalLog || null;
     }
 
     logger.info(

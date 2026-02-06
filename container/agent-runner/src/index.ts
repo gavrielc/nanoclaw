@@ -17,9 +17,35 @@ interface ContainerInput {
   isScheduledTask?: boolean;
 }
 
+interface AgentResponse {
+  status: 'responded' | 'silent';
+  userMessage?: string;
+  internalLog?: string;
+}
+
+const AGENT_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: {
+      type: 'string',
+      enum: ['responded', 'silent'],
+      description: 'Use "responded" when you have a message for the user. Use "silent" when the messages don\'t require a response (e.g. the conversation is between other people and doesn\'t involve you, or no trigger/mention was directed at you).',
+    },
+    userMessage: {
+      type: 'string',
+      description: 'The message to send to the user. Required when status is "responded".',
+    },
+    internalLog: {
+      type: 'string',
+      description: 'Optional internal note about why you chose this status (for logging, not shown to users).',
+    },
+  },
+  required: ['status'],
+} as const;
+
 interface ContainerOutput {
   status: 'success' | 'error';
-  result: string | null;
+  result: AgentResponse | null;
   newSessionId?: string;
   error?: string;
 }
@@ -222,7 +248,7 @@ async function main(): Promise<void> {
     isMain: input.isMain
   });
 
-  let result: string | null = null;
+  let result: AgentResponse | null = null;
   let newSessionId: string | undefined;
 
   // Add context for scheduled tasks
@@ -253,6 +279,10 @@ async function main(): Promise<void> {
         },
         hooks: {
           PreCompact: [{ hooks: [createPreCompactHook()] }]
+        },
+        outputFormat: {
+          type: 'json_schema',
+          schema: AGENT_RESPONSE_SCHEMA,
         }
       }
     })) {
@@ -261,15 +291,25 @@ async function main(): Promise<void> {
         log(`Session initialized: ${newSessionId}`);
       }
 
-      if ('result' in message && message.result) {
-        result = message.result as string;
+      if (message.type === 'result') {
+        if (message.subtype === 'success' && message.structured_output) {
+          result = message.structured_output as AgentResponse;
+          log(`Agent result: status=${result.status}${result.internalLog ? `, log=${result.internalLog}` : ''}`);
+        } else if (message.subtype === 'error_max_structured_output_retries') {
+          // Agent couldn't produce valid structured output — fall back to text result
+          log('Agent failed to produce structured output, falling back to text');
+          const textResult = 'result' in message ? (message as { result?: string }).result : null;
+          if (textResult) {
+            result = { status: 'responded', userMessage: textResult };
+          }
+        }
       }
     }
 
     log('Agent completed successfully');
     writeOutput({
       status: 'success',
-      result,
+      result: result ?? { status: 'silent' },
       newSessionId
     });
 

@@ -9,12 +9,16 @@ interface QueuedTask {
   fn: () => Promise<void>;
 }
 
+const MAX_RETRIES = 5;
+const BASE_RETRY_MS = 5000;
+
 interface GroupState {
   active: boolean;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
   containerName: string | null;
+  retryCount: number;
 }
 
 export class GroupQueue {
@@ -34,6 +38,7 @@ export class GroupQueue {
         pendingTasks: [],
         process: null,
         containerName: null,
+        retryCount: 0,
       };
       this.groups.set(groupJid, state);
     }
@@ -126,22 +131,15 @@ export class GroupQueue {
     try {
       if (this.processMessagesFn) {
         const success = await this.processMessagesFn(groupJid);
-        if (!success) {
-          logger.info({ groupJid }, 'Processing failed, scheduling retry');
-          setTimeout(() => {
-            if (!this.shuttingDown) {
-              this.enqueueMessageCheck(groupJid);
-            }
-          }, 5000);
+        if (success) {
+          state.retryCount = 0;
+        } else {
+          this.scheduleRetry(groupJid, state);
         }
       }
     } catch (err) {
       logger.error({ groupJid, err }, 'Error processing messages for group');
-      setTimeout(() => {
-        if (!this.shuttingDown) {
-          this.enqueueMessageCheck(groupJid);
-        }
-      }, 5000);
+      this.scheduleRetry(groupJid, state);
     } finally {
       state.active = false;
       state.process = null;
@@ -172,6 +170,29 @@ export class GroupQueue {
       this.activeCount--;
       this.drainGroup(groupJid);
     }
+  }
+
+  private scheduleRetry(groupJid: string, state: GroupState): void {
+    state.retryCount++;
+    if (state.retryCount > MAX_RETRIES) {
+      logger.error(
+        { groupJid, retryCount: state.retryCount },
+        'Max retries exceeded, dropping messages (will retry on next incoming message)',
+      );
+      state.retryCount = 0;
+      return;
+    }
+
+    const delayMs = BASE_RETRY_MS * Math.pow(2, state.retryCount - 1);
+    logger.info(
+      { groupJid, retryCount: state.retryCount, delayMs },
+      'Scheduling retry with backoff',
+    );
+    setTimeout(() => {
+      if (!this.shuttingDown) {
+        this.enqueueMessageCheck(groupJid);
+      }
+    }, delayMs);
   }
 
   private drainGroup(groupJid: string): void {
