@@ -27,27 +27,33 @@ import {
 } from './container-runner.js';
 import {
   getAllChats,
+  getAllRegisteredGroups,
+  getAllSessions,
   getAllTasks,
   getLastGroupSync,
   getMessagesSince,
   getNewMessages,
+  getRouterState,
   getTaskById,
   initDatabase,
   setLastGroupSync,
+  setRegisteredGroup,
+  setRouterState,
+  setSession,
   storeChatMetadata,
   storeMessage,
   updateChatName,
 } from './db.js';
+import { GroupQueue } from './group-queue.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup, Session } from './types.js';
-import { loadJson, saveJson } from './utils.js';
+import { RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 let sock: WASocket;
 let lastTimestamp = '';
-let sessions: Session = {};
+let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
@@ -56,6 +62,8 @@ let lidToPhoneMap: Record<string, string> = {};
 let messageLoopRunning = false;
 let ipcWatcherRunning = false;
 let groupSyncTimerStarted = false;
+
+const queue = new GroupQueue();
 
 /**
  * Translate a JID from LID format to phone format if we have a mapping.
@@ -81,18 +89,12 @@ async function setTyping(jid: string, isTyping: boolean): Promise<void> {
 }
 
 function loadState(): void {
-  const statePath = path.join(DATA_DIR, 'router_state.json');
-  const state = loadJson<{
-    last_timestamp?: string;
-    last_agent_timestamp?: Record<string, string>;
-  }>(statePath, {});
-  lastTimestamp = state.last_timestamp || '';
-  lastAgentTimestamp = state.last_agent_timestamp || {};
-  sessions = loadJson(path.join(DATA_DIR, 'sessions.json'), {});
-  registeredGroups = loadJson(
-    path.join(DATA_DIR, 'registered_groups.json'),
-    {},
-  );
+  // Load from SQLite (migration from JSON happens in initDatabase)
+  lastTimestamp = getRouterState('last_timestamp') || '';
+  const agentTs = getRouterState('last_agent_timestamp');
+  lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
+  sessions = getAllSessions();
+  registeredGroups = getAllRegisteredGroups();
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
@@ -100,16 +102,16 @@ function loadState(): void {
 }
 
 function saveState(): void {
-  saveJson(path.join(DATA_DIR, 'router_state.json'), {
-    last_timestamp: lastTimestamp,
-    last_agent_timestamp: lastAgentTimestamp,
-  });
-  saveJson(path.join(DATA_DIR, 'sessions.json'), sessions);
+  setRouterState('last_timestamp', lastTimestamp);
+  setRouterState(
+    'last_agent_timestamp',
+    JSON.stringify(lastAgentTimestamp),
+  );
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
-  saveJson(path.join(DATA_DIR, 'registered_groups.json'), registeredGroups);
+  setRegisteredGroup(jid, group);
 
   // Create group folder
   const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
@@ -177,26 +179,35 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
-async function processMessage(msg: NewMessage): Promise<void> {
-  const group = registeredGroups[msg.chat_jid];
+/**
+ * Process all pending messages for a group.
+ * Called by the GroupQueue when it's this group's turn.
+ */
+async function processGroupMessages(chatJid: string): Promise<void> {
+  const group = registeredGroups[chatJid];
   if (!group) return;
 
-  const content = msg.content.trim();
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
 
-  // Main group responds to all messages; other groups require trigger prefix
-  if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return;
-
-  // Get all messages since last agent interaction so the session has full context
-  const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
+  // Get all messages since last agent interaction
+  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
   const missedMessages = getMessagesSince(
-    msg.chat_jid,
+    chatJid,
     sinceTimestamp,
     ASSISTANT_NAME,
   );
 
+  if (missedMessages.length === 0) return;
+
+  // For non-main groups, check if any message has the trigger
+  if (!isMainGroup) {
+    const hasTrigger = missedMessages.some((m) =>
+      TRIGGER_PATTERN.test(m.content.trim()),
+    );
+    if (!hasTrigger) return;
+  }
+
   const lines = missedMessages.map((m) => {
-    // Escape XML special characters in content
     const escapeXml = (s: string) =>
       s
         .replace(/&/g, '&amp;')
@@ -207,20 +218,21 @@ async function processMessage(msg: NewMessage): Promise<void> {
   });
   const prompt = `<messages>\n${lines.join('\n')}\n</messages>`;
 
-  if (!prompt) return;
-
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
-    'Processing message',
+    'Processing messages',
   );
 
-  await setTyping(msg.chat_jid, true);
-  const response = await runAgent(group, prompt, msg.chat_jid);
-  await setTyping(msg.chat_jid, false);
+  await setTyping(chatJid, true);
+  const response = await runAgent(group, prompt, chatJid);
+  await setTyping(chatJid, false);
 
   if (response) {
-    lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
+    // Fix batching bug: advance to latest message in batch, not just the trigger
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
+    saveState();
+    await sendMessage(chatJid, `${ASSISTANT_NAME}: ${response}`);
   }
 }
 
@@ -258,17 +270,21 @@ async function runAgent(
   );
 
   try {
-    const output = await runContainerAgent(group, {
-      prompt,
-      sessionId,
-      groupFolder: group.folder,
-      chatJid,
-      isMain,
-    });
+    const output = await runContainerAgent(
+      group,
+      {
+        prompt,
+        sessionId,
+        groupFolder: group.folder,
+        chatJid,
+        isMain,
+      },
+      (proc) => queue.registerProcess(chatJid, proc),
+    );
 
     if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
-      saveJson(path.join(DATA_DIR, 'sessions.json'), sessions);
+      setSession(group.folder, output.newSessionId);
     }
 
     if (output.status === 'error') {
@@ -692,7 +708,7 @@ async function connectWhatsApp(): Promise<void> {
       }
     } else if (connection === 'open') {
       logger.info('Connected to WhatsApp');
-      
+
       // Build LID to phone mapping from auth state for self-chat translation
       if (sock.user) {
         const phoneUser = sock.user.id.split(':')[0];
@@ -702,7 +718,7 @@ async function connectWhatsApp(): Promise<void> {
           logger.debug({ lidUser, phoneUser }, 'LID to phone mapping set');
         }
       }
-      
+
       // Sync group metadata on startup (respects 24h cache)
       syncGroupMetadata().catch((err) =>
         logger.error({ err }, 'Initial group sync failed'),
@@ -720,6 +736,8 @@ async function connectWhatsApp(): Promise<void> {
         sendMessage,
         registeredGroups: () => registeredGroups,
         getSessions: () => sessions,
+        queue,
+        onProcess: (groupJid, proc) => queue.registerProcess(groupJid, proc),
       });
       startIpcWatcher();
       startMessageLoop();
@@ -736,7 +754,7 @@ async function connectWhatsApp(): Promise<void> {
 
       // Translate LID JID to phone JID if applicable
       const chatJid = translateJid(rawJid);
-      
+
       const timestamp = new Date(
         Number(msg.messageTimestamp) * 1000,
       ).toISOString();
@@ -763,34 +781,62 @@ async function startMessageLoop(): Promise<void> {
     return;
   }
   messageLoopRunning = true;
+
+  // Wire up the queue's message processing function
+  queue.setProcessMessagesFn(processGroupMessages);
+
   logger.info(`NanoClaw running (trigger: @${ASSISTANT_NAME})`);
 
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
+      const { messages, newTimestamp } = getNewMessages(
+        jids,
+        lastTimestamp,
+        ASSISTANT_NAME,
+      );
 
-      if (messages.length > 0)
+      if (messages.length > 0) {
         logger.info({ count: messages.length }, 'New messages');
-      for (const msg of messages) {
-        try {
-          await processMessage(msg);
-          // Only advance timestamp after successful processing for at-least-once delivery
-          lastTimestamp = msg.timestamp;
-          saveState();
-        } catch (err) {
-          logger.error(
-            { err, msg: msg.id },
-            'Error processing message, will retry',
-          );
-          // Stop processing this batch - failed message will be retried next loop
-          break;
+
+        // Advance the "seen" cursor for all messages immediately
+        lastTimestamp = newTimestamp;
+        saveState();
+
+        // Deduplicate by group and enqueue
+        const groupsWithMessages = new Set<string>();
+        for (const msg of messages) {
+          groupsWithMessages.add(msg.chat_jid);
+        }
+
+        for (const chatJid of groupsWithMessages) {
+          queue.enqueueMessageCheck(chatJid);
         }
       }
     } catch (err) {
       logger.error({ err }, 'Error in message loop');
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+  }
+}
+
+/**
+ * Startup recovery: check for unprocessed messages in registered groups.
+ * Handles crash between advancing lastTimestamp and processing messages.
+ */
+function recoverPendingMessages(): void {
+  queue.setProcessMessagesFn(processGroupMessages);
+
+  for (const [chatJid, group] of Object.entries(registeredGroups)) {
+    const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
+    const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+    if (pending.length > 0) {
+      logger.info(
+        { group: group.name, pendingCount: pending.length },
+        'Recovery: found unprocessed messages',
+      );
+      queue.enqueueMessageCheck(chatJid);
+    }
   }
 }
 
@@ -857,6 +903,17 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  recoverPendingMessages();
+
+  // Graceful shutdown handlers
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'Shutdown signal received');
+    await queue.shutdown(10000);
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   await connectWhatsApp();
 }
 

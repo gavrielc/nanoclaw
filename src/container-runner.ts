@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in Apple Container and handles IPC
  */
-import { exec, spawn } from 'child_process';
+import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -38,7 +38,6 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
-  isScheduledTask?: boolean;
 }
 
 export interface ContainerOutput {
@@ -51,7 +50,7 @@ export interface ContainerOutput {
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
-  readonly?: boolean;
+  readonly: boolean;
 }
 
 function buildVolumeMounts(
@@ -185,6 +184,7 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
+  onProcess: (proc: ChildProcess) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -226,6 +226,8 @@ export async function runContainerAgent(
     const container = spawn('container', containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    onProcess(container);
 
     let stdout = '';
     let stderr = '';

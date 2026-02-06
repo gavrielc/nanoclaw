@@ -31,6 +31,10 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   10,
 ); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
+export const MAX_CONCURRENT_CONTAINERS = parseInt(
+  process.env.MAX_CONCURRENT_CONTAINERS || '3',
+  10,
+);
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
