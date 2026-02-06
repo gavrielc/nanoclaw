@@ -39,7 +39,7 @@ import {
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup, Session } from './types.js';
+import { BoomError, NewMessage, RegisteredGroup, Session } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
 
@@ -679,7 +679,7 @@ async function connectWhatsApp(): Promise<void> {
     }
 
     if (connection === 'close') {
-      const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+      const reason = (lastDisconnect?.error as BoomError)?.output?.statusCode;
       const shouldReconnect = reason !== DisconnectReason.loggedOut;
       logger.info({ reason, shouldReconnect }, 'Connection closed');
 
