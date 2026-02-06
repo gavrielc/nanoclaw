@@ -1,4 +1,11 @@
+import fs from 'fs';
 import path from 'path';
+
+// Resolve the container binary path
+// Needed because launchd doesn't inherit the shell PATH
+const CONTAINER_CANDIDATES = ['/opt/homebrew/bin/container', '/usr/local/bin/container'];
+export const CONTAINER_BINARY =
+  CONTAINER_CANDIDATES.find((p) => fs.existsSync(p)) || 'container';
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const POLL_INTERVAL = 2000;

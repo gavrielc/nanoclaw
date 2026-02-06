@@ -2,6 +2,11 @@ import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+// Ensure Homebrew binaries are available (needed when running via launchd)
+if (!process.env.PATH?.includes('/opt/homebrew/bin')) {
+  process.env.PATH = `/opt/homebrew/bin:${process.env.PATH}`;
+}
+
 import makeWASocket, {
   DisconnectReason,
   WASocket,
@@ -11,6 +16,7 @@ import makeWASocket, {
 
 import {
   ASSISTANT_NAME,
+  CONTAINER_BINARY,
   DATA_DIR,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
@@ -796,12 +802,12 @@ async function startMessageLoop(): Promise<void> {
 
 function ensureContainerSystemRunning(): void {
   try {
-    execSync('container system status', { stdio: 'pipe' });
+    execSync(`${CONTAINER_BINARY} system status`, { stdio: 'pipe' });
     logger.debug('Apple Container system already running');
   } catch {
     logger.info('Starting Apple Container system...');
     try {
-      execSync('container system start', { stdio: 'pipe', timeout: 30000 });
+      execSync(`${CONTAINER_BINARY} system start`, { stdio: 'pipe', timeout: 30000 });
       logger.info('Apple Container system started');
     } catch (err) {
       logger.error({ err }, 'Failed to start Apple Container system');
@@ -835,7 +841,7 @@ function ensureContainerSystemRunning(): void {
 
   // Clean up stopped NanoClaw containers from previous runs
   try {
-    const output = execSync('container ls -a --format {{.Names}}', {
+    const output = execSync(`${CONTAINER_BINARY} ls -a --format {{.Names}}`, {
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf-8',
     });
@@ -844,7 +850,7 @@ function ensureContainerSystemRunning(): void {
       .map((n) => n.trim())
       .filter((n) => n.startsWith('nanoclaw-'));
     if (stale.length > 0) {
-      execSync(`container rm ${stale.join(' ')}`, { stdio: 'pipe' });
+      execSync(`${CONTAINER_BINARY} rm ${stale.join(' ')}`, { stdio: 'pipe' });
       logger.info({ count: stale.length }, 'Cleaned up stopped containers');
     }
   } catch {

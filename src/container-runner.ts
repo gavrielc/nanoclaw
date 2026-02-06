@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 
 import {
+  CONTAINER_BINARY,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -223,7 +224,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn(CONTAINER_BINARY, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -277,7 +278,7 @@ export async function runContainerAgent(
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
       // Graceful stop: sends SIGTERM, waits, then SIGKILL — lets --rm fire
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      exec(`${CONTAINER_BINARY} stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');
