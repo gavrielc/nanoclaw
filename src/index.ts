@@ -182,6 +182,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
   if (!group) return;
 
   const content = msg.content.trim();
+  if (!content) return;
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
 
   // Main group responds to all messages; other groups require trigger prefix
