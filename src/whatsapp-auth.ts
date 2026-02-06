@@ -17,6 +17,8 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
+import { BoomError } from './types.js';
+
 const AUTH_DIR = './store/auth';
 
 const logger = pino({
@@ -60,7 +62,7 @@ async function authenticate(): Promise<void> {
     }
 
     if (connection === 'close') {
-      const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+      const reason = (lastDisconnect?.error as BoomError)?.output?.statusCode;
 
       if (reason === DisconnectReason.loggedOut) {
         console.log('\n✗ Logged out. Delete store/auth and try again.');
