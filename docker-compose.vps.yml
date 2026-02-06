@@ -26,7 +26,7 @@ services:
       - ./groups-bot1:/app/groups
       - ./store-bot1:/app/store
       # 共用的 container 目錄（用於 build agent image）
-      - ./container:/app/container:ro
+      - ./container:/app/container
     environment:
       - TELEGRAM_BOT_TOKEN=${BOT1_TOKEN}
       - ASSISTANT_NAME=${BOT1_NAME:-Andy}
@@ -51,7 +51,7 @@ services:
   #     - ./data-bot2:/app/data
   #     - ./groups-bot2:/app/groups
   #     - ./store-bot2:/app/store
-  #     - ./container:/app/container:ro
+  #     - ./container:/app/container
   #   environment:
   #     - TELEGRAM_BOT_TOKEN=${BOT2_TOKEN}
   #     - ASSISTANT_NAME=${BOT2_NAME:-Bob}
@@ -77,7 +77,7 @@ services:
   #     - ./data-bot3:/app/data
   #     - ./groups-bot3:/app/groups
   #     - ./store-bot3:/app/store
-  #     - ./container:/app/container:ro
+  #     - ./container:/app/container
   #   environment:
   #     - TELEGRAM_BOT_TOKEN=${BOT3_TOKEN}
   #     - ASSISTANT_NAME=${BOT3_NAME:-Charlie}
