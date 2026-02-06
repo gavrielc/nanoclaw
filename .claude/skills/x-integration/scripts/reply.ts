@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * X Integration - Reply to Tweet
- * Usage: echo '{"tweetUrl":"https://x.com/user/status/123","content":"Great post!"}' | npx tsx reply.ts
+ * Usage: echo '{"tweetUrl":"https://x.com/user/status/123","content":"Great post!"}' | bun reply.ts
  */
 
 import { getBrowserContext, navigateToTweet, runScript, validateContent, config, ScriptResult } from '../lib/browser.js';

@@ -1,6 +1,6 @@
 ---
 name: customize
-description: Add new capabilities or modify NanoClaw behavior. Use when user wants to add channels (Telegram, Slack, email input), change triggers, add integrations, modify the router, or make any other customizations. This is an interactive skill that asks questions to understand what the user wants.
+description: Add new capabilities or modify NanoClaw behavior. Use when user wants to add channels (Slack, email input), change triggers, add integrations, modify the router, or make any other customizations. This is an interactive skill that asks questions to understand what the user wants.
 ---
 
 # NanoClaw Customization
@@ -19,10 +19,9 @@ This skill helps users add capabilities or modify behavior. Use AskUserQuestion 
 | File | Purpose |
 |------|---------|
 | `src/config.ts` | Assistant name, trigger pattern, directories |
-| `src/index.ts` | Message routing, WhatsApp connection, agent invocation |
+| `src/index.ts` | Message routing, Telegram connection, agent invocation |
 | `src/db.ts` | Database initialization and queries |
 | `src/types.ts` | TypeScript interfaces |
-| `src/whatsapp-auth.ts` | Standalone WhatsApp authentication script |
 | `.mcp.json` | MCP server configuration (reference) |
 | `groups/CLAUDE.md` | Global memory/persona |
 
@@ -91,18 +90,18 @@ Implementation:
 Always tell the user:
 ```bash
 # Rebuild and restart
-npm run build
+bun run build
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 ```
 
 ## Example Interaction
 
-User: "Add Telegram as an input channel"
+User: "Add Slack as an input channel"
 
-1. Ask: "Should Telegram use the same @Andy trigger, or a different one?"
-2. Ask: "Should Telegram messages create separate conversation contexts, or share with WhatsApp groups?"
-3. Find Telegram MCP or library
+1. Ask: "Should Slack use the same @Andy trigger, or a different one?"
+2. Ask: "Should Slack messages create separate conversation contexts, or share with Telegram groups?"
+3. Find Slack library or MCP server
 4. Add connection handling in index.ts
 5. Update message storage in db.ts
 6. Tell user how to authenticate and test

@@ -278,7 +278,7 @@ After making all changes:
 
 ```bash
 # Compile TypeScript
-npm run build
+bun run build
 
 # Build Docker image
 ./container/build.sh
@@ -320,7 +320,7 @@ Expected: Both operations succeed.
 ### 7d. Full integration test
 
 ```bash
-npm run dev
+bun dev
 # Send @AssistantName hello via WhatsApp
 # Verify response received
 ```

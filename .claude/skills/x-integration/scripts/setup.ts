@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * X Integration - Authentication Setup
- * Usage: npx tsx setup.ts
+ * Usage: bun setup.ts
  *
  * Interactive script - opens browser for manual login
  */

@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * X Integration - Retweet
- * Usage: echo '{"tweetUrl":"https://x.com/user/status/123"}' | npx tsx retweet.ts
+ * Usage: echo '{"tweetUrl":"https://x.com/user/status/123"}' | bun retweet.ts
  */
 
 import { getBrowserContext, navigateToTweet, runScript, config, ScriptResult } from '../lib/browser.js';

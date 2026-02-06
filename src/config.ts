@@ -41,6 +41,25 @@ export const TRIGGER_PATTERN = new RegExp(
   'i',
 );
 
+// Telegram configuration
+export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+export const TELEGRAM_OWNER_ID = process.env.TELEGRAM_OWNER_ID || '';
+
+/** Check if a chat ID is a Telegram chat (prefixed with `tg:`) */
+export function isTelegramChat(id: string): boolean {
+  return id.startsWith('tg:');
+}
+
+/** Prepend `tg:` to a numeric Telegram chat ID for DB storage */
+export function makeTelegramChatId(chatId: number): string {
+  return `tg:${chatId}`;
+}
+
+/** Strip `tg:` prefix and return the numeric Telegram chat ID */
+export function extractTelegramChatId(id: string): number {
+  return Number(id.slice(3));
+}
+
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE =

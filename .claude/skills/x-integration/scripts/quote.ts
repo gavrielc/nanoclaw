@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * X Integration - Quote Tweet
- * Usage: echo '{"tweetUrl":"https://x.com/user/status/123","comment":"My thoughts"}' | npx tsx quote.ts
+ * Usage: echo '{"tweetUrl":"https://x.com/user/status/123","comment":"My thoughts"}' | bun quote.ts
  */
 
 import { getBrowserContext, navigateToTweet, runScript, validateContent, config, ScriptResult } from '../lib/browser.js';

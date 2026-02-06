@@ -5,7 +5,7 @@ description: X (Twitter) integration for NanoClaw. Post tweets, like, reply, ret
 
 # X (Twitter) Integration
 
-Browser automation for X interactions via WhatsApp.
+Browser automation for X interactions via Telegram.
 
 > **Compatibility:** NanoClaw v1.0.0. Directory structure may change in future versions.
 
@@ -23,10 +23,10 @@ Browser automation for X interactions via WhatsApp.
 
 Before using this skill, ensure:
 
-1. **NanoClaw is installed and running** - WhatsApp connected, service active
+1. **NanoClaw is installed and running** - Telegram connected, service active
 2. **Dependencies installed**:
    ```bash
-   npm ls playwright dotenv-cli || npm install playwright dotenv-cli
+   bun pm ls playwright dotenv-cli || bun install playwright dotenv-cli
    ```
 3. **CHROME_PATH configured** in `.env` (if Chrome is not at default location):
    ```bash
@@ -40,7 +40,7 @@ Before using this skill, ensure:
 
 ```bash
 # 1. Setup authentication (interactive)
-npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
+bunx dotenv -e .env -- bun .claude/skills/x-integration/scripts/setup.ts
 # Verify: data/x-auth.json should exist after successful login
 
 # 2. Rebuild container to include skill
@@ -48,7 +48,7 @@ npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
 # Verify: Output shows "COPY .claude/skills/x-integration/agent.ts"
 
 # 3. Rebuild host and restart service
-npm run build
+bun run build
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 # Verify: launchctl list | grep nanoclaw shows PID and exit code 0
 ```
@@ -214,17 +214,17 @@ container build -t "${IMAGE_NAME}:${TAG}" -f container/Dockerfile .
 First, update the build context paths (required to access `.claude/skills/` from project root):
 ```dockerfile
 # Find:
-COPY agent-runner/package*.json ./
+COPY agent-runner/package.json agent-runner/bun.lockb ./
 ...
 COPY agent-runner/ ./
 
 # Replace with:
-COPY container/agent-runner/package*.json ./
+COPY container/agent-runner/package.json container/agent-runner/bun.lockb ./
 ...
 COPY container/agent-runner/ ./
 ```
 
-Then add COPY line after `COPY container/agent-runner/ ./` and before `RUN npm run build`:
+Then add COPY line after `COPY container/agent-runner/ ./` and before `RUN bun run build`:
 ```dockerfile
 # Copy skill MCP tools
 COPY .claude/skills/x-integration/agent.ts ./src/skills/x-integration/
@@ -246,7 +246,7 @@ echo "Chrome not found - update CHROME_PATH in .env"
 ### 2. Run Authentication
 
 ```bash
-npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
+bunx dotenv -e .env -- bun .claude/skills/x-integration/scripts/setup.ts
 ```
 
 This opens Chrome for manual X login. Session saved to `data/x-browser-profile/`.
@@ -270,7 +270,7 @@ cat data/x-auth.json  # Should show {"authenticated": true, ...}
 ### 4. Restart Service
 
 ```bash
-npm run build
+bun run build
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
@@ -279,7 +279,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 launchctl list | grep nanoclaw  # Should show PID and exit code 0 or -
 ```
 
-## Usage via WhatsApp
+## Usage via Telegram
 
 Replace `@Assistant` with your configured trigger name (`ASSISTANT_NAME` in `.env`):
 
@@ -314,26 +314,26 @@ ls -la data/x-browser-profile/ 2>/dev/null | head -5
 ### Re-authenticate (if expired)
 
 ```bash
-npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
+bunx dotenv -e .env -- bun .claude/skills/x-integration/scripts/setup.ts
 ```
 
 ### Test Post (will actually post)
 
 ```bash
-echo '{"content":"Test tweet - please ignore"}' | npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/post.ts
+echo '{"content":"Test tweet - please ignore"}' | bunx dotenv -e .env -- bun .claude/skills/x-integration/scripts/post.ts
 ```
 
 ### Test Like
 
 ```bash
-echo '{"tweetUrl":"https://x.com/user/status/123"}' | npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/like.ts
+echo '{"tweetUrl":"https://x.com/user/status/123"}' | bunx dotenv -e .env -- bun .claude/skills/x-integration/scripts/like.ts
 ```
 
 Or export `CHROME_PATH` manually before running:
 
 ```bash
 export CHROME_PATH="/path/to/chrome"
-echo '{"content":"Test"}' | npx tsx .claude/skills/x-integration/scripts/post.ts
+echo '{"content":"Test"}' | bun .claude/skills/x-integration/scripts/post.ts
 ```
 
 ## Troubleshooting
@@ -341,7 +341,7 @@ echo '{"content":"Test"}' | npx tsx .claude/skills/x-integration/scripts/post.ts
 ### Authentication Expired
 
 ```bash
-npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
+bunx dotenv -e .env -- bun .claude/skills/x-integration/scripts/setup.ts
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 

@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * X Integration - Like Tweet
- * Usage: echo '{"tweetUrl":"https://x.com/user/status/123"}' | npx tsx like.ts
+ * Usage: echo '{"tweetUrl":"https://x.com/user/status/123"}' | bun like.ts
  */
 
 import { getBrowserContext, navigateToTweet, runScript, config, ScriptResult } from '../lib/browser.js';
