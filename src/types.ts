@@ -53,6 +53,7 @@ export interface NewMessage {
   content: string;
   timestamp: string;
   is_from_bot: boolean;
+  message_thread_id?: number; // Topic ID for forum/topic groups (undefined for regular groups)
 }
 
 export interface ScheduledTask {

@@ -28,7 +28,9 @@
       "Bash(timeout 15 npm run dev:*)",
       "Bash(curl -s \"https://api.telegram.org/bot8213126361:AAF5eUUTHWmXsyou5QWi7VrmOYE6rE-9Bvc/getUpdates?limit=1\")",
       "Bash(find:*)",
-      "Bash(./build.sh:*)"
+      "Bash(./build.sh:*)",
+      "Bash(brew install:*)",
+      "Bash(sudo rm:*)"
     ]
   }
 }

@@ -66,6 +66,7 @@ export function initDatabase(): void {
       content TEXT,
       timestamp TEXT,
       is_from_bot INTEGER,
+      message_thread_id INTEGER,
       PRIMARY KEY (id, chat_id),
       FOREIGN KEY (chat_id) REFERENCES chats(chat_id)
     );
@@ -208,9 +209,10 @@ export function storeTelegramMessage(
   content: string,
   isFromBot: boolean,
   timestamp: string,
+  messageThreadId?: number,
 ): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_id, user_id, sender_name, content, timestamp, is_from_bot) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_id, user_id, sender_name, content, timestamp, is_from_bot, message_thread_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     messageId,
     chatId,
@@ -219,6 +221,7 @@ export function storeTelegramMessage(
     content,
     timestamp,
     isFromBot ? 1 : 0,
+    messageThreadId || null,
   );
 }
 

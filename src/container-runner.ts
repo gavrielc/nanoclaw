@@ -39,6 +39,7 @@ export interface ContainerInput {
   chatId: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  messageThreadId?: number;
 }
 
 export interface ContainerOutput {

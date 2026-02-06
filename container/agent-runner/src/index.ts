@@ -15,6 +15,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  messageThreadId?: number;
 }
 
 interface ContainerOutput {
@@ -217,9 +218,10 @@ async function main(): Promise<void> {
   }
 
   const ipcMcp = createIpcMcp({
-    chatJid: input.chatJid,
+    chatJid: input.chatJid || (input as any).chatId, // Support both chatJid and chatId
     groupFolder: input.groupFolder,
-    isMain: input.isMain
+    isMain: input.isMain,
+    messageThreadId: input.messageThreadId
   });
 
   let result: string | null = null;

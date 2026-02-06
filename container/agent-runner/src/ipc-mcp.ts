@@ -17,6 +17,7 @@ export interface IpcMcpContext {
   chatJid: string;
   groupFolder: string;
   isMain: boolean;
+  messageThreadId?: number;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -34,7 +35,7 @@ function writeIpcFile(dir: string, data: object): string {
 }
 
 export function createIpcMcp(ctx: IpcMcpContext) {
-  const { chatJid, groupFolder, isMain } = ctx;
+  const { chatJid, groupFolder, isMain, messageThreadId } = ctx;
 
   return createSdkMcpServer({
     name: 'nanoclaw',
@@ -69,6 +70,7 @@ This creates two rows, each with one button. Buttons in the same array appear in
             chatJid,
             text: args.text,
             buttons: args.buttons,
+            messageThreadId,
             groupFolder,
             timestamp: new Date().toISOString()
           };

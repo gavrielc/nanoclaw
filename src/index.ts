@@ -222,12 +222,12 @@ async function processMessage(msg: NewMessage): Promise<void> {
   );
 
   await setTyping(msg.chat_id, true);
-  const response = await runAgent(group, prompt, msg.chat_id.toString());
+  const response = await runAgent(group, prompt, msg.chat_id.toString(), msg.message_thread_id);
   await setTyping(msg.chat_id, false);
 
   if (response) {
     lastAgentTimestamp[msg.chat_id.toString()] = msg.timestamp;
-    await sendMessage(msg.chat_id, `${ASSISTANT_NAME}: ${response}`);
+    await sendMessage(msg.chat_id, `${ASSISTANT_NAME}: ${response}`, undefined, msg.message_thread_id);
   }
 }
 
@@ -235,6 +235,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatId: string,
+  messageThreadId?: number,
 ): Promise<string | null> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -271,6 +272,7 @@ async function runAgent(
       groupFolder: group.folder,
       chatId,
       isMain,
+      messageThreadId,
     });
 
     if (output.newSessionId) {
@@ -297,6 +299,7 @@ async function sendMessage(
   chatId: number | string,
   text: string,
   buttons?: InlineKeyboardButton[][],
+  messageThreadId?: number,
 ): Promise<void> {
   try {
     const chatIdNum = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
@@ -310,8 +313,12 @@ async function sendMessage(
       };
     }
 
+    if (messageThreadId) {
+      options.message_thread_id = messageThreadId;
+    }
+
     await bot.telegram.sendMessage(chatIdNum, text, options);
-    logger.info({ chatId: chatIdNum, length: text.length, hasButtons: !!buttons }, 'Message sent');
+    logger.info({ chatId: chatIdNum, length: text.length, hasButtons: !!buttons, messageThreadId }, 'Message sent');
   } catch (err) {
     logger.error({ chatId, err }, 'Failed to send message');
   }
@@ -369,9 +376,10 @@ function startIpcWatcher(): void {
                     chatId,
                     `${ASSISTANT_NAME}: ${data.text}`,
                     data.buttons, // Pass through buttons if present
+                    data.messageThreadId, // Pass through message_thread_id if present
                   );
                   logger.info(
-                    { chatId, sourceGroup, hasButtons: !!data.buttons },
+                    { chatId, sourceGroup, hasButtons: !!data.buttons, messageThreadId: data.messageThreadId },
                     'IPC message sent',
                   );
                 } else {
@@ -744,6 +752,7 @@ async function connectTelegram(): Promise<void> {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'Unknown';
     const isFromBot = ctx.from.is_bot;
+    const messageThreadId = 'message_thread_id' in message ? message.message_thread_id : undefined;
 
     // Extract content from message
     let content = '';
@@ -785,6 +794,7 @@ async function connectTelegram(): Promise<void> {
         content,
         isFromBot,
         timestamp,
+        messageThreadId,
       );
 
       // Event-driven processing (replaces polling loop)
@@ -796,6 +806,7 @@ async function connectTelegram(): Promise<void> {
         content,
         timestamp,
         is_from_bot: isFromBot,
+        message_thread_id: messageThreadId,
       };
 
       // Process message asynchronously (don't block event loop)
