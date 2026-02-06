@@ -4,7 +4,13 @@
  * Usage: echo '{"tweetUrl":"https://x.com/user/status/123"}' | npx tsx like.ts
  */
 
-import { getBrowserContext, navigateToTweet, runScript, config, ScriptResult } from '../lib/browser.js';
+import {
+  getBrowserContext,
+  navigateToTweet,
+  runScript,
+  config,
+  ScriptResult,
+} from '../lib/browser.js';
 
 interface LikeInput {
   tweetUrl: string;
@@ -46,8 +52,10 @@ async function likeTweet(input: LikeInput): Promise<ScriptResult> {
       return { success: true, message: 'Like successful' };
     }
 
-    return { success: false, message: 'Like action completed but could not verify success' };
-
+    return {
+      success: false,
+      message: 'Like action completed but could not verify success',
+    };
   } finally {
     if (context) await context.close();
   }

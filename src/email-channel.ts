@@ -74,7 +74,10 @@ class ImapWatcher {
           // Use a lock to prevent duplicate processing when multiple 'exists' events fire rapidly
           this.client.on('exists', () => {
             this.processNewMessagesWithLock().catch((err) =>
-              logger.error({ err, folder: this.folder }, 'Error processing new emails'),
+              logger.error(
+                { err, folder: this.folder },
+                'Error processing new emails',
+              ),
             );
           });
 
@@ -109,7 +112,9 @@ class ImapWatcher {
     // Chain onto the existing lock - if another call is in progress, wait for it
     const previousLock = this.processingLock;
     let resolve: () => void;
-    this.processingLock = new Promise((r) => { resolve = r; });
+    this.processingLock = new Promise((r) => {
+      resolve = r;
+    });
 
     try {
       await previousLock;
@@ -128,18 +133,24 @@ class ImapWatcher {
 
     for (const uid of uids) {
       try {
-        const msg = await this.client.fetchOne(String(uid), {
-          envelope: true,
-          bodyStructure: true,
-          uid: true,
-        } as any, { uid: true });
+        const msg = await this.client.fetchOne(
+          String(uid),
+          {
+            envelope: true,
+            bodyStructure: true,
+            uid: true,
+          } as any,
+          { uid: true },
+        );
 
         if (!msg || !msg.envelope) continue;
 
         const messageId = msg.envelope.messageId || '';
         if (!messageId || isEmailProcessed(messageId)) {
           // Mark as seen even if already processed
-          await this.client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
+          await this.client.messageFlagsAdd(String(uid), ['\\Seen'], {
+            uid: true,
+          });
           continue;
         }
 
@@ -150,8 +161,13 @@ class ImapWatcher {
           uid,
           messageId,
           from: msg.envelope.from?.[0]?.address || '',
-          fromName: msg.envelope.from?.[0]?.name || msg.envelope.from?.[0]?.address || '',
-          to: (msg.envelope.to || []).map((a) => a.address || '').filter(Boolean),
+          fromName:
+            msg.envelope.from?.[0]?.name ||
+            msg.envelope.from?.[0]?.address ||
+            '',
+          to: (msg.envelope.to || [])
+            .map((a) => a.address || '')
+            .filter(Boolean),
           subject: msg.envelope.subject || '(no subject)',
           body,
           date: msg.envelope.date || new Date(),
@@ -160,10 +176,14 @@ class ImapWatcher {
         };
 
         // Get References header separately if needed
-        const headerBuf = await this.client.fetchOne(String(uid), {
-          headers: ['references'],
-          uid: true,
-        } as any, { uid: true });
+        const headerBuf = await this.client.fetchOne(
+          String(uid),
+          {
+            headers: ['references'],
+            uid: true,
+          } as any,
+          { uid: true },
+        );
         if (headerBuf && headerBuf.headers) {
           const headerStr = headerBuf.headers.toString();
           const match = headerStr.match(/^References:\s*(.+)/im);
@@ -171,7 +191,9 @@ class ImapWatcher {
         }
 
         markEmailProcessed(messageId, this.folder);
-        await this.client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
+        await this.client.messageFlagsAdd(String(uid), ['\\Seen'], {
+          uid: true,
+        });
         processedUids.push(uid);
 
         logger.info(
@@ -181,21 +203,34 @@ class ImapWatcher {
 
         batch.push(email);
       } catch (err) {
-        logger.error({ err, uid, folder: this.folder }, 'Error processing email');
+        logger.error(
+          { err, uid, folder: this.folder },
+          'Error processing email',
+        );
       }
     }
 
     // Send entire batch to the agent in one call
     if (batch.length > 0) {
-      logger.info({ count: batch.length, folder: this.folder }, 'Processing email batch');
+      logger.info(
+        { count: batch.length, folder: this.folder },
+        'Processing email batch',
+      );
       await this.onEmails(batch);
 
       // Move all processed emails to processed folder
       for (const uid of processedUids) {
         try {
-          await this.client.messageMove(String(uid), this.config.processedFolder, { uid: true });
+          await this.client.messageMove(
+            String(uid),
+            this.config.processedFolder,
+            { uid: true },
+          );
         } catch (moveErr) {
-          logger.warn({ err: moveErr, uid }, 'Failed to move email to processed folder');
+          logger.warn(
+            { err: moveErr, uid },
+            'Failed to move email to processed folder',
+          );
         }
       }
     }
@@ -210,14 +245,18 @@ class ImapWatcher {
       const part = this.findTextPart(bodyStructure);
       const partId = part?.part || '1';
 
-      const { content } = await this.client.download(String(uid), partId, { uid: true });
+      const { content } = await this.client.download(String(uid), partId, {
+        uid: true,
+      });
       const chunks: Buffer[] = [];
       for await (const chunk of content) {
         chunks.push(chunk as Buffer);
       }
       const text = Buffer.concat(chunks).toString('utf-8');
       // Truncate very long emails
-      return text.length > 10000 ? text.slice(0, 10000) + '\n[...truncated]' : text;
+      return text.length > 10000
+        ? text.slice(0, 10000) + '\n[...truncated]'
+        : text;
     } catch {
       return '(unable to extract email body)';
     }
@@ -269,9 +308,9 @@ export class EmailChannel {
         this.deps.processEmails(emails),
       );
       this.watchers.push(watcher);
-      watcher.start().catch((err) =>
-        logger.error({ err, folder }, 'IMAP watcher failed'),
-      );
+      watcher
+        .start()
+        .catch((err) => logger.error({ err, folder }, 'IMAP watcher failed'));
     }
 
     logger.info(
@@ -303,7 +342,11 @@ export class EmailChannel {
       await client.logout();
     } catch (err) {
       logger.warn({ err, folder: folderPath }, 'Failed to ensure IMAP folder');
-      try { client.close(); } catch { /* ignore */ }
+      try {
+        client.close();
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -320,7 +363,10 @@ export class EmailChannel {
       await client.connect();
 
       const rfc822 = this.buildRfc822(draft);
-      await client.append(this.config.draftsFolder, rfc822, ['\\Draft', '\\Seen']);
+      await client.append(this.config.draftsFolder, rfc822, [
+        '\\Draft',
+        '\\Seen',
+      ]);
 
       logger.info(
         { to: draft.to, subject: draft.subject },
@@ -330,7 +376,11 @@ export class EmailChannel {
       await client.logout();
     } catch (err) {
       logger.error({ err, to: draft.to }, 'Failed to create email draft');
-      try { client.close(); } catch { /* ignore */ }
+      try {
+        client.close();
+      } catch {
+        /* ignore */
+      }
       throw err;
     }
   }

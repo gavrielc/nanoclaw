@@ -38,7 +38,7 @@ function getEnabledCalendars(): CalendarFilter[] | null {
     const trimmed = entry.trim();
     if (!trimmed) continue;
 
-    const [name, urlFragment] = trimmed.split('::').map(s => s.trim());
+    const [name, urlFragment] = trimmed.split('::').map((s) => s.trim());
     filters.push({
       name: name.toLowerCase(),
       urlFragment: urlFragment || undefined,
@@ -48,7 +48,10 @@ function getEnabledCalendars(): CalendarFilter[] | null {
   return filters.length > 0 ? filters : null;
 }
 
-function matchesFilter(calendar: { displayName?: unknown; url: string }, filter: CalendarFilter): boolean {
+function matchesFilter(
+  calendar: { displayName?: unknown; url: string },
+  filter: CalendarFilter,
+): boolean {
   const displayName = calendar.displayName as string | undefined;
   if (!displayName || displayName.toLowerCase() !== filter.name) {
     return false;
@@ -66,7 +69,9 @@ async function getClient(): Promise<DAVClient> {
   const password = process.env.ICLOUD_APP_PASSWORD;
 
   if (!username || !password) {
-    throw new Error('iCloud credentials not configured (ICLOUD_USERNAME, ICLOUD_APP_PASSWORD)');
+    throw new Error(
+      'iCloud credentials not configured (ICLOUD_USERNAME, ICLOUD_APP_PASSWORD)',
+    );
   }
 
   log('Connecting to iCloud CalDAV...');
@@ -91,10 +96,12 @@ async function getClient(): Promise<DAVClient> {
   // Filter to enabled calendars if ICLOUD_CALENDARS is set
   const filters = getEnabledCalendars();
   if (filters) {
-    calendars = allCalendars.filter(c =>
-      filters.some(f => matchesFilter(c, f))
+    calendars = allCalendars.filter((c) =>
+      filters.some((f) => matchesFilter(c, f)),
     );
-    const filterDesc = filters.map(f => f.urlFragment ? `${f.name}::${f.urlFragment}` : f.name).join(', ');
+    const filterDesc = filters
+      .map((f) => (f.urlFragment ? `${f.name}::${f.urlFragment}` : f.name))
+      .join(', ');
     log(`Filtered to ${calendars.length} enabled calendars: ${filterDesc}`);
   } else {
     calendars = allCalendars;
@@ -105,12 +112,12 @@ async function getClient(): Promise<DAVClient> {
 
 function findCalendar(nameOrUrl: string): DAVCalendar | undefined {
   // Try exact URL match first
-  const byUrl = calendars.find(c => c.url === nameOrUrl);
+  const byUrl = calendars.find((c) => c.url === nameOrUrl);
   if (byUrl) return byUrl;
 
   // Try case-insensitive name match
   const lower = nameOrUrl.toLowerCase();
-  return calendars.find(c => {
+  return calendars.find((c) => {
     const displayName = c.displayName as string | undefined;
     return displayName?.toLowerCase() === lower;
   });
@@ -127,7 +134,11 @@ interface ParsedEvent {
   allDay: boolean;
 }
 
-function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): ParsedEvent[] {
+function parseIcsEvents(
+  calendarObjects: DAVObject[],
+  from: Date,
+  to: Date,
+): ParsedEvent[] {
   const events: ParsedEvent[] = [];
 
   // Expand with a wider window to catch RECURRENCE-ID overrides.
@@ -159,8 +170,14 @@ function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): Par
         });
 
         for (const instance of instances) {
-          const instanceStart = instance.start instanceof Date ? instance.start : new Date(String(instance.start));
-          const instanceEnd = instance.end instanceof Date ? instance.end : new Date(String(instance.end));
+          const instanceStart =
+            instance.start instanceof Date
+              ? instance.start
+              : new Date(String(instance.start));
+          const instanceEnd =
+            instance.end instanceof Date
+              ? instance.end
+              : new Date(String(instance.end));
 
           // Filter to requested window (instance overlaps with [from, to])
           if (instanceEnd <= from || instanceStart >= to) {
@@ -171,7 +188,8 @@ function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): Par
           const getStr = (v: unknown): string | undefined => {
             if (!v) return undefined;
             if (typeof v === 'string') return v;
-            if (typeof v === 'object' && 'val' in v) return (v as { val: string }).val;
+            if (typeof v === 'object' && 'val' in v)
+              return (v as { val: string }).val;
             return String(v);
           };
 
@@ -188,28 +206,34 @@ function parseIcsEvents(calendarObjects: DAVObject[], from: Date, to: Date): Par
         }
       }
     } catch (err) {
-      log(`Failed to parse ICS: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Failed to parse ICS: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
-  return events.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  return events.sort(
+    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
+  );
 }
 
 function formatEventForDisplay(event: ParsedEvent): string {
   const startDate = new Date(event.start);
   const endDate = new Date(event.end);
 
-  const formatTime = (d: Date) => d.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
+  const formatTime = (d: Date) =>
+    d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
 
-  const formatDate = (d: Date) => d.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
+  const formatDate = (d: Date) =>
+    d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
 
   let timeStr: string;
   if (event.allDay) {
@@ -225,7 +249,8 @@ function formatEventForDisplay(event: ParsedEvent): string {
 
   let result = `- ${event.summary}\n  ${timeStr}`;
   if (event.location) result += `\n  Location: ${event.location}`;
-  if (event.description) result += `\n  Note: ${event.description.slice(0, 100)}${event.description.length > 100 ? '...' : ''}`;
+  if (event.description)
+    result += `\n  Note: ${event.description.slice(0, 100)}${event.description.length > 100 ? '...' : ''}`;
   result += `\n  URL: ${event.url}`;
 
   return result;
@@ -243,7 +268,10 @@ function generateIcs(event: {
   const now = new Date();
 
   const formatDateTimeUtc = (d: Date) =>
-    d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    d
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}/, '');
 
   const formatDateOnly = (d: Date) =>
     d.toISOString().slice(0, 10).replace(/-/g, '');
@@ -307,20 +335,25 @@ export function createCalendarMcp() {
               };
             }
 
-            const list = calendars.map(c =>
-              `- ${c.displayName || '(unnamed)'}\n  URL: ${c.url}`
-            ).join('\n\n');
+            const list = calendars
+              .map((c) => `- ${c.displayName || '(unnamed)'}\n  URL: ${c.url}`)
+              .join('\n\n');
 
             return {
               content: [{ type: 'text', text: `iCloud Calendars:\n\n${list}` }],
             };
           } catch (err) {
             return {
-              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
-        }
+        },
       ),
 
       tool(
@@ -330,8 +363,14 @@ export function createCalendarMcp() {
 Recurring events with moved instances (RECURRENCE-ID overrides) are properly expanded.`,
         {
           calendar: z.string().describe('Calendar name or URL'),
-          start_date: z.string().optional().describe('Start of date range (ISO 8601, e.g., "2026-02-05")'),
-          end_date: z.string().optional().describe('End of date range (ISO 8601, e.g., "2026-02-06")'),
+          start_date: z
+            .string()
+            .optional()
+            .describe('Start of date range (ISO 8601, e.g., "2026-02-05")'),
+          end_date: z
+            .string()
+            .optional()
+            .describe('End of date range (ISO 8601, e.g., "2026-02-06")'),
         },
         async (args) => {
           try {
@@ -340,22 +379,33 @@ Recurring events with moved instances (RECURRENCE-ID overrides) are properly exp
 
             if (!calendar) {
               return {
-                content: [{ type: 'text', text: `Calendar not found: "${args.calendar}". Use list_calendars to see available calendars.` }],
+                content: [
+                  {
+                    type: 'text',
+                    text: `Calendar not found: "${args.calendar}". Use list_calendars to see available calendars.`,
+                  },
+                ],
                 isError: true,
               };
             }
 
             // Default to today if no range specified
             const now = new Date();
-            const startDate = args.start_date ? new Date(args.start_date) : new Date(now.setHours(0, 0, 0, 0));
-            const endDate = args.end_date ? new Date(args.end_date) : new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+            const startDate = args.start_date
+              ? new Date(args.start_date)
+              : new Date(now.setHours(0, 0, 0, 0));
+            const endDate = args.end_date
+              ? new Date(args.end_date)
+              : new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
 
             // Set end date to end of day if it's the same as start
             if (endDate <= startDate) {
               endDate.setTime(startDate.getTime() + 24 * 60 * 60 * 1000);
             }
 
-            log(`Fetching events from ${calendar.displayName}: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+            log(
+              `Fetching events from ${calendar.displayName}: ${startDate.toISOString()} to ${endDate.toISOString()}`,
+            );
 
             // Fetch ALL calendar objects without time range filter.
             // This is necessary because recurring events with RECURRENCE-ID overrides
@@ -367,22 +417,37 @@ Recurring events with moved instances (RECURRENCE-ID overrides) are properly exp
 
             if (events.length === 0) {
               return {
-                content: [{ type: 'text', text: `No events found in "${calendar.displayName}" for the specified date range.` }],
+                content: [
+                  {
+                    type: 'text',
+                    text: `No events found in "${calendar.displayName}" for the specified date range.`,
+                  },
+                ],
               };
             }
 
             const formatted = events.map(formatEventForDisplay).join('\n\n');
 
             return {
-              content: [{ type: 'text', text: `Events in "${calendar.displayName}" (${events.length}):\n\n${formatted}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Events in "${calendar.displayName}" (${events.length}):\n\n${formatted}`,
+                },
+              ],
             };
           } catch (err) {
             return {
-              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
-        }
+        },
       ),
 
       tool(
@@ -391,9 +456,16 @@ Recurring events with moved instances (RECURRENCE-ID overrides) are properly exp
         {
           calendar: z.string().describe('Calendar name or URL'),
           summary: z.string().describe('Event title'),
-          start: z.string().describe('Start time (ISO 8601, e.g., "2026-02-05T14:00:00")'),
-          end: z.string().describe('End time (ISO 8601, e.g., "2026-02-05T15:00:00")'),
-          description: z.string().optional().describe('Event description/notes'),
+          start: z
+            .string()
+            .describe('Start time (ISO 8601, e.g., "2026-02-05T14:00:00")'),
+          end: z
+            .string()
+            .describe('End time (ISO 8601, e.g., "2026-02-05T15:00:00")'),
+          description: z
+            .string()
+            .optional()
+            .describe('Event description/notes'),
           location: z.string().optional().describe('Event location'),
           all_day: z.boolean().optional().describe('True for all-day events'),
         },
@@ -404,7 +476,12 @@ Recurring events with moved instances (RECURRENCE-ID overrides) are properly exp
 
             if (!calendar) {
               return {
-                content: [{ type: 'text', text: `Calendar not found: "${args.calendar}". Use list_calendars to see available calendars.` }],
+                content: [
+                  {
+                    type: 'text',
+                    text: `Calendar not found: "${args.calendar}". Use list_calendars to see available calendars.`,
+                  },
+                ],
                 isError: true,
               };
             }
@@ -414,7 +491,12 @@ Recurring events with moved instances (RECURRENCE-ID overrides) are properly exp
 
             if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
               return {
-                content: [{ type: 'text', text: 'Invalid date format. Use ISO 8601 (e.g., "2026-02-05T14:00:00").' }],
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Invalid date format. Use ISO 8601 (e.g., "2026-02-05T14:00:00").',
+                  },
+                ],
                 isError: true,
               };
             }
@@ -439,15 +521,25 @@ Recurring events with moved instances (RECURRENCE-ID overrides) are properly exp
             log(`Created event: ${args.summary}`);
 
             return {
-              content: [{ type: 'text', text: `Event created: "${args.summary}" on ${startDate.toLocaleDateString()}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Event created: "${args.summary}" on ${startDate.toLocaleDateString()}`,
+                },
+              ],
             };
           } catch (err) {
             return {
-              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
-        }
+        },
       ),
 
       tool(
@@ -460,7 +552,10 @@ Note: CalDAV updates require full event replacement. All provided fields will be
           summary: z.string().describe('Event title'),
           start: z.string().describe('Start time (ISO 8601)'),
           end: z.string().describe('End time (ISO 8601)'),
-          description: z.string().optional().describe('Event description/notes'),
+          description: z
+            .string()
+            .optional()
+            .describe('Event description/notes'),
           location: z.string().optional().describe('Event location'),
           all_day: z.boolean().optional().describe('True for all-day events'),
         },
@@ -473,7 +568,9 @@ Note: CalDAV updates require full event replacement. All provided fields will be
 
             if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
               return {
-                content: [{ type: 'text', text: 'Invalid date format. Use ISO 8601.' }],
+                content: [
+                  { type: 'text', text: 'Invalid date format. Use ISO 8601.' },
+                ],
                 isError: true,
               };
             }
@@ -497,15 +594,22 @@ Note: CalDAV updates require full event replacement. All provided fields will be
             log(`Updated event: ${args.summary}`);
 
             return {
-              content: [{ type: 'text', text: `Event updated: "${args.summary}"` }],
+              content: [
+                { type: 'text', text: `Event updated: "${args.summary}"` },
+              ],
             };
           } catch (err) {
             return {
-              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
-        }
+        },
       ),
 
       tool(
@@ -531,11 +635,16 @@ Note: CalDAV updates require full event replacement. All provided fields will be
             };
           } catch (err) {
             return {
-              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
-        }
+        },
       ),
     ],
   });

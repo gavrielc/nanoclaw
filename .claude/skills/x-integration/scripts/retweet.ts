@@ -4,7 +4,13 @@
  * Usage: echo '{"tweetUrl":"https://x.com/user/status/123"}' | npx tsx retweet.ts
  */
 
-import { getBrowserContext, navigateToTweet, runScript, config, ScriptResult } from '../lib/browser.js';
+import {
+  getBrowserContext,
+  navigateToTweet,
+  runScript,
+  config,
+  ScriptResult,
+} from '../lib/browser.js';
 
 interface RetweetInput {
   tweetUrl: string;
@@ -31,7 +37,9 @@ async function retweet(input: RetweetInput): Promise<ScriptResult> {
     const retweetButton = tweet.locator('[data-testid="retweet"]');
 
     // Check if already retweeted
-    const alreadyRetweeted = await unretweetButton.isVisible().catch(() => false);
+    const alreadyRetweeted = await unretweetButton
+      .isVisible()
+      .catch(() => false);
     if (alreadyRetweeted) {
       return { success: true, message: 'Tweet already retweeted' };
     }
@@ -52,8 +60,10 @@ async function retweet(input: RetweetInput): Promise<ScriptResult> {
       return { success: true, message: 'Retweet successful' };
     }
 
-    return { success: false, message: 'Retweet action completed but could not verify success' };
-
+    return {
+      success: false,
+      message: 'Retweet action completed but could not verify success',
+    };
   } finally {
     if (context) await context.close();
   }

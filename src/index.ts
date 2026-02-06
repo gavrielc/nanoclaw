@@ -351,7 +351,8 @@ async function processEmails(emails: IncomingEmail[]): Promise<void> {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
 
-  const emailXmls = emails.map((email) => `<email>
+  const emailXmls = emails.map(
+    (email) => `<email>
 <from name="${escapeXml(email.fromName)}">${escapeXml(email.from)}</from>
 <to>${email.to.map(escapeXml).join(', ')}</to>
 <subject>${escapeXml(email.subject)}</subject>
@@ -363,7 +364,8 @@ ${email.references ? `<references>${escapeXml(email.references)}</references>` :
 <body>
 ${escapeXml(email.body)}
 </body>
-</email>`);
+</email>`,
+  );
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -385,25 +387,35 @@ Example log entries:
 {"from":"boss@work.com","subject":"Q4 report","action":"left alone (work email)"}
 {"from":"newsletter@example.com","subject":"Weekly digest","action":"ignored"}`;
 
-
   logger.info(
     { count: emails.length, subjects: emails.map((e) => e.subject) },
     'Processing email batch through agent',
   );
 
   // Build summary of incoming emails for notification
-  const emailSummaries = emails.map((e) => `• ${e.fromName || e.from}: ${e.subject}`).join('\n');
+  const emailSummaries = emails
+    .map((e) => `• ${e.fromName || e.from}: ${e.subject}`)
+    .join('\n');
   sendNotification(
     `\u{1F4E7} ${ASSISTANT_NAME} \u2014 Email`,
     `Processing ${emails.length} email${emails.length > 1 ? 's' : ''}:\n${emailSummaries}`,
   );
 
   // Track existing log lines to find new entries after processing
-  const logFile = path.join(GROUPS_DIR, 'main', 'email-activity', `${today}.jsonl`);
+  const logFile = path.join(
+    GROUPS_DIR,
+    'main',
+    'email-activity',
+    `${today}.jsonl`,
+  );
   let existingLines = 0;
   try {
     if (fs.existsSync(logFile)) {
-      existingLines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean).length;
+      existingLines = fs
+        .readFileSync(logFile, 'utf-8')
+        .trim()
+        .split('\n')
+        .filter(Boolean).length;
     }
   } catch {
     // Ignore read errors
@@ -417,17 +429,23 @@ Example log entries:
   let actionSummary = '';
   try {
     if (fs.existsSync(logFile)) {
-      const allLines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean);
+      const allLines = fs
+        .readFileSync(logFile, 'utf-8')
+        .trim()
+        .split('\n')
+        .filter(Boolean);
       const newLines = allLines.slice(existingLines);
       if (newLines.length > 0) {
-        actionSummary = newLines.map((line) => {
-          try {
-            const entry = JSON.parse(line);
-            return `• ${entry.from}: ${entry.action}`;
-          } catch {
-            return `• ${line}`;
-          }
-        }).join('\n');
+        actionSummary = newLines
+          .map((line) => {
+            try {
+              const entry = JSON.parse(line);
+              return `• ${entry.from}: ${entry.action}`;
+            } catch {
+              return `• ${line}`;
+            }
+          })
+          .join('\n');
       }
     }
   } catch {
@@ -444,7 +462,12 @@ Example log entries:
 
 async function sendDailyEmailSummary(): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
-  const logFile = path.join(GROUPS_DIR, 'main', 'email-activity', `${today}.jsonl`);
+  const logFile = path.join(
+    GROUPS_DIR,
+    'main',
+    'email-activity',
+    `${today}.jsonl`,
+  );
 
   if (!fs.existsSync(logFile)) return;
 
@@ -454,7 +477,11 @@ async function sendDailyEmailSummary(): Promise<void> {
   if (!mainJid) return;
 
   try {
-    const lines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean);
+    const lines = fs
+      .readFileSync(logFile, 'utf-8')
+      .trim()
+      .split('\n')
+      .filter(Boolean);
     if (lines.length === 0) return;
 
     const bullets = lines.map((line) => {
@@ -917,7 +944,7 @@ async function connectWhatsApp(): Promise<void> {
           logger.debug({ lidUser, phoneUser }, 'LID to phone mapping set');
         }
       }
-      
+
       // Sync group metadata on startup (respects 24h cache)
       syncGroupMetadata().catch((err) =>
         logger.error({ err }, 'Initial group sync failed'),
@@ -941,9 +968,11 @@ async function connectWhatsApp(): Promise<void> {
         emailChannel = new EmailChannel(EMAIL_CONFIG, {
           processEmails,
         });
-        emailChannel.start().catch((err) =>
-          logger.error({ err }, 'Email channel failed to start'),
-        );
+        emailChannel
+          .start()
+          .catch((err) =>
+            logger.error({ err }, 'Email channel failed to start'),
+          );
         startEmailSummaryTimer();
       }
     }
@@ -961,7 +990,7 @@ async function connectWhatsApp(): Promise<void> {
 
       // Translate LID JID to phone JID if applicable
       const chatJid = translateJid(rawJid);
-      
+
       const timestamp = new Date(
         Number(msg.messageTimestamp) * 1000,
       ).toISOString();

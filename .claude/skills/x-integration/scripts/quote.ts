@@ -4,7 +4,14 @@
  * Usage: echo '{"tweetUrl":"https://x.com/user/status/123","comment":"My thoughts"}' | npx tsx quote.ts
  */
 
-import { getBrowserContext, navigateToTweet, runScript, validateContent, config, ScriptResult } from '../lib/browser.js';
+import {
+  getBrowserContext,
+  navigateToTweet,
+  runScript,
+  validateContent,
+  config,
+  ScriptResult,
+} from '../lib/browser.js';
 
 interface QuoteInput {
   tweetUrl: string;
@@ -38,7 +45,9 @@ async function quoteTweet(input: QuoteInput): Promise<ScriptResult> {
     await page.waitForTimeout(config.timeouts.afterClick);
 
     // Click quote option
-    const quoteOption = page.getByRole('menuitem').filter({ hasText: /Quote/i });
+    const quoteOption = page
+      .getByRole('menuitem')
+      .filter({ hasText: /Quote/i });
     await quoteOption.waitFor({ timeout: config.timeouts.elementWait });
     await quoteOption.click();
     await page.waitForTimeout(config.timeouts.afterClick * 1.5);
@@ -61,7 +70,11 @@ async function quoteTweet(input: QuoteInput): Promise<ScriptResult> {
 
     const isDisabled = await submitButton.getAttribute('aria-disabled');
     if (isDisabled === 'true') {
-      return { success: false, message: 'Submit button disabled. Content may be empty or exceed character limit.' };
+      return {
+        success: false,
+        message:
+          'Submit button disabled. Content may be empty or exceed character limit.',
+      };
     }
 
     await submitButton.click();
@@ -69,9 +82,8 @@ async function quoteTweet(input: QuoteInput): Promise<ScriptResult> {
 
     return {
       success: true,
-      message: `Quote tweet posted: ${comment.slice(0, 50)}${comment.length > 50 ? '...' : ''}`
+      message: `Quote tweet posted: ${comment.slice(0, 50)}${comment.length > 50 ? '...' : ''}`,
     };
-
   } finally {
     if (context) await context.close();
   }

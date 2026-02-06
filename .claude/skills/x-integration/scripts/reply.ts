@@ -4,7 +4,14 @@
  * Usage: echo '{"tweetUrl":"https://x.com/user/status/123","content":"Great post!"}' | npx tsx reply.ts
  */
 
-import { getBrowserContext, navigateToTweet, runScript, validateContent, config, ScriptResult } from '../lib/browser.js';
+import {
+  getBrowserContext,
+  navigateToTweet,
+  runScript,
+  validateContent,
+  config,
+  ScriptResult,
+} from '../lib/browser.js';
 
 interface ReplyInput {
   tweetUrl: string;
@@ -55,7 +62,11 @@ async function replyToTweet(input: ReplyInput): Promise<ScriptResult> {
 
     const isDisabled = await submitButton.getAttribute('aria-disabled');
     if (isDisabled === 'true') {
-      return { success: false, message: 'Submit button disabled. Content may be empty or exceed character limit.' };
+      return {
+        success: false,
+        message:
+          'Submit button disabled. Content may be empty or exceed character limit.',
+      };
     }
 
     await submitButton.click();
@@ -63,9 +74,8 @@ async function replyToTweet(input: ReplyInput): Promise<ScriptResult> {
 
     return {
       success: true,
-      message: `Reply posted: ${content.slice(0, 50)}${content.length > 50 ? '...' : ''}`
+      message: `Reply posted: ${content.slice(0, 50)}${content.length > 50 ? '...' : ''}`,
     };
-
   } finally {
     if (context) await context.close();
   }

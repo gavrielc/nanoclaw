@@ -124,7 +124,8 @@ async function runTask(
   });
 
   // Notify task completion
-  const promptSnippet = task.prompt.slice(0, 40) + (task.prompt.length > 40 ? '...' : '');
+  const promptSnippet =
+    task.prompt.slice(0, 40) + (task.prompt.length > 40 ? '...' : '');
   const durationSec = Math.round(durationMs / 1000);
   if (error) {
     sendErrorNotification(

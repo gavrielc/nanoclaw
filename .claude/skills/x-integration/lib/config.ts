@@ -17,7 +17,9 @@ export const config = {
   // Chrome executable path
   // Default: standard macOS Chrome location
   // Override: CHROME_PATH environment variable
-  chromePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  chromePath:
+    process.env.CHROME_PATH ||
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 
   // Browser profile directory for persistent login sessions
   browserDataDir: path.join(PROJECT_ROOT, 'data', 'x-browser-profile'),
@@ -59,4 +61,3 @@ export const config = {
   // Args to ignore when launching Chrome
   chromeIgnoreDefaultArgs: ['--enable-automation'],
 };
-

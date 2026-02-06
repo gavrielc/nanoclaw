@@ -37,15 +37,31 @@ Priority levels:
         {
           title: z.string().describe('Notification title (short, descriptive)'),
           message: z.string().describe('Notification body text'),
-          priority: z.number().min(-2).max(2).optional().describe('Priority level (-2 to 2, default: 0)'),
+          priority: z
+            .number()
+            .min(-2)
+            .max(2)
+            .optional()
+            .describe('Priority level (-2 to 2, default: 0)'),
           url: z.string().optional().describe('Optional URL to include'),
-          url_title: z.string().optional().describe('Title for the URL (if url provided)'),
-          sound: z.string().optional().describe('Notification sound (e.g., "pushover", "bike", "none")'),
+          url_title: z
+            .string()
+            .optional()
+            .describe('Title for the URL (if url provided)'),
+          sound: z
+            .string()
+            .optional()
+            .describe('Notification sound (e.g., "pushover", "bike", "none")'),
         },
         async (args) => {
           if (!userKey || !appToken) {
             return {
-              content: [{ type: 'text', text: 'Pushover not configured (missing PUSHOVER_USER_KEY or PUSHOVER_APP_TOKEN)' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Pushover not configured (missing PUSHOVER_USER_KEY or PUSHOVER_APP_TOKEN)',
+                },
+              ],
               isError: true,
             };
           }
@@ -85,7 +101,12 @@ Priority levels:
               const text = await response.text();
               log(`Pushover API error: ${response.status} - ${text}`);
               return {
-                content: [{ type: 'text', text: `Pushover API error: ${response.status}` }],
+                content: [
+                  {
+                    type: 'text',
+                    text: `Pushover API error: ${response.status}`,
+                  },
+                ],
                 isError: true,
               };
             }
@@ -94,7 +115,9 @@ Priority levels:
             log(`Notification sent successfully: ${JSON.stringify(result)}`);
 
             return {
-              content: [{ type: 'text', text: `Notification sent: "${args.title}"` }],
+              content: [
+                { type: 'text', text: `Notification sent: "${args.title}"` },
+              ],
             };
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -104,7 +127,7 @@ Priority levels:
               isError: true,
             };
           }
-        }
+        },
       ),
     ],
   });

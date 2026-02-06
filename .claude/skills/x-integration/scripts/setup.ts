@@ -27,29 +27,34 @@ async function setup(): Promise<void> {
 
   console.log('Launching browser...\n');
 
-  const context = await chromium.launchPersistentContext(config.browserDataDir, {
-    executablePath: config.chromePath,
-    headless: false,
-    viewport: config.viewport,
-    args: config.chromeArgs.slice(0, 3), // Use first 3 args for setup (less restrictive)
-    ignoreDefaultArgs: config.chromeIgnoreDefaultArgs,
-  });
+  const context = await chromium.launchPersistentContext(
+    config.browserDataDir,
+    {
+      executablePath: config.chromePath,
+      headless: false,
+      viewport: config.viewport,
+      args: config.chromeArgs.slice(0, 3), // Use first 3 args for setup (less restrictive)
+      ignoreDefaultArgs: config.chromeIgnoreDefaultArgs,
+    },
+  );
 
-  const page = context.pages()[0] || await context.newPage();
+  const page = context.pages()[0] || (await context.newPage());
 
   // Navigate to login page
   await page.goto('https://x.com/login');
 
   console.log('Please log in to X in the browser window.');
-  console.log('After you see your home feed, come back here and press Enter.\n');
+  console.log(
+    'After you see your home feed, come back here and press Enter.\n',
+  );
 
   // Wait for user to complete login
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
   });
 
-  await new Promise<void>(resolve => {
+  await new Promise<void>((resolve) => {
     rl.question('Press Enter when logged in... ', () => {
       rl.close();
       resolve();
@@ -61,14 +66,24 @@ async function setup(): Promise<void> {
   await page.goto('https://x.com/home');
   await page.waitForTimeout(config.timeouts.pageLoad);
 
-  const isLoggedIn = await page.locator('[data-testid="SideNav_AccountSwitcher_Button"]').isVisible().catch(() => false);
+  const isLoggedIn = await page
+    .locator('[data-testid="SideNav_AccountSwitcher_Button"]')
+    .isVisible()
+    .catch(() => false);
 
   if (isLoggedIn) {
     // Save auth marker
-    fs.writeFileSync(config.authPath, JSON.stringify({
-      authenticated: true,
-      timestamp: new Date().toISOString()
-    }, null, 2));
+    fs.writeFileSync(
+      config.authPath,
+      JSON.stringify(
+        {
+          authenticated: true,
+          timestamp: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
 
     console.log('\n✅ Authentication successful!');
     console.log(`Session saved to: ${config.browserDataDir}`);
@@ -81,7 +96,7 @@ async function setup(): Promise<void> {
   await context.close();
 }
 
-setup().catch(err => {
+setup().catch((err) => {
   console.error('Setup failed:', err.message);
   process.exit(1);
 });

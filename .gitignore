@@ -22,5 +22,6 @@ auth/
 .vscode/
 
 agents-sdk-docs
+.dev/
 
 groups/main/email-activity

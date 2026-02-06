@@ -4,7 +4,13 @@
  * Usage: echo '{"content":"Hello world"}' | npx tsx post.ts
  */
 
-import { getBrowserContext, runScript, validateContent, config, ScriptResult } from '../lib/browser.js';
+import {
+  getBrowserContext,
+  runScript,
+  validateContent,
+  config,
+  ScriptResult,
+} from '../lib/browser.js';
 
 interface PostInput {
   content: string;
@@ -19,17 +25,29 @@ async function postTweet(input: PostInput): Promise<ScriptResult> {
   let context = null;
   try {
     context = await getBrowserContext();
-    const page = context.pages()[0] || await context.newPage();
+    const page = context.pages()[0] || (await context.newPage());
 
-    await page.goto('https://x.com/home', { timeout: config.timeouts.navigation, waitUntil: 'domcontentloaded' });
+    await page.goto('https://x.com/home', {
+      timeout: config.timeouts.navigation,
+      waitUntil: 'domcontentloaded',
+    });
     await page.waitForTimeout(config.timeouts.pageLoad);
 
     // Check if logged in
-    const isLoggedIn = await page.locator('[data-testid="SideNav_AccountSwitcher_Button"]').isVisible().catch(() => false);
+    const isLoggedIn = await page
+      .locator('[data-testid="SideNav_AccountSwitcher_Button"]')
+      .isVisible()
+      .catch(() => false);
     if (!isLoggedIn) {
-      const onLoginPage = await page.locator('input[autocomplete="username"]').isVisible().catch(() => false);
+      const onLoginPage = await page
+        .locator('input[autocomplete="username"]')
+        .isVisible()
+        .catch(() => false);
       if (onLoginPage) {
-        return { success: false, message: 'X login expired. Run /x-integration to re-authenticate.' };
+        return {
+          success: false,
+          message: 'X login expired. Run /x-integration to re-authenticate.',
+        };
       }
     }
 
@@ -47,7 +65,11 @@ async function postTweet(input: PostInput): Promise<ScriptResult> {
 
     const isDisabled = await postButton.getAttribute('aria-disabled');
     if (isDisabled === 'true') {
-      return { success: false, message: 'Post button disabled. Content may be empty or exceed character limit.' };
+      return {
+        success: false,
+        message:
+          'Post button disabled. Content may be empty or exceed character limit.',
+      };
     }
 
     await postButton.click();
@@ -55,9 +77,8 @@ async function postTweet(input: PostInput): Promise<ScriptResult> {
 
     return {
       success: true,
-      message: `Tweet posted: ${content.slice(0, 50)}${content.length > 50 ? '...' : ''}`
+      message: `Tweet posted: ${content.slice(0, 50)}${content.length > 50 ? '...' : ''}`,
     };
-
   } finally {
     if (context) await context.close();
   }

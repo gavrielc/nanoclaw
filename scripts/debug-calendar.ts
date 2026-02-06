@@ -42,7 +42,7 @@ function parseEnabledCalendars(): CalendarFilter[] | null {
     const trimmed = entry.trim();
     if (!trimmed) continue;
 
-    const [name, urlFragment] = trimmed.split('::').map(s => s.trim());
+    const [name, urlFragment] = trimmed.split('::').map((s) => s.trim());
     filters.push({
       name: name.toLowerCase(),
       urlFragment: urlFragment || undefined,
@@ -52,7 +52,10 @@ function parseEnabledCalendars(): CalendarFilter[] | null {
   return filters.length > 0 ? filters : null;
 }
 
-function matchesFilter(calendar: { displayName?: unknown; url: string }, filter: CalendarFilter): boolean {
+function matchesFilter(
+  calendar: { displayName?: unknown; url: string },
+  filter: CalendarFilter,
+): boolean {
   const displayName = calendar.displayName as string | undefined;
   if (!displayName || displayName.toLowerCase() !== filter.name) {
     return false;
@@ -66,7 +69,9 @@ function matchesFilter(calendar: { displayName?: unknown; url: string }, filter:
 const enabledCalendars = parseEnabledCalendars();
 
 if (!username || !password) {
-  console.error('Error: ICLOUD_USERNAME and ICLOUD_APP_PASSWORD must be set in .env');
+  console.error(
+    'Error: ICLOUD_USERNAME and ICLOUD_APP_PASSWORD must be set in .env',
+  );
   process.exit(1);
 }
 
@@ -75,9 +80,13 @@ async function main() {
 
   console.log('Connecting to iCloud CalDAV...');
   console.log(`  Username: ${username}`);
-  console.log(`  Timezone: ${process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+  console.log(
+    `  Timezone: ${process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone}`,
+  );
   if (enabledCalendars) {
-    const filterDesc = enabledCalendars.map(f => f.urlFragment ? `${f.name}::${f.urlFragment}` : f.name).join(', ');
+    const filterDesc = enabledCalendars
+      .map((f) => (f.urlFragment ? `${f.name}::${f.urlFragment}` : f.name))
+      .join(', ');
     console.log(`  Enabled calendars filter: ${filterDesc}`);
   }
   console.log('');
@@ -93,7 +102,10 @@ async function main() {
     await client.login();
     console.log('Connected successfully!\n');
   } catch (err) {
-    console.error('Connection failed:', err instanceof Error ? err.message : err);
+    console.error(
+      'Connection failed:',
+      err instanceof Error ? err.message : err,
+    );
     process.exit(1);
   }
 
@@ -102,7 +114,8 @@ async function main() {
 
   for (const cal of allCalendars) {
     const name = cal.displayName || '(unnamed)';
-    const enabled = !enabledCalendars || enabledCalendars.some(f => matchesFilter(cal, f));
+    const enabled =
+      !enabledCalendars || enabledCalendars.some((f) => matchesFilter(cal, f));
     console.log(`  ${enabled ? '[x]' : '[ ]'} ${name}`);
     console.log(`      URL: ${cal.url}`);
     console.log(`      ctag: ${cal.ctag}`);
@@ -111,7 +124,9 @@ async function main() {
 
   // Filter to enabled calendars
   const calendars = enabledCalendars
-    ? allCalendars.filter(c => enabledCalendars.some(f => matchesFilter(c, f)))
+    ? allCalendars.filter((c) =>
+        enabledCalendars.some((f) => matchesFilter(c, f)),
+      )
     : allCalendars;
 
   if (command === 'list') {
@@ -123,15 +138,17 @@ async function main() {
     const days = parseInt(process.argv[4] || '7', 10);
 
     if (!calendarName) {
-      console.error('Usage: debug-calendar.ts events <calendar-name-or-url> [days]');
+      console.error(
+        'Usage: debug-calendar.ts events <calendar-name-or-url> [days]',
+      );
       process.exit(1);
     }
 
     // Try URL match first, then name match
-    let calendar = calendars.find(c => c.url === calendarName);
+    let calendar = calendars.find((c) => c.url === calendarName);
     if (!calendar) {
       // Find all matching by name
-      const matches = calendars.filter(c => {
+      const matches = calendars.filter((c) => {
         const name = c.displayName as string | undefined;
         return name?.toLowerCase() === calendarName.toLowerCase();
       });
@@ -152,7 +169,10 @@ async function main() {
 
     if (!calendar) {
       console.error(`Calendar not found: "${calendarName}"`);
-      console.error('Available calendars:', calendars.map(c => c.displayName).join(', '));
+      console.error(
+        'Available calendars:',
+        calendars.map((c) => c.displayName).join(', '),
+      );
       process.exit(1);
     }
 
@@ -170,7 +190,7 @@ async function main() {
       process.exit(1);
     }
 
-    const calendar = calendars.find(c => {
+    const calendar = calendars.find((c) => {
       const name = c.displayName as string | undefined;
       return name?.toLowerCase() === calendarName.toLowerCase();
     });
@@ -186,7 +206,9 @@ async function main() {
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + days);
 
-    console.log(`Fetching raw ICS from ${startDate.toISOString()} to ${endDate.toISOString()}\n`);
+    console.log(
+      `Fetching raw ICS from ${startDate.toISOString()} to ${endDate.toISOString()}\n`,
+    );
 
     const objects = await client.fetchCalendarObjects({
       calendar,
@@ -211,7 +233,9 @@ async function main() {
       process.exit(1);
     }
 
-    console.log(`Searching for "${keyword}" across ALL calendars (${days} days)...\n`);
+    console.log(
+      `Searching for "${keyword}" across ALL calendars (${days} days)...\n`,
+    );
 
     const now = new Date();
     const startDate = new Date(now);
@@ -224,7 +248,10 @@ async function main() {
     for (const cal of allCalendars) {
       const objects = await client.fetchCalendarObjects({
         calendar: cal,
-        timeRange: { start: startDate.toISOString(), end: endDate.toISOString() },
+        timeRange: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        },
       });
 
       for (const obj of objects) {
@@ -235,7 +262,12 @@ async function main() {
           // Extract key fields
           const lines = obj.data.split(/\r?\n/);
           for (const line of lines) {
-            if (line.startsWith('SUMMARY') || line.startsWith('DTSTART') || line.startsWith('DTEND') || line.startsWith('RRULE')) {
+            if (
+              line.startsWith('SUMMARY') ||
+              line.startsWith('DTSTART') ||
+              line.startsWith('DTEND') ||
+              line.startsWith('RRULE')
+            ) {
               console.log(`  ${line}`);
             }
           }
@@ -253,7 +285,9 @@ async function main() {
 
     if (!eventUrl) {
       console.error('Usage: debug-calendar.ts delete <event-url>');
-      console.error('Example: debug-calendar.ts delete https://caldav.icloud.com/.../event.ics');
+      console.error(
+        'Example: debug-calendar.ts delete https://caldav.icloud.com/.../event.ics',
+      );
       process.exit(1);
     }
 
@@ -265,7 +299,10 @@ async function main() {
       });
       console.log('Event deleted successfully.');
     } catch (err) {
-      console.error('Failed to delete:', err instanceof Error ? err.message : err);
+      console.error(
+        'Failed to delete:',
+        err instanceof Error ? err.message : err,
+      );
       process.exit(1);
     }
     return;
@@ -282,20 +319,29 @@ async function main() {
     const rrule = process.argv[7]; // Optional
 
     if (!calendarName || !summary || !startStr || !endStr) {
-      console.error('Usage: debug-calendar.ts create <calendar> <summary> <start> <end> [rrule]');
-      console.error('Example: debug-calendar.ts create Família "💪 Gym" "2026-02-10T13:00" "2026-02-10T14:00" "FREQ=WEEKLY"');
-      console.error('RRULE examples: FREQ=WEEKLY, FREQ=DAILY, FREQ=WEEKLY;BYDAY=TU,SA');
+      console.error(
+        'Usage: debug-calendar.ts create <calendar> <summary> <start> <end> [rrule]',
+      );
+      console.error(
+        'Example: debug-calendar.ts create Família "💪 Gym" "2026-02-10T13:00" "2026-02-10T14:00" "FREQ=WEEKLY"',
+      );
+      console.error(
+        'RRULE examples: FREQ=WEEKLY, FREQ=DAILY, FREQ=WEEKLY;BYDAY=TU,SA',
+      );
       process.exit(1);
     }
 
-    const calendar = calendars.find(c => {
+    const calendar = calendars.find((c) => {
       const name = c.displayName as string | undefined;
       return name?.toLowerCase() === calendarName.toLowerCase();
     });
 
     if (!calendar) {
       console.error(`Calendar not found: "${calendarName}"`);
-      console.error('Available calendars:', calendars.map(c => c.displayName).join(', '));
+      console.error(
+        'Available calendars:',
+        calendars.map((c) => c.displayName).join(', '),
+      );
       process.exit(1);
     }
 
@@ -303,7 +349,9 @@ async function main() {
     const endDate = new Date(endStr);
 
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      console.error('Invalid date format. Use ISO 8601 (e.g., "2026-02-10T13:00")');
+      console.error(
+        'Invalid date format. Use ISO 8601 (e.g., "2026-02-10T13:00")',
+      );
       process.exit(1);
     }
 
@@ -312,10 +360,17 @@ async function main() {
     const now = new Date();
 
     const formatDateTimeUtc = (d: Date) =>
-      d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+      d
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .replace(/\.\d{3}/, '');
 
     const escapeIcsText = (text: string): string =>
-      text.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+      text
+        .replace(/\\/g, '\\\\')
+        .replace(/;/g, '\\;')
+        .replace(/,/g, '\\,')
+        .replace(/\n/g, '\\n');
 
     const lines = [
       'BEGIN:VCALENDAR',
@@ -353,7 +408,10 @@ async function main() {
       console.log('Event created successfully.');
       console.log(`URL: ${calendar.url}${filename}`);
     } catch (err) {
-      console.error('Failed to create:', err instanceof Error ? err.message : err);
+      console.error(
+        'Failed to create:',
+        err instanceof Error ? err.message : err,
+      );
       process.exit(1);
     }
     return;
@@ -383,7 +441,9 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + days);
 
-  console.log(`  Fetching events from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+  console.log(
+    `  Fetching events from ${startDate.toISOString()} to ${endDate.toISOString()}`,
+  );
   console.log(`  (${days} days starting from local midnight)\n`);
 
   try {
@@ -453,8 +513,14 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
 
             for (const instance of instances) {
               // Filter to requested window
-              const instStart = instance.start instanceof Date ? instance.start : new Date(String(instance.start));
-              const instEnd = instance.end instanceof Date ? instance.end : new Date(String(instance.end));
+              const instStart =
+                instance.start instanceof Date
+                  ? instance.start
+                  : new Date(String(instance.start));
+              const instEnd =
+                instance.end instanceof Date
+                  ? instance.end
+                  : new Date(String(instance.end));
               if (instEnd <= startDate || instStart >= endDate) {
                 continue;
               }
@@ -469,8 +535,14 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
 
     // Sort by start time
     allInstances.sort((a, b) => {
-      const aStart = a.instance.start instanceof Date ? a.instance.start : new Date(String(a.instance.start));
-      const bStart = b.instance.start instanceof Date ? b.instance.start : new Date(String(b.instance.start));
+      const aStart =
+        a.instance.start instanceof Date
+          ? a.instance.start
+          : new Date(String(a.instance.start));
+      const bStart =
+        b.instance.start instanceof Date
+          ? b.instance.start
+          : new Date(String(b.instance.start));
       return aStart.getTime() - bStart.getTime();
     });
 
@@ -493,11 +565,13 @@ async function fetchEvents(client: DAVClient, calendar: any, days: number) {
       console.log('');
     }
   } catch (err) {
-    console.error(`  Error fetching events: ${err instanceof Error ? err.message : err}`);
+    console.error(
+      `  Error fetching events: ${err instanceof Error ? err.message : err}`,
+    );
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(1);
 });

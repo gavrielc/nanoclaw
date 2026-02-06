@@ -29,7 +29,10 @@ function writeIpcFile(dir: string, data: object): string {
   return filename;
 }
 
-async function waitForResult(requestId: string, maxWait = 60000): Promise<{ success: boolean; message: string }> {
+async function waitForResult(
+  requestId: string,
+  maxWait = 60000,
+): Promise<{ success: boolean; message: string }> {
   const resultFile = path.join(RESULTS_DIR, `${requestId}.json`);
   const pollInterval = 1000;
   let elapsed = 0;
@@ -44,7 +47,7 @@ async function waitForResult(requestId: string, maxWait = 60000): Promise<{ succ
         return { success: false, message: `Failed to read result: ${err}` };
       }
     }
-    await new Promise(resolve => setTimeout(resolve, pollInterval));
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
     elapsed += pollInterval;
   }
 
@@ -70,20 +73,30 @@ export function createXTools(ctx: SkillToolsContext) {
 The host machine will execute the browser automation to post the tweet.
 Make sure the content is appropriate and within X's character limit (280 chars for text).`,
       {
-        content: z.string().max(280).describe('The tweet content to post (max 280 characters)')
+        content: z
+          .string()
+          .max(280)
+          .describe('The tweet content to post (max 280 characters)'),
       },
       async (args: { content: string }) => {
         if (!isMain) {
           return {
-            content: [{ type: 'text', text: 'Only the main group can post tweets.' }],
-            isError: true
+            content: [
+              { type: 'text', text: 'Only the main group can post tweets.' },
+            ],
+            isError: true,
           };
         }
 
         if (args.content.length > 280) {
           return {
-            content: [{ type: 'text', text: `Tweet exceeds 280 character limit (current: ${args.content.length})` }],
-            isError: true
+            content: [
+              {
+                type: 'text',
+                text: `Tweet exceeds 280 character limit (current: ${args.content.length})`,
+              },
+            ],
+            isError: true,
           };
         }
 
@@ -93,15 +106,15 @@ Make sure the content is appropriate and within X's character limit (280 chars f
           requestId,
           content: args.content,
           groupFolder,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
 
         const result = await waitForResult(requestId);
         return {
           content: [{ type: 'text', text: result.message }],
-          isError: !result.success
+          isError: !result.success,
         };
-      }
+      },
     ),
 
     tool(
@@ -110,13 +123,22 @@ Make sure the content is appropriate and within X's character limit (280 chars f
 
 Provide the tweet URL or tweet ID to like.`,
       {
-        tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123) or tweet ID')
+        tweet_url: z
+          .string()
+          .describe(
+            'The tweet URL (e.g., https://x.com/user/status/123) or tweet ID',
+          ),
       },
       async (args: { tweet_url: string }) => {
         if (!isMain) {
           return {
-            content: [{ type: 'text', text: 'Only the main group can interact with X.' }],
-            isError: true
+            content: [
+              {
+                type: 'text',
+                text: 'Only the main group can interact with X.',
+              },
+            ],
+            isError: true,
           };
         }
 
@@ -126,15 +148,15 @@ Provide the tweet URL or tweet ID to like.`,
           requestId,
           tweetUrl: args.tweet_url,
           groupFolder,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
 
         const result = await waitForResult(requestId);
         return {
           content: [{ type: 'text', text: result.message }],
-          isError: !result.success
+          isError: !result.success,
         };
-      }
+      },
     ),
 
     tool(
@@ -143,14 +165,26 @@ Provide the tweet URL or tweet ID to like.`,
 
 Provide the tweet URL and your reply content.`,
       {
-        tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123) or tweet ID'),
-        content: z.string().max(280).describe('The reply content (max 280 characters)')
+        tweet_url: z
+          .string()
+          .describe(
+            'The tweet URL (e.g., https://x.com/user/status/123) or tweet ID',
+          ),
+        content: z
+          .string()
+          .max(280)
+          .describe('The reply content (max 280 characters)'),
       },
       async (args: { tweet_url: string; content: string }) => {
         if (!isMain) {
           return {
-            content: [{ type: 'text', text: 'Only the main group can interact with X.' }],
-            isError: true
+            content: [
+              {
+                type: 'text',
+                text: 'Only the main group can interact with X.',
+              },
+            ],
+            isError: true,
           };
         }
 
@@ -161,15 +195,15 @@ Provide the tweet URL and your reply content.`,
           tweetUrl: args.tweet_url,
           content: args.content,
           groupFolder,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
 
         const result = await waitForResult(requestId);
         return {
           content: [{ type: 'text', text: result.message }],
-          isError: !result.success
+          isError: !result.success,
         };
-      }
+      },
     ),
 
     tool(
@@ -178,13 +212,22 @@ Provide the tweet URL and your reply content.`,
 
 Provide the tweet URL to retweet.`,
       {
-        tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123) or tweet ID')
+        tweet_url: z
+          .string()
+          .describe(
+            'The tweet URL (e.g., https://x.com/user/status/123) or tweet ID',
+          ),
       },
       async (args: { tweet_url: string }) => {
         if (!isMain) {
           return {
-            content: [{ type: 'text', text: 'Only the main group can interact with X.' }],
-            isError: true
+            content: [
+              {
+                type: 'text',
+                text: 'Only the main group can interact with X.',
+              },
+            ],
+            isError: true,
           };
         }
 
@@ -194,15 +237,15 @@ Provide the tweet URL to retweet.`,
           requestId,
           tweetUrl: args.tweet_url,
           groupFolder,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
 
         const result = await waitForResult(requestId);
         return {
           content: [{ type: 'text', text: result.message }],
-          isError: !result.success
+          isError: !result.success,
         };
-      }
+      },
     ),
 
     tool(
@@ -211,14 +254,26 @@ Provide the tweet URL to retweet.`,
 
 Retweet with your own comment added.`,
       {
-        tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123) or tweet ID'),
-        comment: z.string().max(280).describe('Your comment for the quote tweet (max 280 characters)')
+        tweet_url: z
+          .string()
+          .describe(
+            'The tweet URL (e.g., https://x.com/user/status/123) or tweet ID',
+          ),
+        comment: z
+          .string()
+          .max(280)
+          .describe('Your comment for the quote tweet (max 280 characters)'),
       },
       async (args: { tweet_url: string; comment: string }) => {
         if (!isMain) {
           return {
-            content: [{ type: 'text', text: 'Only the main group can interact with X.' }],
-            isError: true
+            content: [
+              {
+                type: 'text',
+                text: 'Only the main group can interact with X.',
+              },
+            ],
+            isError: true,
           };
         }
 
@@ -229,15 +284,15 @@ Retweet with your own comment added.`,
           tweetUrl: args.tweet_url,
           comment: args.comment,
           groupFolder,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
 
         const result = await waitForResult(requestId);
         return {
           content: [{ type: 'text', text: result.message }],
-          isError: !result.success
+          isError: !result.success,
         };
-      }
-    )
+      },
+    ),
   ];
 }
