@@ -8,8 +8,7 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR =
-  process.env.HOME || process.env.USERPROFILE || os.homedir();
+const HOME_DIR = process.env.HOME || process.env.USERPROFILE || os.homedir();
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -24,7 +23,7 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
 export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+  process.env.CONTAINER_IMAGE || 'ghcr.io/tiagojmartins/nanoclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '300000',
   10,
@@ -71,13 +70,21 @@ export const PUSHOVER_USER_KEY = process.env.PUSHOVER_USER_KEY;
 export const PUSHOVER_APP_TOKEN = process.env.PUSHOVER_APP_TOKEN;
 export const PUSHOVER_ENABLED = !!(PUSHOVER_USER_KEY && PUSHOVER_APP_TOKEN);
 export const PUSHOVER_DEVICE = process.env.PUSHOVER_DEVICE; // Target specific device (optional)
-export const PUSHOVER_PRIORITY = parseInt(process.env.PUSHOVER_PRIORITY || '0', 10) as -2 | -1 | 0 | 1 | 2;
-export const PUSHOVER_ERROR_PRIORITY = parseInt(process.env.PUSHOVER_ERROR_PRIORITY || '1', 10) as -2 | -1 | 0 | 1 | 2;
+export const PUSHOVER_PRIORITY = parseInt(
+  process.env.PUSHOVER_PRIORITY || '0',
+  10,
+) as -2 | -1 | 0 | 1 | 2;
+export const PUSHOVER_ERROR_PRIORITY = parseInt(
+  process.env.PUSHOVER_ERROR_PRIORITY || '1',
+  10,
+) as -2 | -1 | 0 | 1 | 2;
 
 // iCloud Calendar (optional, main channel only)
 export const ICLOUD_USERNAME = process.env.ICLOUD_USERNAME;
 export const ICLOUD_APP_PASSWORD = process.env.ICLOUD_APP_PASSWORD;
-export const ICLOUD_CALENDAR_ENABLED = !!(ICLOUD_USERNAME && ICLOUD_APP_PASSWORD);
+export const ICLOUD_CALENDAR_ENABLED = !!(
+  ICLOUD_USERNAME && ICLOUD_APP_PASSWORD
+);
 export const ICLOUD_CALENDARS = process.env.ICLOUD_CALENDARS; // Comma-separated calendar names to enable (optional, all if not set)
 
 // Email channel (optional)

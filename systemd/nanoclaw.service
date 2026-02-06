@@ -1,0 +1,20 @@
+[Unit]
+Description=NanoClaw WhatsApp Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tiago/projects/nanoclaw
+ExecStart=/home/tiago/.local/share/mise/shims/node dist/index.js
+EnvironmentFile=/home/tiago/projects/nanoclaw/.env
+Restart=on-failure
+RestartSec=10
+
+# Logging (stdout/stderr go to journald)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nanoclaw
+
+[Install]
+WantedBy=default.target
