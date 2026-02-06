@@ -17,6 +17,7 @@ export interface IpcMcpContext {
   chatJid: string;
   groupFolder: string;
   isMain: boolean;
+  messageThreadId?: number;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -34,7 +35,7 @@ function writeIpcFile(dir: string, data: object): string {
 }
 
 export function createIpcMcp(ctx: IpcMcpContext) {
-  const { chatJid, groupFolder, isMain } = ctx;
+  const { chatJid, groupFolder, isMain, messageThreadId } = ctx;
 
   return createSdkMcpServer({
     name: 'nanoclaw',
@@ -42,15 +43,34 @@ export function createIpcMcp(ctx: IpcMcpContext) {
     tools: [
       tool(
         'send_message',
-        'Send a message to the current WhatsApp group. Use this to proactively share information or updates.',
+        `Send a message to the current Telegram group. Use this to proactively share information or updates.
+
+BUTTONS (optional): You can add interactive inline keyboard buttons to your message.
+Each button is an object with:
+- text: The button label shown to user
+- callback_data: A unique identifier (max 64 bytes) sent back when clicked
+
+Example buttons format:
+[
+  [{"text": "確認", "callback_data": "confirm_action"}],
+  [{"text": "取消", "callback_data": "cancel_action"}]
+]
+
+This creates two rows, each with one button. Buttons in the same array appear in the same row.`,
         {
-          text: z.string().describe('The message text to send')
+          text: z.string().describe('The message text to send'),
+          buttons: z.array(z.array(z.object({
+            text: z.string().describe('Button label'),
+            callback_data: z.string().describe('Callback identifier (max 64 bytes)')
+          }))).optional().describe('Optional inline keyboard buttons (array of rows)')
         },
         async (args) => {
           const data = {
             type: 'message',
             chatJid,
             text: args.text,
+            buttons: args.buttons,
+            messageThreadId,
             groupFolder,
             timestamp: new Date().toISOString()
           };
@@ -280,14 +300,14 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
       tool(
         'register_group',
-        `Register a new WhatsApp group so the agent can respond to messages there. Main group only.
+        `Register a new Telegram group so the agent can respond to messages there. Main group only.
 
-Use available_groups.json to find the JID for a group. The folder name should be lowercase with hyphens (e.g., "family-chat").`,
+Use available_groups.json to find the chat_id for a group. The folder name should be lowercase with hyphens (e.g., "family-chat").`,
         {
-          jid: z.string().describe('The WhatsApp JID (e.g., "120363336345536173@g.us")'),
+          chat_id: z.string().describe('The Telegram chat ID (e.g., "-5295810650")'),
           name: z.string().describe('Display name for the group'),
           folder: z.string().describe('Folder name for group files (lowercase, hyphens, e.g., "family-chat")'),
-          trigger: z.string().describe('Trigger word (e.g., "@Andy")')
+          trigger: z.string().describe('Trigger word (e.g., "@Andrea")')
         },
         async (args) => {
           if (!isMain) {
@@ -299,7 +319,7 @@ Use available_groups.json to find the JID for a group. The folder name should be
 
           const data = {
             type: 'register_group',
-            jid: args.jid,
+            chatId: args.chat_id,
             name: args.name,
             folder: args.folder,
             trigger: args.trigger,

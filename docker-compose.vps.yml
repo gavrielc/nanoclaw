@@ -1,0 +1,94 @@
+version: '3.8'
+
+# NanoClaw Multi-Bot VPS Deployment
+# 支援多個 Telegram Bot，共用同一套 Skills
+#
+# 使用方式：
+# 1. 複製 .env.vps.example 為 .env
+# 2. 設定 BOT1_TOKEN, BOT2_TOKEN 等
+# 3. docker compose -f docker-compose.vps.yml up -d --build
+
+services:
+  # ===========================================
+  # Bot 1 - 主要 Bot
+  # ===========================================
+  nanoclaw-bot1:
+    build:
+      context: .
+      dockerfile: Dockerfile.vps
+    container_name: nanoclaw-bot1
+    restart: unless-stopped
+    volumes:
+      # 掛載 Docker socket - 讓 container 可以控制 host 的 Docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Bot 1 專屬資料目錄（獨立）
+      - ./data-bot1:/app/data
+      - ./groups-bot1:/app/groups
+      - ./store-bot1:/app/store
+      # 共用的 container 目錄（用於 build agent image）
+      - ./container:/app/container
+    environment:
+      - TELEGRAM_BOT_TOKEN=${BOT1_TOKEN}
+      - ASSISTANT_NAME=${BOT1_NAME:-Andy}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CONTAINER_IMAGE=${CONTAINER_IMAGE:-nanoclaw-agent:latest}
+      - CONTAINER_TIMEOUT=${CONTAINER_TIMEOUT:-300000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TZ=${TZ:-Asia/Taipei}
+    networks:
+      - nanoclaw-net
+  # ===========================================
+  # Bot 2 - 第二個 Bot（取消註解以啟用）
+  # ===========================================
+  # nanoclaw-bot2:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.vps
+  #   container_name: nanoclaw-bot2
+  #   restart: unless-stopped
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - ./data-bot2:/app/data
+  #     - ./groups-bot2:/app/groups
+  #     - ./store-bot2:/app/store
+  #     - ./container:/app/container
+  #   environment:
+  #     - TELEGRAM_BOT_TOKEN=${BOT2_TOKEN}
+  #     - ASSISTANT_NAME=${BOT2_NAME:-Bob}
+  #     - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+  #     - CONTAINER_IMAGE=${CONTAINER_IMAGE:-nanoclaw-agent:latest}
+  #     - CONTAINER_TIMEOUT=${CONTAINER_TIMEOUT:-300000}
+  #     - LOG_LEVEL=${LOG_LEVEL:-info}
+  #     - TZ=${TZ:-Asia/Taipei}
+  #   networks:
+  #     - nanoclaw-net
+
+  # ===========================================
+  # Bot 3 - 第三個 Bot（取消註解以啟用）
+  # ===========================================
+  # nanoclaw-bot3:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.vps
+  #   container_name: nanoclaw-bot3
+  #   restart: unless-stopped
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - ./data-bot3:/app/data
+  #     - ./groups-bot3:/app/groups
+  #     - ./store-bot3:/app/store
+  #     - ./container:/app/container
+  #   environment:
+  #     - TELEGRAM_BOT_TOKEN=${BOT3_TOKEN}
+  #     - ASSISTANT_NAME=${BOT3_NAME:-Charlie}
+  #     - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+  #     - CONTAINER_IMAGE=${CONTAINER_IMAGE:-nanoclaw-agent:latest}
+  #     - CONTAINER_TIMEOUT=${CONTAINER_TIMEOUT:-300000}
+  #     - LOG_LEVEL=${LOG_LEVEL:-info}
+  #     - TZ=${TZ:-Asia/Taipei}
+  #   networks:
+  #     - nanoclaw-net
+
+networks:
+  nanoclaw-net:
+    driver: bridge

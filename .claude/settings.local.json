@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(docker info:*)",
+      "Bash([ -f .env ])",
+      "Bash(./container/build.sh:*)",
+      "Bash(docker run:*)",
+      "Bash([ -d store/auth ])",
+      "Bash(npm run auth:*)",
+      "Bash(timeout 10 npm run dev:*)",
+      "Bash(sqlite3:*)",
+      "Bash([ -f data/registered_groups.json ])",
+      "Bash(npm run build:*)",
+      "Bash(launchctl load:*)",
+      "Bash(launchctl list:*)",
+      "Bash([ -f logs/nanoclaw.error.log ])",
+      "Bash(launchctl unload:*)",
+      "Bash(node:*)",
+      "Bash(pkill:*)",
+      "Bash([ -f .env.example ])",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(lsof:*)",
+      "Bash(curl -s \"https://api.telegram.org/bot8213126361:AAF5eUUTHWmXsyou5QWi7VrmOYE6rE-9Bvc/deleteWebhook?drop_pending_updates=true\")",
+      "Bash(curl -s \"https://api.telegram.org/bot8213126361:AAF5eUUTHWmXsyou5QWi7VrmOYE6rE-9Bvc/getMe\")",
+      "Bash(timeout 15 npm run dev:*)",
+      "Bash(curl -s \"https://api.telegram.org/bot8213126361:AAF5eUUTHWmXsyou5QWi7VrmOYE6rE-9Bvc/getUpdates?limit=1\")",
+      "Bash(find:*)",
+      "Bash(./build.sh:*)",
+      "Bash(brew install:*)",
+      "Bash(sudo rm:*)"
+    ]
+  }
+}

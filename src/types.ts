@@ -46,18 +46,20 @@ export interface Session {
 }
 
 export interface NewMessage {
-  id: string;
-  chat_jid: string;
-  sender: string;
-  sender_name: string;
+  id: string; // Telegram message_id (as string for consistency)
+  chat_id: number; // Telegram chat ID (negative for groups, positive for private)
+  user_id: number; // Telegram user ID
+  sender_name: string; // Username or first_name
   content: string;
   timestamp: string;
+  is_from_bot: boolean;
+  message_thread_id?: number; // Topic ID for forum/topic groups (undefined for regular groups)
 }
 
 export interface ScheduledTask {
   id: string;
   group_folder: string;
-  chat_jid: string;
+  chat_id: number; // Telegram chat ID
   prompt: string;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;

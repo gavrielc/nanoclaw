@@ -3,7 +3,7 @@
 
 FROM node:22-slim
 
-# Install system dependencies for Chromium
+# Install system dependencies for Chromium and development tools
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -23,7 +23,22 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    wget \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Go for building CLI tools
+RUN wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz && \
+    rm go1.22.0.linux-amd64.tar.gz
+
+# Set Go environment
+ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOPATH="/go"
+ENV PATH="${GOPATH}/bin:${PATH}"
+
+# Install Todoist CLI
+RUN go install github.com/buddyh/todoist-cli/cmd/todoist@latest
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium

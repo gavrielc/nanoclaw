@@ -3,164 +3,411 @@
 </p>
 
 <p align="center">
-  My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
+  Personal Claude assistant running on Telegram with Docker isolation. Lightweight, secure, and customizable.
 </p>
 
-## Why I Built This
+## 概述
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But I can't sleep well running software I don't understand with access to my life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers. Security is application-level (allowlists, pairing codes) rather than OS isolation. Everything runs in one Node process with shared memory.
+NanoClaw 是一個基於 Claude Agent SDK 的 Telegram 機器人，讓你可以通過 Telegram 與 Claude AI 對話。每個對話都在獨立的 Docker container 中執行，確保安全隔離。
 
-NanoClaw gives you the same core functionality in a codebase you can understand in 8 minutes. One process. A handful of files. Agents run in actual Linux containers with filesystem isolation, not behind permission checks.
+### 特色
 
-## Quick Start
+- **Telegram 整合** - 通過 Telegram 與 Claude 對話
+- **Container 隔離** - 每次對話都在獨立的 Docker container 中執行
+- **群組記憶** - 每個群組有獨立的 `CLAUDE.md` 記憶檔案
+- **排程任務** - 支援 cron、間隔、一次性排程
+- **Skills 系統** - 可擴展的技能模組
+- **VPS 部署** - 支援 Docker Compose 一鍵部署
+
+---
+
+## 架構
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         VPS / Host                              │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              NanoClaw Router (Node.js)                    │  │
+│  │  ┌─────────┐  ┌──────────┐  ┌────────────┐  ┌──────────┐  │  │
+│  │  │Telegram │  │  SQLite  │  │ Task       │  │   IPC    │  │  │
+│  │  │  Bot    │  │    DB    │  │ Scheduler  │  │  Watcher │  │  │
+│  │  └────┬────┘  └─────┬────┘  └─────┬──────┘  └────┬─────┘  │  │
+│  └───────┼─────────────┼─────────────┼──────────────┼────────┘  │
+│          │             │             │              │           │
+│  ┌───────▼─────────────▼─────────────▼──────────────▼────────┐  │
+│  │                 Docker Socket                              │  │
+│  └───────┬─────────────┬─────────────┬──────────────┬────────┘  │
+│          │             │             │              │           │
+│  ┌───────▼───┐  ┌──────▼────┐  ┌─────▼─────┐  ┌────▼──────┐    │
+│  │ Agent     │  │ Agent     │  │ Agent     │  │ Agent     │    │
+│  │ Container │  │ Container │  │ Container │  │ Container │    │
+│  │ (main)    │  │ (group1)  │  │ (group2)  │  │ (task)    │    │
+│  └───────────┘  └───────────┘  └───────────┘  └───────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 核心元件
+
+| 元件 | 檔案 | 說明 |
+|------|------|------|
+| **Router** | `src/index.ts` | Telegram 連線、訊息路由、IPC 處理 |
+| **Container Runner** | `src/container-runner.ts` | 管理 Docker container 生命週期 |
+| **Task Scheduler** | `src/task-scheduler.ts` | 排程任務執行 |
+| **Database** | `src/db.ts` | SQLite 儲存訊息和狀態 |
+| **Agent Runner** | `container/agent-runner/` | Container 內執行 Claude Agent SDK |
+
+### 目錄結構
+
+```
+nanoclaw/
+├── src/                    # Router 主程式
+├── container/              # Agent container 相關
+│   ├── Dockerfile         # Agent container image
+│   ├── agent-runner/      # Container 內執行的程式
+│   └── skills/            # 內建 skills
+├── groups/                 # 群組資料夾
+│   ├── main/              # 主頻道（管理員權限）
+│   │   ├── CLAUDE.md      # 群組記憶
+│   │   ├── .claude/skills/# 群組專屬 skills
+│   │   └── conversations/ # 對話歷史
+│   └── {group-folder}/    # 其他群組
+├── data/                   # 運行時資料
+│   ├── nanoclaw.db        # SQLite 資料庫
+│   ├── registered_groups.json
+│   ├── sessions/          # Claude sessions
+│   └── ipc/               # Container IPC 目錄
+└── store/                  # 持久化儲存
+```
+
+---
+
+## 運作流程
+
+### 訊息處理流程
+
+```
+1. 用戶在 Telegram 發送訊息 "@Andrea 幫我查天氣"
+                    ↓
+2. Telegraf Bot 收到訊息，存入 SQLite
+                    ↓
+3. 檢查是否為已註冊群組 + 觸發詞匹配
+                    ↓
+4. 啟動 Docker container (nanoclaw-agent:latest)
+   - 掛載群組目錄 → /workspace/group
+   - 掛載 IPC 目錄 → /workspace/ipc
+   - 傳入對話歷史作為 prompt
+                    ↓
+5. Container 內執行 Claude Agent SDK
+   - 讀取 CLAUDE.md 作為系統設定
+   - 執行 AI 推理
+   - 可使用 Bash、Web Search、IPC MCP tools
+                    ↓
+6. Agent 輸出結果，Container 結束
+                    ↓
+7. Router 將結果發送回 Telegram
+```
+
+### IPC 機制
+
+Container 與 Router 透過檔案系統 IPC 通訊：
+
+| IPC 類型 | 目錄 | 說明 |
+|----------|------|------|
+| 發送訊息 | `ipc/{group}/messages/` | Agent 主動發送 Telegram 訊息 |
+| 排程任務 | `ipc/{group}/tasks/` | Agent 建立/管理排程任務 |
+| 群組資訊 | `ipc/{group}/available_groups.json` | 可用群組列表 |
+| 當前任務 | `ipc/{group}/current_tasks.json` | 該群組的排程任務 |
+
+---
+
+## VPS 部署
+
+### 前置需求
+
+- VPS (Ubuntu 22.04+ 建議)
+- Docker 和 Docker Compose
+- Telegram Bot Token (從 @BotFather 取得)
+- Anthropic API Key (從 console.anthropic.com 取得)
+
+### 部署步驟
 
 ```bash
-git clone https://github.com/gavrielc/nanoclaw.git
+# 1. Clone 專案
+git clone https://github.com/your/nanoclaw.git
 cd nanoclaw
+
+# 2. 設定環境變數
+cp .env.vps.example .env
+nano .env
+# 填入:
+#   TELEGRAM_BOT_TOKEN=your_bot_token
+#   ANTHROPIC_API_KEY=your_api_key
+#   ASSISTANT_NAME=Andrea
+
+# 3. 啟動服務
+docker compose -f docker-compose.vps.yml up -d --build
+
+# 4. 查看 logs
+docker compose -f docker-compose.vps.yml logs -f
+```
+
+### 常用指令
+
+```bash
+# 重啟服務
+docker compose -f docker-compose.vps.yml restart
+
+# 停止服務
+docker compose -f docker-compose.vps.yml down
+
+# 更新程式碼
+git pull
+docker compose -f docker-compose.vps.yml up -d --build
+```
+
+---
+
+## 多 Bot 部署
+
+NanoClaw 支援同時運行多個 Telegram Bot，它們共用同一套 Skills 但擁有獨立的資料。
+
+### 架構
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         VPS / Host                              │
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+│  │  nanoclaw-bot1  │  │  nanoclaw-bot2  │  │  nanoclaw-bot3  │  │
+│  │  (Andy)         │  │  (Bob)          │  │  (Charlie)      │  │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘  │
+│           │                    │                    │           │
+│  ┌────────▼────────┐  ┌────────▼────────┐  ┌────────▼────────┐  │
+│  │  data-bot1/     │  │  data-bot2/     │  │  data-bot3/     │  │
+│  │  groups-bot1/   │  │  groups-bot2/   │  │  groups-bot3/   │  │
+│  │  store-bot1/    │  │  store-bot2/    │  │  store-bot3/    │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              共用: container/skills/ (Agent Image)        │  │
+│  │              共用: nanoclaw-agent:latest                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 共用 vs 獨立
+
+| 項目 | 共用/獨立 | 說明 |
+|------|-----------|------|
+| Agent Image | ✅ 共用 | 所有 Bot 使用同一個 `nanoclaw-agent:latest` |
+| Skills | ✅ 共用 | `container/skills/` 編譯進 image |
+| 群組記憶 | ❌ 獨立 | 各 Bot 有自己的 `groups-botX/` |
+| 資料庫 | ❌ 獨立 | 各 Bot 有自己的 `data-botX/` |
+| Sessions | ❌ 獨立 | 各 Bot 有自己的對話 session |
+
+### 設定步驟
+
+**步驟 1：編輯 `.env` 檔案**
+
+```bash
+cp .env.vps.example .env
+nano .env
+```
+
+填入多個 Bot 的 Token：
+
+```env
+# 共用設定
+ANTHROPIC_API_KEY=your_api_key_here
+
+# Bot 1
+BOT1_TOKEN=123456789:AAHdqTxxxxxxxxxxxxxxxxxxxxxxxxx
+BOT1_NAME=Andy
+
+# Bot 2
+BOT2_TOKEN=987654321:BBHdqTxxxxxxxxxxxxxxxxxxxxxxxxx
+BOT2_NAME=Bob
+```
+
+**步驟 2：編輯 `docker-compose.vps.yml`**
+
+取消註解你需要的 Bot 服務：
+
+```yaml
+services:
+  nanoclaw-bot1:
+    # ... (預設已啟用)
+
+  nanoclaw-bot2:
+    # 取消這整個區塊的註解
+```
+
+**步驟 3：啟動服務**
+
+```bash
+docker compose -f docker-compose.vps.yml up -d --build
+```
+
+### 管理多個 Bot
+
+```bash
+# 查看所有 Bot 狀態
+docker compose -f docker-compose.vps.yml ps
+
+# 查看特定 Bot 的 logs
+docker compose -f docker-compose.vps.yml logs -f nanoclaw-bot1
+docker compose -f docker-compose.vps.yml logs -f nanoclaw-bot2
+
+# 重啟特定 Bot
+docker compose -f docker-compose.vps.yml restart nanoclaw-bot1
+
+# 停止特定 Bot
+docker compose -f docker-compose.vps.yml stop nanoclaw-bot2
+```
+
+### 注意事項
+
+1. **首次啟動**：第一個啟動的 Bot 會自動 build `nanoclaw-agent:latest` image
+2. **資料隔離**：各 Bot 的資料完全獨立，不會互相干擾
+3. **API 額度**：所有 Bot 共用同一個 `ANTHROPIC_API_KEY`，注意 API 用量
+4. **更新 Skills**：修改 `container/skills/` 後需要重新 build agent image：
+   ```bash
+   cd container && ./build.sh && cd ..
+   docker compose -f docker-compose.vps.yml restart
+   ```
+
+## 設定
+
+### Claude 認證方式
+
+NanoClaw 支援兩種認證方式：
+
+**方式一：使用 Claude 訂閱額度（推薦）**
+
+如果你有 Claude Pro/Max 訂閱，可以使用 OAuth Token：
+
+```bash
+# 1. 在本機執行 claude（如果還沒登入）
 claude
+
+# 2. 查看你的 OAuth Token
+cat ~/.claude/credentials.json
+# 複製 "oauthToken" 的值
+
+# 3. 在 VPS 的 .env 中設定
+CLAUDE_CODE_OAUTH_TOKEN=your_oauth_token_here
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+> ⚠️ 注意：OAuth Token 可能會過期，需要定期更新
 
-## Philosophy
+**方式二：使用 Anthropic API Key**
 
-**Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers. Have Claude Code walk you through it.
+從 [console.anthropic.com](https://console.anthropic.com) 取得 API Key：
 
-**Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker). They can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
-
-**Built for one user.** This isn't a framework. It's working software that fits my exact needs. You fork it and have Claude Code make it match your exact needs.
-
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that this is safe.
-
-**AI-native.** No installation wizard; Claude Code guides setup. No monitoring dashboard; ask Claude what's happening. No debugging tools; describe the problem, Claude fixes it.
-
-**Skills over features.** Contributors shouldn't add features (e.g. support for Telegram) to the codebase. Instead, they contribute [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
-
-**Best harness, best model.** This runs on Claude Agent SDK, which means you're running Claude Code directly. The harness matters. A bad harness makes even smart models seem dumb, a good harness gives them superpowers. Claude Code is (IMO) the best harness available.
-
-## What It Supports
-
-- **WhatsApp I/O** - Message Claude from your phone
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
-- **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content
-- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
-
-## Usage
-
-Talk to your assistant with the trigger word (default: `@Andy`):
-
-```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
+```bash
+ANTHROPIC_API_KEY=your_api_key_here
 ```
 
-From the main channel (your self-chat), you can manage groups and tasks:
-```
-@Andy list all scheduled tasks across groups
-@Andy pause the Monday briefing task
-@Andy join the Family Chat group
-```
+這種方式按量計費，不會過期。
 
-## Customizing
+### 環境變數
 
-There are no configuration files to learn. Just tell Claude Code what you want:
+| 變數 | 必填 | 說明 |
+|------|------|------|
+| `BOT1_TOKEN` | ✅ | Telegram Bot Token (Bot 1) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | ⚡ | Claude OAuth Token (二選一) |
+| `ANTHROPIC_API_KEY` | ⚡ | Anthropic API Key (二選一) |
+| `BOT1_NAME` | ❌ | Bot 1 助手名稱，預設 `Andy` |
+| `CONTAINER_IMAGE` | ❌ | Agent image，預設 `nanoclaw-agent:latest` |
+| `CONTAINER_TIMEOUT` | ❌ | Container 超時 (ms)，預設 `300000` |
+| `LOG_LEVEL` | ❌ | 日誌等級：`trace`, `debug`, `info`, `warn`, `error` |
+| `TZ` | ❌ | 時區，預設使用系統時區 |
 
-- "Change the trigger word to @Bob"
-- "Remember in the future to make responses shorter and more direct"
-- "Add a custom greeting when I say good morning"
-- "Store conversation summaries weekly"
+### 註冊群組
 
-Or run `/customize` for guided changes.
-
-The codebase is small enough that Claude can safely modify it.
-
-## Contributing
-
-**Don't add features. Add skills.**
-
-If you want to add Telegram support, don't create a PR that adds Telegram alongside WhatsApp. Instead, contribute a skill file (`.claude/skills/add-telegram/SKILL.md`) that teaches Claude Code how to transform a NanoClaw installation to use Telegram.
-
-Users then run `/add-telegram` on their fork and get clean code that does exactly what they need, not a bloated system trying to support every use case.
-
-### RFS (Request for Skills)
-
-Skills we'd love to see:
-
-**Communication Channels**
-- `/add-telegram` - Add Telegram as channel. Should give the user option to replace WhatsApp or add as additional channel. Also should be possible to add it as a control channel (where it can trigger actions) or just a channel that can be used in actions triggered elsewhere
-- `/add-slack` - Add Slack
-- `/add-discord` - Add Discord
-
-**Platform Support**
-- `/setup-windows` - Windows via WSL2 + Docker
-
-**Session Management**
-- `/add-clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
-
-## Requirements
-
-- macOS or Linux
-- Node.js 20+
-- [Claude Code](https://claude.ai/download)
-- [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
-
-## Architecture
+在 Telegram 主頻道中發送訊息給 Bot，它會自動將該聊天設為 main。其他群組需要透過 main 來註冊：
 
 ```
-WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
+@Andrea 把 "Family Chat" 群組加入
 ```
 
-Single Node.js process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
+Bot 會自動：
+1. 尋找該群組的 chat_id
+2. 建立群組資料夾和 CLAUDE.md
+3. 更新 `registered_groups.json`
 
-Key files:
-- `src/index.ts` - Main app: WhatsApp connection, routing, IPC
-- `src/container-runner.ts` - Spawns agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations
-- `groups/*/CLAUDE.md` - Per-group memory
+### 自訂群組記憶
 
-## FAQ
+每個群組的 `CLAUDE.md` 定義了該群組的：
+- 助手身份和回應風格
+- 可存取的目錄和權限
+- 群組專屬的指令和功能
 
-**Why WhatsApp and not Telegram/Signal/etc?**
+---
 
-Because I use WhatsApp. Fork it and run a skill to change it. That's the whole point.
+## Skills 系統
 
-**Why Apple Container instead of Docker?**
+Skills 是可擴展的功能模組，存放於：
 
-On macOS, Apple Container is lightweight, fast, and optimized for Apple silicon. But Docker is also fully supported—during `/setup`, you can choose which runtime to use. On Linux, Docker is used automatically.
+| 位置 | 說明 |
+|------|------|
+| `container/skills/` | 全域 skills（編譯進 image） |
+| `groups/{folder}/.claude/skills/` | 群組專屬 skills（持久化） |
 
-**Can I run this on Linux?**
+Agent 運行時建立的 skills 會自動儲存到群組目錄，不會因 container 重啟而消失。
 
-Yes. Run `/setup` and it will automatically configure Docker as the container runtime. Thanks to [@dotsetgreg](https://github.com/dotsetgreg) for contributing the `/convert-to-docker` skill.
+---
 
-**Is this secure?**
+## 排程任務
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+支援三種排程類型：
 
-**Why no configuration files?**
+| 類型 | 格式 | 範例 |
+|------|------|------|
+| `cron` | Cron 表達式 | `0 9 * * 1-5` (週一到週五早上 9 點) |
+| `interval` | 毫秒數 | `3600000` (每小時) |
+| `once` | ISO 時間戳 | `2026-02-07T09:00:00+08:00` |
 
-We don't want configuration sprawl. Every user should customize it to so that the code matches exactly what they want rather than configuring a generic system. If you like having config files, tell Claude to add them.
+透過 Telegram 對話建立排程：
 
-**How do I debug issues?**
+```
+@Andrea 每天早上 9 點提醒我喝水
+```
 
-Ask Claude Code. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach.
+---
 
-**Why isn't the setup working for me?**
+## 開發
 
-I don't know. Run `claude`, then run `/debug`. If claude finds an issue that is likely affecting other users, open a PR to modify the setup SKILL.md.
+### 本機開發
 
-**What changes will be accepted into the codebase?**
+```bash
+# 安裝依賴
+npm install
 
-Security fixes, bug fixes, and clear improvements to the base configuration. That's it.
+# 編譯
+npm run build
 
-Everything else (new capabilities, OS compatibility, hardware support, enhancements) should be contributed as skills.
+# Build agent container
+cd container && ./build.sh && cd ..
 
-This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
+# 啟動
+npm start
+```
 
-## License
+### 檔案說明
+
+| 檔案 | 說明 |
+|------|------|
+| `src/index.ts` | 主程式進入點，Telegram 連線和訊息路由 |
+| `src/container-runner.ts` | Docker container 生命週期管理 |
+| `src/task-scheduler.ts` | 排程任務執行邏輯 |
+| `src/db.ts` | SQLite 資料庫操作 |
+| `src/config.ts` | 設定檔讀取 |
+| `container/agent-runner/src/index.ts` | Container 內執行的 Agent 主程式 |
+| `container/agent-runner/src/ipc-mcp.ts` | IPC MCP Server 實作 |
+
+---
+
+## 授權
 
 MIT

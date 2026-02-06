@@ -36,9 +36,10 @@ export interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
-  chatJid: string;
+  chatId: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  messageThreadId?: number;
 }
 
 export interface ContainerOutput {
@@ -108,6 +109,16 @@ function buildVolumeMounts(
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
+    readonly: false,
+  });
+
+  // Per-group skills directory for persistent custom skills
+  // Skills created by the agent will be saved here and survive container restarts
+  const groupSkillsDir = path.join(GROUPS_DIR, group.folder, '.claude', 'skills');
+  fs.mkdirSync(groupSkillsDir, { recursive: true });
+  mounts.push({
+    hostPath: groupSkillsDir,
+    containerPath: '/workspace/group/.claude/skills',
     readonly: false,
   });
 
@@ -223,7 +234,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn('docker', containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -484,7 +495,7 @@ export function writeTasksSnapshot(
 }
 
 export interface AvailableGroup {
-  jid: string;
+  chatId: number; // Telegram chat ID
   name: string;
   lastActivity: string;
   isRegistered: boolean;
