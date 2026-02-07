@@ -1,4 +1,8 @@
 <p align="center">
+  <b>English</b> | <a href="README_zh.md">中文</a>
+</p>
+
+<p align="center">
   <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
 </p>
 
