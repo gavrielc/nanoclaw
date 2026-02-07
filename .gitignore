@@ -9,6 +9,9 @@ store/
 data/
 logs/
 
+# Downloaded media
+groups/*/media/
+
 # Secrets
 *.keys.json
 .env

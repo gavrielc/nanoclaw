@@ -13,6 +13,7 @@ import { CronExpressionParser } from 'cron-parser';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  GROUPS_DIR,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -50,6 +51,7 @@ import {
   updateTask,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { downloadAndSaveMedia, getMediaInfo } from './media.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -763,7 +765,7 @@ async function connectWhatsApp(): Promise<void> {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('messages.upsert', ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message) continue;
       const rawJid = msg.key.remoteJid;
@@ -780,12 +782,19 @@ async function connectWhatsApp(): Promise<void> {
       storeChatMetadata(chatJid, timestamp);
 
       // Only store full message content for registered groups
-      if (registeredGroups[chatJid]) {
+      const group = registeredGroups[chatJid];
+      if (group) {
+        let mediaPath: string | undefined;
+        if (getMediaInfo(msg)) {
+          const result = await downloadAndSaveMedia(msg, group.folder, GROUPS_DIR);
+          if (result) mediaPath = result.containerPath;
+        }
         storeMessage(
           msg,
           chatJid,
           msg.key.fromMe || false,
           msg.pushName || undefined,
+          mediaPath,
         );
       }
     }

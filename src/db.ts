@@ -208,15 +208,20 @@ export function storeMessage(
   chatJid: string,
   isFromMe: boolean,
   pushName?: string,
+  mediaPath?: string,
 ): void {
   if (!msg.key) return;
 
-  const content =
+  let content =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
     msg.message?.imageMessage?.caption ||
     msg.message?.videoMessage?.caption ||
     '';
+
+  if (mediaPath) {
+    content = `[media: ${mediaPath}]\n${content}`;
+  }
 
   const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
   const sender = msg.key.participant || msg.key.remoteJid || '';
