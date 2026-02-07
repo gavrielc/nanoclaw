@@ -12,7 +12,10 @@ export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  db = new Database(dbPath);
+  db = new Database(dbPath, { timeout: 10000 });
+
+  // Enable WAL mode for better concurrency
+  db.pragma('journal_mode = WAL');
 
   // Check if we need to migrate from WhatsApp schema
   const tables = db
