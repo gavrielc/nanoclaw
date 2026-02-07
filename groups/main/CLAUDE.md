@@ -1,6 +1,6 @@
-# Andy
+# Zeno
 
-You are Andy, a personal assistant. You help with tasks, answer questions, and can schedule reminders.
+You are Zeno, a personal assistant. You help with tasks, answer questions, and can schedule reminders.
 
 ## What You Can Do
 
@@ -116,7 +116,7 @@ Groups are registered in `/workspace/project/data/registered_groups.json`:
   "1234567890-1234567890@g.us": {
     "name": "Family Chat",
     "folder": "family-chat",
-    "trigger": "@Andy",
+    "trigger": "@Zeno",
     "added_at": "2024-01-31T12:00:00.000Z"
   }
 }
@@ -159,7 +159,7 @@ Groups can have extra directories mounted. Add `containerConfig` to their entry:
   "1234567890@g.us": {
     "name": "Dev Team",
     "folder": "dev-team",
-    "trigger": "@Andy",
+    "trigger": "@Zeno",
     "added_at": "2026-01-31T12:00:00Z",
     "containerConfig": {
       "additionalMounts": [

@@ -261,9 +261,9 @@ export class GroupQueue {
         // but we sanitize again here since exec() runs through a shell.
         const safeName = containerName.replace(/[^a-zA-Z0-9-]/g, '');
         logger.info({ jid, containerName: safeName }, 'Stopping container');
-        exec(`container stop ${safeName}`, (err) => {
+        exec(`docker stop ${safeName}`, (err) => {
           if (err) {
-            logger.warn({ jid, containerName: safeName, err: err.message }, 'container stop failed');
+            logger.warn({ jid, containerName: safeName, err: err.message }, 'docker stop failed');
           }
         });
       } else {
