@@ -13,6 +13,7 @@ import {
 import { createIpcMcp } from './ipc-mcp.js';
 import { createCalendarMcp } from './calendar-mcp.js';
 import { createPushoverMcp } from './pushover-mcp.js';
+import { createParcelMcp } from './parcel-mcp.js';
 
 type TriggerSource = 'user' | 'email' | 'scheduled_task';
 
@@ -272,6 +273,13 @@ async function main(): Promise<void> {
     mcpServers.pushover = createPushoverMcp();
   }
 
+  // Add Parcel MCP if API key is present
+  const parcelEnabled = !!process.env.PARCEL_API_KEY;
+  if (parcelEnabled) {
+    log('Parcel delivery tracking enabled');
+    mcpServers.parcel = createParcelMcp();
+  }
+
   // Build allowed tools list
   const allowedTools = [
     'Bash',
@@ -291,6 +299,10 @@ async function main(): Promise<void> {
 
   if (pushoverEnabled) {
     allowedTools.push('mcp__pushover__*');
+  }
+
+  if (parcelEnabled) {
+    allowedTools.push('mcp__parcel__*');
   }
 
   let result: string | null = null;

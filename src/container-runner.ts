@@ -18,6 +18,7 @@ import {
   ICLOUD_CALENDAR_ENABLED,
   ICLOUD_CALENDARS,
   ICLOUD_USERNAME,
+  PARCEL_API_KEY,
   PUSHOVER_APP_TOKEN,
   PUSHOVER_DEVICE,
   PUSHOVER_ENABLED,
@@ -226,6 +227,11 @@ export async function runContainerAgent(
     if (ICLOUD_CALENDARS) {
       envVars.ICLOUD_CALENDARS = ICLOUD_CALENDARS;
     }
+  }
+
+  // Pass Parcel API key to main channel containers only
+  if (input.isMain && PARCEL_API_KEY) {
+    envVars.PARCEL_API_KEY = PARCEL_API_KEY!;
   }
 
   // Pass Pushover credentials to main channel containers only

@@ -93,6 +93,9 @@ export const TELEGRAM_ENABLED = !!TELEGRAM_BOT_TOKEN;
 export const TELEGRAM_OWNER_ID = process.env.TELEGRAM_OWNER_ID;
 export const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME;
 
+// Parcel delivery tracking (optional)
+export const PARCEL_API_KEY = process.env.PARCEL_API_KEY;
+
 // Email channel (optional)
 import type { EmailConfig } from './types.js';
 
