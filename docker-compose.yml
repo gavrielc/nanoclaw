@@ -1,0 +1,75 @@
+# NanoClaw Docker Compose - Windows 11 / Linux / macOS
+# Runs the main NanoClaw process + agent containers via Docker-in-Docker
+#
+# Usage:
+#   docker compose up -d          # Start services
+#   docker compose logs -f app    # View logs
+#   docker compose down           # Stop services
+#
+# Security Notes:
+# - Agent containers run with --network=none (no network access by default)
+# - All secrets via .env file (never committed)
+# - Non-root user inside containers
+# - Read-only root filesystem where possible
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nanoclaw-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONTAINER_RUNTIME=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - TZ=${TZ:-UTC}
+    volumes:
+      # Docker socket for spawning agent containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent data
+      - nanoclaw-store:/app/store
+      - nanoclaw-data:/app/data
+      - nanoclaw-groups:/app/groups
+      # Config (mount allowlist, etc.)
+      - ${NANOCLAW_CONFIG_DIR:-./config}:/root/.config/nanoclaw:ro
+    ports:
+      - "${GATEWAY_PORT:-18790}:18790"
+    networks:
+      - nanoclaw-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nanoclaw-store:
+    driver: local
+  nanoclaw-data:
+    driver: local
+  nanoclaw-groups:
+    driver: local
+
+networks:
+  nanoclaw-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

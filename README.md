@@ -3,163 +3,176 @@
 </p>
 
 <p align="center">
-  My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
+  Personal Claude assistant that runs securely in Docker containers. Multi-channel, multi-skill, built for Windows 11 and Linux.
 </p>
 
-## Why I Built This
+## Why NanoClaw
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But I can't sleep well running software I don't understand with access to my life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers. Security is application-level (allowlists, pairing codes) rather than OS isolation. Everything runs in one Node process with shared memory.
+NanoClaw gives you a personal AI assistant with real isolation. Agents run in Docker containers with no network access, dropped capabilities, and read-only filesystems. The codebase is small enough to understand in 8 minutes.
 
-NanoClaw gives you the same core functionality in a codebase you can understand in 8 minutes. One process. A handful of files. Agents run in actual Linux containers with filesystem isolation, not behind permission checks.
+Inspired by [nanobot](https://github.com/wangsc2024/nanobot)'s architecture - decoupled channels, message bus routing, and pluggable skills - but keeping NanoClaw's container-first security model.
 
 ## Quick Start
+
+### Windows 11 (Docker Desktop)
+
+```bash
+# Prerequisites: Docker Desktop for Windows, Node.js 20+
+git clone https://github.com/gavrielc/nanoclaw.git
+cd nanoclaw
+cp .env.example .env
+# Edit .env with your API keys
+
+# Option 1: Run with Docker Compose
+docker compose up -d
+
+# Option 2: Run directly
+npm install
+npm run build
+./container/build.sh  # Build agent container
+npm start
+```
+
+### Linux
 
 ```bash
 git clone https://github.com/gavrielc/nanoclaw.git
 cd nanoclaw
-claude
+cp .env.example .env
+# Edit .env with your API keys
+
+npm install
+npm run build
+./container/build.sh
+npm start
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+### macOS
 
-## Philosophy
-
-**Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers. Have Claude Code walk you through it.
-
-**Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker). They can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
-
-**Built for one user.** This isn't a framework. It's working software that fits my exact needs. You fork it and have Claude Code make it match your exact needs.
-
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that this is safe.
-
-**AI-native.** No installation wizard; Claude Code guides setup. No monitoring dashboard; ask Claude what's happening. No debugging tools; describe the problem, Claude fixes it.
-
-**Skills over features.** Contributors shouldn't add features (e.g. support for Telegram) to the codebase. Instead, they contribute [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
-
-**Best harness, best model.** This runs on Claude Agent SDK, which means you're running Claude Code directly. The harness matters. A bad harness makes even smart models seem dumb, a good harness gives them superpowers. Claude Code is (IMO) the best harness available.
-
-## What It Supports
-
-- **WhatsApp I/O** - Message Claude from your phone
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
-- **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content
-- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
-
-## Usage
-
-Talk to your assistant with the trigger word (default: `@Andy`):
-
+```bash
+git clone https://github.com/gavrielc/nanoclaw.git
+cd nanoclaw
+claude  # Then run /setup
 ```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
-```
-
-From the main channel (your self-chat), you can manage groups and tasks:
-```
-@Andy list all scheduled tasks across groups
-@Andy pause the Monday briefing task
-@Andy join the Family Chat group
-```
-
-## Customizing
-
-There are no configuration files to learn. Just tell Claude Code what you want:
-
-- "Change the trigger word to @Bob"
-- "Remember in the future to make responses shorter and more direct"
-- "Add a custom greeting when I say good morning"
-- "Store conversation summaries weekly"
-
-Or run `/customize` for guided changes.
-
-The codebase is small enough that Claude can safely modify it.
-
-## Contributing
-
-**Don't add features. Add skills.**
-
-If you want to add Telegram support, don't create a PR that adds Telegram alongside WhatsApp. Instead, contribute a skill file (`.claude/skills/add-telegram/SKILL.md`) that teaches Claude Code how to transform a NanoClaw installation to use Telegram.
-
-Users then run `/add-telegram` on their fork and get clean code that does exactly what they need, not a bloated system trying to support every use case.
-
-### RFS (Request for Skills)
-
-Skills we'd love to see:
-
-**Communication Channels**
-- `/add-telegram` - Add Telegram as channel. Should give the user option to replace WhatsApp or add as additional channel. Also should be possible to add it as a control channel (where it can trigger actions) or just a channel that can be used in actions triggered elsewhere
-- `/add-slack` - Add Slack
-- `/add-discord` - Add Discord
-
-**Platform Support**
-- `/setup-windows` - Windows via WSL2 + Docker
-
-**Session Management**
-- `/add-clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
-
-## Requirements
-
-- macOS or Linux
-- Node.js 20+
-- [Claude Code](https://claude.ai/download)
-- [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
 
 ## Architecture
 
 ```
-WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
+Chat Apps --> Message Bus --> Agent Router --> Docker Container --> Response
+(WhatsApp)    (decoupled)    (queue/IPC)      (Claude Agent SDK)
+(Telegram)
+(Discord)
 ```
 
-Single Node.js process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
+Single Node.js process. Agents execute in isolated Docker containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
 
-Key files:
-- `src/index.ts` - Main app: WhatsApp connection, routing, IPC
-- `src/container-runner.ts` - Spawns agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations
-- `groups/*/CLAUDE.md` - Per-group memory
+### Key Files
 
-## FAQ
+| File | Purpose |
+|------|---------|
+| `src/index.ts` | Main app: channel setup, message routing, IPC |
+| `src/channels/` | Channel abstraction: WhatsApp, Telegram, Discord |
+| `src/message-bus.ts` | Decoupled message routing between channels and agents |
+| `src/container-runner.ts` | Spawns agent containers (Docker or Apple Container) |
+| `src/security.ts` | Security controls, input validation, Docker hardening |
+| `src/memory.ts` | Per-group memory management (daily + long-term) |
+| `src/task-scheduler.ts` | Scheduled task execution |
+| `src/db.ts` | SQLite operations |
+| `container/skills/` | Agent skill definitions |
 
-**Why WhatsApp and not Telegram/Signal/etc?**
+## Channels
 
-Because I use WhatsApp. Fork it and run a skill to change it. That's the whole point.
+### WhatsApp (Primary)
+Built-in via Baileys. Authenticate with QR code during setup.
 
-**Why Apple Container instead of Docker?**
+### Telegram (Optional)
+Set `TELEGRAM_ENABLED=true` and `TELEGRAM_BOT_TOKEN` in `.env`.
 
-On macOS, Apple Container is lightweight, fast, and optimized for Apple silicon. But Docker is also fully supported—during `/setup`, you can choose which runtime to use. On Linux, Docker is used automatically.
+### Discord (Optional)
+Set `DISCORD_ENABLED=true` and `DISCORD_BOT_TOKEN` in `.env`.
 
-**Can I run this on Linux?**
+## Agent Skills
 
-Yes. Run `/setup` and it will automatically configure Docker as the container runtime. Thanks to [@dotsetgreg](https://github.com/dotsetgreg) for contributing the `/convert-to-docker` skill.
+Built-in skills available to all agents:
 
-**Is this secure?**
+| Skill | Description |
+|-------|-------------|
+| **Market Analysis** | 24/7 financial market monitoring, technical analysis, news sentiment |
+| **Software Engineer** | Full-stack development, code review, debugging, architecture |
+| **Daily Routine** | Morning briefings, task management, habit tracking, weekly planning |
+| **Knowledge Assistant** | Information capture, research, summarization, knowledge retrieval |
+| **Browser Automation** | Web navigation and data extraction |
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+Skills are markdown files in `container/skills/` that teach agents specialized behaviors.
 
-**Why no configuration files?**
+## Security
 
-We don't want configuration sprawl. Every user should customize it to so that the code matches exactly what they want rather than configuring a generic system. If you like having config files, tell Claude to add them.
+Defense-in-depth approach:
 
-**How do I debug issues?**
+- **Container Isolation**: Agents run in Docker with `--network=none`, `--cap-drop=ALL`, `--read-only`
+- **Resource Limits**: Memory (1GB), CPU (1 core), PIDs (256) per container
+- **Mount Security**: External allowlist prevents access to sensitive directories
+- **Input Validation**: XML escaping, URL validation, secret detection
+- **Shell Guards**: Dangerous command patterns blocked (rm -rf, fork bombs, etc.)
+- **Rate Limiting**: Per-sender rate limits on external channels
+- **Secret Filtering**: Only explicitly allowed env vars passed to containers
+- **Non-root Execution**: Container processes run as `node` user
 
-Ask Claude Code. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach.
+See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
 
-**Why isn't the setup working for me?**
+## Configuration
 
-I don't know. Run `claude`, then run `/debug`. If claude finds an issue that is likely affecting other users, open a PR to modify the setup SKILL.md.
+All configuration via environment variables (`.env` file):
 
-**What changes will be accepted into the codebase?**
+```bash
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
 
-Security fixes, bug fixes, and clear improvements to the base configuration. That's it.
+# Channels
+WHATSAPP_ENABLED=true
+TELEGRAM_ENABLED=false
+TELEGRAM_BOT_TOKEN=
+DISCORD_ENABLED=false
+DISCORD_BOT_TOKEN=
 
-Everything else (new capabilities, OS compatibility, hardware support, enhancements) should be contributed as skills.
+# Container
+CONTAINER_RUNTIME=docker    # or apple-container
+CONTAINER_TIMEOUT=300000
+MAX_CONCURRENT_CONTAINERS=5
 
-This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
+# See .env.example for all options
+```
+
+## Docker Compose
+
+For production deployment on Windows 11 or Linux:
+
+```bash
+docker compose up -d          # Start
+docker compose logs -f app    # View logs
+docker compose down           # Stop
+```
+
+The compose file handles:
+- Docker socket mounting for agent container orchestration
+- Persistent volumes for data, groups, and authentication
+- Health checks and resource limits
+- Network isolation
+
+## Development
+
+```bash
+npm run dev          # Run with hot reload
+npm run build        # Compile TypeScript
+npm run typecheck    # Type check without emitting
+./container/build.sh # Rebuild agent container
+```
+
+## Requirements
+
+- Node.js 20+
+- Docker Desktop (Windows 11) or Docker Engine (Linux) or Apple Container (macOS)
+- [Claude Code](https://claude.ai/download) (for interactive setup)
 
 ## License
 
