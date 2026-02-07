@@ -13,7 +13,7 @@ run = "pnpm build"
 
 [tasks."build:agent"]
 dir = "container"
-run = "${CONTAINER_RUNTIME} build -t ghcr.io/tiagojmartins/nanoclaw-agent:latest ."
+run = "{{ env.CONTAINER_RUNTIME }} build -t ghcr.io/tiagojmartins/nanoclaw-agent:latest ."
 
 [tasks.deploy]
 depends = ["build"]
