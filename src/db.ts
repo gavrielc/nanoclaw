@@ -12,10 +12,68 @@ export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  db = new Database(dbPath, { timeout: 10000 });
+  try {
+    db = new Database(dbPath, { timeout: 10000 });
 
-  // Enable WAL mode for better concurrency
-  db.pragma('journal_mode = WAL');
+    // Enable WAL mode for better concurrency
+    db.pragma('journal_mode = WAL');
+
+    // Set WAL auto-checkpoint to prevent WAL file from growing too large
+    db.pragma('wal_autocheckpoint = 1000');
+
+    // Verify database integrity
+    const integrityResult = db.pragma('integrity_check', { simple: true }) as
+      | Array<{ integrity_check: string }>
+      | string;
+    const isOk =
+      typeof integrityResult === 'string'
+        ? integrityResult === 'ok'
+        : integrityResult[0]?.integrity_check === 'ok';
+
+    if (!isOk) {
+      logger.warn(
+        { integrityResult },
+        'Database integrity check failed, attempting WAL checkpoint',
+      );
+      // Try to recover by checkpointing WAL
+      db.pragma('wal_checkpoint(TRUNCATE)');
+      logger.info('WAL checkpoint completed');
+    } else {
+      logger.debug('Database integrity check passed');
+    }
+  } catch (err) {
+    logger.error(
+      { err },
+      'Database initialization failed, attempting recovery by recreating database',
+    );
+
+    // Close database if it was opened
+    try {
+      if (db) db.close();
+    } catch (closeErr) {
+      logger.debug({ closeErr }, 'Error closing corrupted database');
+    }
+
+    // Backup corrupted database
+    const backupPath = dbPath.replace(
+      '.db',
+      `.corrupted-${Date.now()}.db`,
+    );
+    try {
+      if (fs.existsSync(dbPath)) {
+        fs.renameSync(dbPath, backupPath);
+        logger.warn({ backupPath }, 'Corrupted database backed up');
+      }
+    } catch (backupErr) {
+      logger.error({ backupErr }, 'Failed to backup corrupted database');
+    }
+
+    // Create fresh database
+    db = new Database(dbPath, { timeout: 10000 });
+    db.pragma('journal_mode = WAL');
+    db.pragma('wal_autocheckpoint = 1000');
+    logger.info('Fresh database created after recovery');
+  }
 
   // Check if we need to migrate from WhatsApp schema
   const tables = db

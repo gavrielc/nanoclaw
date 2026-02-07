@@ -1073,6 +1073,41 @@ async function connectTelegram(): Promise<void> {
   });
 }
 
+async function ensureNativeModulesHealthy(): Promise<void> {
+  try {
+    // Try to load better-sqlite3 to verify it's not corrupted
+    // Use dynamic import for ESM compatibility
+    const { default: Database } = await import('better-sqlite3');
+    // Simple test with in-memory database
+    const testDb = new Database(':memory:');
+    testDb.close();
+    logger.debug('Native modules health check passed');
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Native module corrupted (likely due to Docker VirtioFS), attempting rebuild...',
+    );
+    try {
+      execSync('npm rebuild better-sqlite3', {
+        cwd: process.cwd(),
+        stdio: 'inherit',
+      });
+      logger.info('Native modules rebuilt successfully');
+
+      // Verify rebuild was successful
+      const { default: Database } = await import('better-sqlite3');
+      const testDb = new Database(':memory:');
+      testDb.close();
+      logger.info('Native modules verified after rebuild');
+    } catch (rebuildErr) {
+      logger.error({ rebuildErr }, 'Failed to rebuild native modules');
+      throw new Error(
+        'Native modules are corrupted and automatic rebuild failed. Please run: npm rebuild',
+      );
+    }
+  }
+}
+
 function ensureContainerSystemRunning(): void {
   try {
     execSync('docker info', { stdio: 'pipe', timeout: 10000 });
@@ -1108,6 +1143,8 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
+  // Check native modules health before anything else
+  await ensureNativeModulesHealthy();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');

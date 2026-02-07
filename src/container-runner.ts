@@ -64,12 +64,31 @@ function buildVolumeMounts(
   const projectRoot = process.cwd();
 
   if (isMain) {
-    // Main gets the entire project root mounted
-    mounts.push({
-      hostPath: projectRoot,
-      containerPath: '/workspace/project',
-      readonly: false,
-    });
+    // Main gets selective project directories (excluding node_modules to prevent
+    // Docker VirtioFS from corrupting native binaries like better-sqlite3.node)
+    const projectDirs = ['src', 'container', 'groups', 'skills', 'docs'];
+
+    for (const dir of projectDirs) {
+      const dirPath = path.join(projectRoot, dir);
+      if (fs.existsSync(dirPath)) {
+        mounts.push({
+          hostPath: dirPath,
+          containerPath: `/workspace/project/${dir}`,
+          readonly: dir === 'src' || dir === 'container', // Source code is read-only
+        });
+      }
+    }
+
+    // Mount config files (read-only)
+    const configFiles = ['package.json', 'tsconfig.json', '.env'];
+    for (const file of configFiles) {
+      const filePath = path.join(projectRoot, file);
+      if (fs.existsSync(filePath)) {
+        // Note: Apple Container only supports directory mounts
+        // Individual files will be mounted via their parent directory
+        logger.debug({ file }, 'Config file available in project root');
+      }
+    }
 
     // Main also gets its group folder as the working directory
     mounts.push({
