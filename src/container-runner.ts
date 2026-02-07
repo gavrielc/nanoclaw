@@ -1,8 +1,17 @@
 /**
  * Container Runner for NanoClaw
- * Spawns agent execution in Apple Container and handles IPC
+ *
+ * Spawns agent execution in Docker or Apple Container and handles IPC.
+ * Supports both Docker (Windows 11/Linux) and Apple Container (macOS) runtimes.
+ *
+ * Security:
+ * - Containers run with --network=none (no network access)
+ * - All capabilities dropped (Docker)
+ * - Read-only root filesystem (Docker)
+ * - Memory and PID limits (Docker)
+ * - Non-root user inside container
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -16,18 +25,36 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { getDockerSecurityArgs, sanitizeContainerName } from './security.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
+/** Detect container runtime: 'docker' or 'apple-container' */
+function getContainerRuntime(): 'docker' | 'apple-container' {
+  const envRuntime = process.env.CONTAINER_RUNTIME;
+  if (envRuntime === 'docker') return 'docker';
+  if (envRuntime === 'apple-container' || envRuntime === 'container')
+    return 'apple-container';
+
+  // Auto-detect: prefer Apple Container on macOS if available, Docker elsewhere
+  if (os.platform() === 'darwin') {
+    try {
+      execSync('which container', { stdio: 'pipe' });
+      return 'apple-container';
+    } catch {
+      return 'docker';
+    }
+  }
+  return 'docker';
+}
+
 function getHomeDir(): string {
-  const home = process.env.HOME || os.homedir();
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   if (!home) {
-    throw new Error(
-      'Unable to determine home directory: HOME environment variable is not set and os.homedir() returned empty',
-    );
+    throw new Error('Unable to determine home directory');
   }
   return home;
 }
@@ -64,33 +91,26 @@ function buildVolumeMounts(
   isMain: boolean,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
-  const homeDir = getHomeDir();
   const projectRoot = process.cwd();
 
   if (isMain) {
-    // Main gets the entire project root mounted
     mounts.push({
       hostPath: projectRoot,
       containerPath: '/workspace/project',
       readonly: false,
     });
-
-    // Main also gets its group folder as the working directory
     mounts.push({
       hostPath: path.join(GROUPS_DIR, group.folder),
       containerPath: '/workspace/group',
       readonly: false,
     });
   } else {
-    // Other groups only get their own folder
     mounts.push({
       hostPath: path.join(GROUPS_DIR, group.folder),
       containerPath: '/workspace/group',
       readonly: false,
     });
 
-    // Global memory directory (read-only for non-main)
-    // Apple Container only supports directory mounts, not file mounts
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
@@ -102,7 +122,6 @@ function buildVolumeMounts(
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
@@ -116,8 +135,7 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
+  // Per-group IPC namespace
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
@@ -127,8 +145,7 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Environment file directory (workaround for Apple Container -i env var bug)
-  // Only expose specific auth variables needed by Claude Code, not the entire .env
+  // Environment file with filtered variables
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
   const envFile = path.join(projectRoot, '.env');
@@ -154,7 +171,7 @@ function buildVolumeMounts(
     }
   }
 
-  // Additional mounts validated against external allowlist (tamper-proof from containers)
+  // Additional mounts validated against external allowlist
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
       group.containerConfig.additionalMounts,
@@ -167,10 +184,19 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+  runtime: 'docker' | 'apple-container',
+): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Apple Container: --mount for readonly, -v for read-write
+  if (runtime === 'docker') {
+    // Apply Docker-specific security hardening
+    args.push(...getDockerSecurityArgs());
+  }
+
+  // Mount volumes
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(
@@ -193,6 +219,8 @@ export async function runContainerAgent(
   onProcess: (proc: ChildProcess, containerName: string) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+  const runtime = getContainerRuntime();
+  const command = runtime === 'docker' ? 'docker' : 'container';
 
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
@@ -200,17 +228,17 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, runtime);
 
   logger.debug(
     {
       group: group.name,
       containerName,
+      runtime,
       mounts: mounts.map(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
     },
     'Container mount configuration',
   );
@@ -221,6 +249,7 @@ export async function runContainerAgent(
       containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
+      runtime,
     },
     'Spawning container agent',
   );
@@ -229,7 +258,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn(command, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -283,11 +312,17 @@ export async function runContainerAgent(
 
     const timeout = setTimeout(() => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      // Graceful stop: sends SIGTERM, waits, then SIGKILL — lets --rm fire
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      logger.error(
+        { group: group.name, containerName },
+        'Container timeout, stopping gracefully',
+      );
+      const safeCName = sanitizeContainerName(containerName);
+      exec(`${command} stop ${safeCName}`, { timeout: 15000 }, (err) => {
         if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
+          logger.warn(
+            { group: group.name, containerName: safeCName, err },
+            'Graceful stop failed, force killing',
+          );
           container.kill('SIGKILL');
         }
       });
@@ -300,14 +335,18 @@ export async function runContainerAgent(
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const timeoutLog = path.join(logsDir, `container-${ts}.log`);
-        fs.writeFileSync(timeoutLog, [
-          `=== Container Run Log (TIMEOUT) ===`,
-          `Timestamp: ${new Date().toISOString()}`,
-          `Group: ${group.name}`,
-          `Container: ${containerName}`,
-          `Duration: ${duration}ms`,
-          `Exit Code: ${code}`,
-        ].join('\n'));
+        fs.writeFileSync(
+          timeoutLog,
+          [
+            `=== Container Run Log (TIMEOUT) ===`,
+            `Timestamp: ${new Date().toISOString()}`,
+            `Group: ${group.name}`,
+            `Container: ${containerName}`,
+            `Runtime: ${runtime}`,
+            `Duration: ${duration}ms`,
+            `Exit Code: ${code}`,
+          ].join('\n'),
+        );
 
         logger.error(
           { group: group.name, containerName, duration, code },
@@ -331,6 +370,7 @@ export async function runContainerAgent(
         `=== Container Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
+        `Runtime: ${runtime}`,
         `IsMain: ${input.isMain}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
@@ -402,7 +442,6 @@ export async function runContainerAgent(
       }
 
       try {
-        // Extract JSON between sentinel markers for robust parsing
         const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
         const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
 
@@ -412,7 +451,6 @@ export async function runContainerAgent(
             .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
             .trim();
         } else {
-          // Fallback: last non-empty line (backwards compatibility)
           const lines = stdout.trim().split('\n');
           jsonLine = lines[lines.length - 1];
         }
@@ -451,7 +489,10 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error(
+        { group: group.name, containerName, error: err },
+        'Container spawn error',
+      );
       resolve({
         status: 'error',
         result: null,
@@ -474,11 +515,9 @@ export function writeTasksSnapshot(
     next_run: string | null;
   }>,
 ): void {
-  // Write filtered tasks to the group's IPC directory
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
-  // Main sees all tasks, others only see their own
   const filteredTasks = isMain
     ? tasks
     : tasks.filter((t) => t.groupFolder === groupFolder);
@@ -494,11 +533,6 @@ export interface AvailableGroup {
   isRegistered: boolean;
 }
 
-/**
- * Write available groups snapshot for the container to read.
- * Only main group can see all available groups (for activation).
- * Non-main groups only see their own registration status.
- */
 export function writeGroupsSnapshot(
   groupFolder: string,
   isMain: boolean,
@@ -508,7 +542,6 @@ export function writeGroupsSnapshot(
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
-  // Main sees all groups; others see nothing (they can't activate groups)
   const visibleGroups = isMain ? groups : [];
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
@@ -523,4 +556,113 @@ export function writeGroupsSnapshot(
       2,
     ),
   );
+}
+
+/**
+ * Ensure the container runtime is available and clean up stale containers.
+ */
+export function ensureContainerRuntime(): void {
+  const runtime = getContainerRuntime();
+  const command = runtime === 'docker' ? 'docker' : 'container';
+
+  logger.info({ runtime }, 'Container runtime detected');
+
+  if (runtime === 'apple-container') {
+    try {
+      execSync('container system status', { stdio: 'pipe' });
+      logger.debug('Apple Container system running');
+    } catch {
+      logger.info('Starting Apple Container system...');
+      try {
+        execSync('container system start', { stdio: 'pipe', timeout: 30000 });
+        logger.info('Apple Container system started');
+      } catch (err) {
+        logger.error({ err }, 'Failed to start Apple Container system');
+        throw new Error(
+          'Apple Container system is required but failed to start',
+        );
+      }
+    }
+  } else {
+    // Docker: verify daemon is accessible
+    try {
+      execSync('docker info', { stdio: 'pipe', timeout: 10000 });
+      logger.info('Docker daemon accessible');
+    } catch (err) {
+      logger.error({ err }, 'Docker daemon not accessible');
+      console.error(
+        '\n╔════════════════════════════════════════════════════════════════╗',
+      );
+      console.error(
+        '║  FATAL: Docker daemon is not accessible                       ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  On Windows 11:                                               ║',
+      );
+      console.error(
+        '║  1. Install Docker Desktop from https://docker.com            ║',
+      );
+      console.error(
+        '║  2. Start Docker Desktop                                      ║',
+      );
+      console.error(
+        '║  3. Restart NanoClaw                                          ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  On Linux:                                                     ║',
+      );
+      console.error(
+        '║  1. Install Docker: https://docs.docker.com/engine/install/   ║',
+      );
+      console.error(
+        '║  2. Run: sudo systemctl start docker                          ║',
+      );
+      console.error(
+        '║  3. Restart NanoClaw                                          ║',
+      );
+      console.error(
+        '╚════════════════════════════════════════════════════════════════╝\n',
+      );
+      throw new Error(
+        'Docker is required but not accessible. Ensure Docker Desktop is running (Windows) or Docker daemon is started (Linux).',
+      );
+    }
+  }
+
+  // Clean up stopped NanoClaw containers from previous runs
+  try {
+    let listCmd: string;
+    if (runtime === 'apple-container') {
+      listCmd = 'container ls -a --format {{.Names}}';
+    } else {
+      listCmd = 'docker ps -a --filter "name=nanoclaw-" --format "{{.Names}}"';
+    }
+    const output = execSync(listCmd, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8',
+    });
+    const stale = output
+      .split('\n')
+      .map((n) => n.trim())
+      .filter((n) => n.startsWith('nanoclaw-'));
+    if (stale.length > 0) {
+      for (const name of stale) {
+        const safeName = sanitizeContainerName(name);
+        try {
+          execSync(`${command} rm -f ${safeName}`, { stdio: 'pipe' });
+        } catch {
+          // Ignore individual container cleanup failures
+        }
+      }
+      logger.info({ count: stale.length }, 'Cleaned up stopped containers');
+    }
+  } catch {
+    // No stopped containers or ls/rm not supported
+  }
 }
