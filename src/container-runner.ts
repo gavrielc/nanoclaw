@@ -59,6 +59,43 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+/**
+ * Pre-seed core skills from container/skills/ into a group's .claude/skills/ directory.
+ * Only seeds skills that don't already exist — Kit's customizations take precedence.
+ * The SDK discovers skills at .claude/skills/{name}/SKILL.md relative to cwd.
+ */
+function seedCoreSkills(groupFolder: string): void {
+  const projectRoot = process.cwd();
+  const coreSkillsDir = path.join(projectRoot, 'container', 'skills');
+  const groupSkillsDir = path.join(GROUPS_DIR, groupFolder, '.claude', 'skills');
+
+  if (!fs.existsSync(coreSkillsDir)) return;
+
+  for (const entry of fs.readdirSync(coreSkillsDir)) {
+    const src = path.join(coreSkillsDir, entry);
+    const stat = fs.statSync(src);
+
+    if (stat.isDirectory()) {
+      // Skill is a directory (e.g., add-skill/SKILL.md)
+      const destDir = path.join(groupSkillsDir, entry);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+        for (const file of fs.readdirSync(src)) {
+          fs.copyFileSync(path.join(src, file), path.join(destDir, file));
+        }
+      }
+    } else if (stat.isFile() && entry.endsWith('.md')) {
+      // Skill is a single file (e.g., agent-browser.md) — wrap in directory with SKILL.md
+      const skillName = entry.replace('.md', '');
+      const destDir = path.join(groupSkillsDir, skillName);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+        fs.copyFileSync(src, path.join(destDir, 'SKILL.md'));
+      }
+    }
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -170,13 +207,10 @@ function buildVolumeMounts(
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Apple Container: --mount for readonly, -v for read-write
+  // Docker: -v for all mounts with :ro suffix for readonly
   for (const mount of mounts) {
     if (mount.readonly) {
-      args.push(
-        '--mount',
-        `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`,
-      );
+      args.push('-v', `${mount.hostPath}:${mount.containerPath}:ro`);
     } else {
       args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
     }
@@ -196,6 +230,7 @@ export async function runContainerAgent(
 
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
+  seedCoreSkills(group.folder);
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
@@ -229,7 +264,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn('docker', containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -285,7 +320,7 @@ export async function runContainerAgent(
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
       // Graceful stop: sends SIGTERM, waits, then SIGKILL — lets --rm fire
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      exec(`docker stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');
