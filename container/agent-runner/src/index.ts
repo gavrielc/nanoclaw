@@ -333,16 +333,18 @@ async function runQuery(
   sessionId: string | undefined,
   mcpServerPath: string,
   containerInput: ContainerInput,
-): Promise<string | undefined> {
+): Promise<{ newSessionId?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
+  let closedDuringQuery = false;
   const pollIpcDuringQuery = () => {
     if (!ipcPolling) return;
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
+      closedDuringQuery = true;
       stream.end();
       ipcPolling = false;
       return;
@@ -431,8 +433,8 @@ async function runQuery(
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}`);
-  return newSessionId;
+  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`);
+  return { newSessionId, closedDuringQuery };
 }
 
 async function main(): Promise<void> {
@@ -476,9 +478,17 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'})...`);
 
-      const newSessionId = await runQuery(prompt, sessionId, mcpServerPath, containerInput);
-      if (newSessionId) {
-        sessionId = newSessionId;
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput);
+      if (queryResult.newSessionId) {
+        sessionId = queryResult.newSessionId;
+      }
+
+      // If _close was consumed during the query, exit immediately.
+      // Don't emit a session-update marker (it would reset the host's
+      // idle timer and cause a 30-min delay before the next _close).
+      if (queryResult.closedDuringQuery) {
+        log('Close sentinel consumed during query, exiting');
+        break;
       }
 
       // Emit session update so host can track it
