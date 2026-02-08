@@ -6,6 +6,10 @@
   My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
 </p>
 
+<p align="center">
+  <a href="https://discord.gg/VGWXrf8x"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord" alt="Discord"></a>
+</p>
+
 ## Why I Built This
 
 [OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But I can't sleep well running software I don't understand with access to my life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers. Security is application-level (allowlists, pairing codes) rather than OS isolation. Everything runs in one Node process with shared memory.
@@ -160,6 +164,10 @@ Security fixes, bug fixes, and clear improvements to the base configuration. Tha
 Everything else (new capabilities, OS compatibility, hardware support, enhancements) should be contributed as skills.
 
 This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
+
+## Community
+
+Questions? Ideas? [Join the Discord](https://discord.gg/VGWXrf8x).
 
 ## License
 
