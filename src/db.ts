@@ -138,6 +138,7 @@ export function initDatabase(): void {
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
       chat_id INTEGER NOT NULL,
+      message_thread_id INTEGER,
       prompt TEXT NOT NULL,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
@@ -163,6 +164,17 @@ export function initDatabase(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
   `);
+
+  // Migrate: add message_thread_id column if missing
+  try {
+    const taskColumns = db.pragma('table_info(scheduled_tasks)') as { name: string }[];
+    if (taskColumns.length > 0 && !taskColumns.some(col => col.name === 'message_thread_id')) {
+      db.exec('ALTER TABLE scheduled_tasks ADD COLUMN message_thread_id INTEGER');
+      logger.info('Migrated scheduled_tasks: added message_thread_id column');
+    }
+  } catch (err) {
+    logger.debug({ err }, 'Migration check for message_thread_id skipped');
+  }
 
   // Insert special marker for group sync (chat_id = -1)
   db.prepare(`
@@ -336,13 +348,14 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_id, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_id, message_thread_id, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
     task.group_folder,
     task.chat_id,
+    task.message_thread_id ?? null,
     task.prompt,
     task.schedule_type,
     task.schedule_value,

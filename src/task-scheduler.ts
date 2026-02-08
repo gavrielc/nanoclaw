@@ -21,7 +21,7 @@ import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
-  sendMessage: (jid: string, text: string) => Promise<number | null>;
+  sendMessage: (jid: string, text: string, buttons?: undefined, messageThreadId?: number) => Promise<number | null>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
 }
@@ -143,8 +143,8 @@ async function runTask(
   // Send result message to group if there's output
   if (result && result.trim()) {
     try {
-      await deps.sendMessage(task.chat_id.toString(), result);
-      logger.info({ taskId: task.id, chatId: task.chat_id }, 'Task result sent to group');
+      await deps.sendMessage(task.chat_id.toString(), result, undefined, task.message_thread_id ?? undefined);
+      logger.info({ taskId: task.id, chatId: task.chat_id, messageThreadId: task.message_thread_id }, 'Task result sent to group');
     } catch (err) {
       logger.error({ taskId: task.id, err }, 'Failed to send task result');
     }

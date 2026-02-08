@@ -582,6 +582,7 @@ async function processTaskIpc(
     context_mode?: string;
     groupFolder?: string;
     chatId?: number; // Used for both schedule_task and register_group
+    messageThreadId?: number; // Telegram topic/thread ID for scheduled tasks
     name?: string;
     folder?: string;
     trigger?: string;
@@ -679,6 +680,7 @@ async function processTaskIpc(
           id: taskId,
           group_folder: targetGroup,
           chat_id: targetChatId,
+          message_thread_id: data.messageThreadId ?? null,
           prompt: data.prompt,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,

@@ -60,6 +60,7 @@ export interface ScheduledTask {
   id: string;
   group_folder: string;
   chat_id: number; // Telegram chat ID
+  message_thread_id?: number | null; // Telegram topic/thread ID
   prompt: string;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;

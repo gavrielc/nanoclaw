@@ -151,6 +151,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
             context_mode: args.context_mode || 'group',
             groupFolder: targetGroup,
             chatJid,
+            messageThreadId,
             createdBy: groupFolder,
             timestamp: new Date().toISOString()
           };
