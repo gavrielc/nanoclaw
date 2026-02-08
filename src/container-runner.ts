@@ -64,12 +64,20 @@ interface VolumeMount {
  * Only seeds skills that don't already exist — Kit's customizations take precedence.
  * The SDK discovers skills at .claude/skills/{name}/SKILL.md relative to cwd.
  */
-function seedCoreSkills(groupFolder: string): void {
+export function seedCoreSkills(groupFolder: string): void {
   const projectRoot = process.cwd();
   const coreSkillsDir = path.join(projectRoot, 'container', 'skills');
   const groupSkillsDir = path.join(GROUPS_DIR, groupFolder, '.claude', 'skills');
 
-  if (!fs.existsSync(coreSkillsDir)) return;
+  if (!fs.existsSync(coreSkillsDir)) {
+    logger.warn(
+      { coreSkillsDir },
+      'Core skills directory not found, skipping seed',
+    );
+    return;
+  }
+
+  logger.info({ groupFolder, groupSkillsDir }, 'Seeding core skills');
 
   for (const entry of fs.readdirSync(coreSkillsDir)) {
     const src = path.join(coreSkillsDir, entry);
@@ -79,10 +87,14 @@ function seedCoreSkills(groupFolder: string): void {
       // Skill is a directory (e.g., add-skill/SKILL.md)
       const destDir = path.join(groupSkillsDir, entry);
       if (!fs.existsSync(destDir)) {
+        logger.debug({ skill: entry, destDir }, 'Seeding skill directory');
         fs.mkdirSync(destDir, { recursive: true });
         for (const file of fs.readdirSync(src)) {
           fs.copyFileSync(path.join(src, file), path.join(destDir, file));
         }
+        logger.info({ skill: entry }, 'Seeded skill successfully');
+      } else {
+        logger.debug({ skill: entry }, 'Skill already exists, skipping');
       }
     } else if (stat.isFile() && entry.endsWith('.md')) {
       // Skill is a single file (e.g., agent-browser.md) — wrap in directory with SKILL.md
