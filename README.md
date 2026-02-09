@@ -121,13 +121,14 @@ Skills we'd love to see:
 WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
 ```
 
-Single Node.js process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
+Single Node.js process. Agents execute in isolated Linux containers with mounted directories. Per-group message queue with concurrency control. IPC via filesystem.
 
 Key files:
-- `src/index.ts` - Main app: WhatsApp connection, routing, IPC
-- `src/container-runner.ts` - Spawns agent containers
+- `src/index.ts` - Main app: WhatsApp connection, message loop, IPC
+- `src/group-queue.ts` - Per-group queue with global concurrency limit
+- `src/container-runner.ts` - Spawns streaming agent containers
 - `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations
+- `src/db.ts` - SQLite operations (messages, groups, sessions, state)
 - `groups/*/CLAUDE.md` - Per-group memory
 
 ## FAQ
