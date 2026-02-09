@@ -14,6 +14,8 @@
     "format:check": "prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.34",
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
