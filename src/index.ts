@@ -5,6 +5,7 @@ import path from 'path';
 import {
   Client,
   ChannelType,
+  EmbedBuilder,
   Events,
   GatewayIntentBits,
   Message,
@@ -399,6 +400,56 @@ async function sendMessage(channelId: string, text: string): Promise<void> {
   }
 }
 
+async function addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (channel?.isTextBased() && 'messages' in channel) {
+      const message = await (channel as TextChannel).messages.fetch(messageId);
+      await message.react(emoji);
+      logger.info({ channelId, messageId, emoji }, 'Reaction added');
+    }
+  } catch (err) {
+    logger.error({ channelId, messageId, emoji, err }, 'Failed to add reaction');
+  }
+}
+
+async function sendEmbed(
+  channelId: string,
+  embed: Record<string, unknown>,
+  text?: string | null,
+): Promise<void> {
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (channel?.isTextBased() && 'send' in channel) {
+      const builder = new EmbedBuilder();
+      if (embed.title) builder.setTitle(embed.title as string);
+      if (embed.description) builder.setDescription(embed.description as string);
+      if (embed.color !== undefined) builder.setColor(embed.color as number);
+      if (embed.url) builder.setURL(embed.url as string);
+      if (embed.thumbnail) builder.setThumbnail((embed.thumbnail as { url: string }).url);
+      if (embed.image) builder.setImage((embed.image as { url: string }).url);
+      if (embed.footer) builder.setFooter({ text: (embed.footer as { text: string }).text });
+      if (Array.isArray(embed.fields)) {
+        builder.setFields(
+          embed.fields.map((f: { name: string; value: string; inline?: boolean }) => ({
+            name: f.name,
+            value: f.value,
+            inline: f.inline ?? false,
+          })),
+        );
+      }
+
+      await (channel as TextChannel).send({
+        content: text || undefined,
+        embeds: [builder],
+      });
+      logger.info({ channelId }, 'Embed sent');
+    }
+  } catch (err) {
+    logger.error({ channelId, err }, 'Failed to send embed');
+  }
+}
+
 function startIpcWatcher(): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -438,27 +489,36 @@ function startIpcWatcher(): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await sendMessage(
-                    data.chatJid,
-                    data.text,
-                  );
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
-                  );
-                }
+
+              // Authorization: verify this group can send to this chatJid
+              const targetGroup = registeredGroups[data.chatJid];
+              const authorized =
+                isMain ||
+                (targetGroup && targetGroup.folder === sourceGroup);
+
+              if (!authorized && data.chatJid) {
+                logger.warn(
+                  { chatJid: data.chatJid, sourceGroup, type: data.type },
+                  'Unauthorized IPC message attempt blocked',
+                );
+              } else if (data.type === 'message' && data.chatJid && data.text) {
+                await sendMessage(data.chatJid, data.text);
+                logger.info(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'IPC message sent',
+                );
+              } else if (data.type === 'reaction' && data.chatJid && data.messageId && data.emoji) {
+                await addReaction(data.chatJid, data.messageId, data.emoji);
+                logger.info(
+                  { chatJid: data.chatJid, messageId: data.messageId, emoji: data.emoji, sourceGroup },
+                  'IPC reaction processed',
+                );
+              } else if (data.type === 'embed' && data.chatJid && data.embed) {
+                await sendEmbed(data.chatJid, data.embed, data.text);
+                logger.info(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'IPC embed sent',
+                );
               }
               fs.unlinkSync(filePath);
             } catch (err) {

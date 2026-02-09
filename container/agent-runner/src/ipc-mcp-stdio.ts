@@ -59,6 +59,75 @@ server.tool(
 );
 
 server.tool(
+  'add_reaction',
+  'Add an emoji reaction to a specific Discord message. Use this to acknowledge messages without sending a full reply (e.g., thumbs up, checkmark, eyes). The message_id is the Discord message ID from the conversation context.',
+  {
+    message_id: z.string().describe('The Discord message ID to react to'),
+    emoji: z.string().describe('The emoji to react with (e.g., "👍", "✅", "👀", or a custom emoji name like "custom_emoji")'),
+  },
+  async (args) => {
+    const data = {
+      type: 'reaction',
+      chatJid,
+      messageId: args.message_id,
+      emoji: args.emoji,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: `Reaction ${args.emoji} added to message ${args.message_id}.` }] };
+  },
+);
+
+server.tool(
+  'send_embed',
+  `Send a rich embed message to the user or group. Embeds are structured cards with optional color, title, description, fields, images, and more. Use this for search results, task summaries, status reports, or any structured information.
+
+Limits: title 256 chars, description 4096 chars, max 25 fields (name 256 chars, value 1024 chars each), footer 2048 chars. Total embed size must be under 6000 chars.`,
+  {
+    text: z.string().optional().describe('Optional plain text to send alongside the embed'),
+    title: z.string().optional().describe('Embed title (max 256 chars)'),
+    description: z.string().optional().describe('Embed description/body text (max 4096 chars)'),
+    color: z.number().optional().describe('Embed color as decimal integer (e.g., 3447003 for blue, 15158332 for red, 3066993 for green)'),
+    url: z.string().optional().describe('URL that the title links to'),
+    fields: z.array(z.object({
+      name: z.string().describe('Field name/title (max 256 chars)'),
+      value: z.string().describe('Field value (max 1024 chars)'),
+      inline: z.boolean().optional().describe('Display fields side-by-side (default false)'),
+    })).optional().describe('Structured fields shown in the embed'),
+    thumbnail_url: z.string().optional().describe('Small image shown in top-right corner'),
+    image_url: z.string().optional().describe('Large image shown at bottom of embed'),
+    footer: z.string().optional().describe('Footer text (max 2048 chars)'),
+  },
+  async (args) => {
+    const embed: Record<string, unknown> = {};
+    if (args.title) embed.title = args.title;
+    if (args.description) embed.description = args.description;
+    if (args.color !== undefined) embed.color = args.color;
+    if (args.url) embed.url = args.url;
+    if (args.fields) embed.fields = args.fields;
+    if (args.thumbnail_url) embed.thumbnail = { url: args.thumbnail_url };
+    if (args.image_url) embed.image = { url: args.image_url };
+    if (args.footer) embed.footer = { text: args.footer };
+
+    const data = {
+      type: 'embed',
+      chatJid,
+      text: args.text || null,
+      embed,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: 'Embed message sent.' }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 
