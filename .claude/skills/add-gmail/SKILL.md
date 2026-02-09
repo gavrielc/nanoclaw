@@ -494,7 +494,7 @@ export function getContextKey(email: EmailMessage): string {
 
 Read `src/index.ts` and add the email polling infrastructure. First, add these imports at the top:
 
-````typescript
+```typescript
 import { checkForNewEmails, sendEmailReply, getContextKey } from './email-channel.js';
 import { EMAIL_CHANNEL } from './config.js';
 import { isEmailProcessed, markEmailProcessed, markEmailResponded } from './db.js';
