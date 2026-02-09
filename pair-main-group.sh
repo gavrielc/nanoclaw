@@ -33,15 +33,23 @@ echo "   (Press Ctrl+C to cancel)"
 echo ""
 
 # Wait for user to send message
-# Auto-detect database location (data/ for local, data-bot1/ for VPS)
-if [ -f "$PROJECT_ROOT/data-bot1/nanoclaw.db" ]; then
-    DB_FILE="$PROJECT_ROOT/data-bot1/nanoclaw.db"
+# Auto-detect database location
+# VPS: store-bot1/messages.db or store/messages.db
+# Legacy: data/nanoclaw.db
+if [ -f "$PROJECT_ROOT/store-bot1/messages.db" ]; then
+    DB_FILE="$PROJECT_ROOT/store-bot1/messages.db"
+    DATA_DIR="$PROJECT_ROOT/data-bot1"
+elif [ -f "$PROJECT_ROOT/store/messages.db" ]; then
+    DB_FILE="$PROJECT_ROOT/store/messages.db"
+    DATA_DIR="$PROJECT_ROOT/data"
 elif [ -f "$PROJECT_ROOT/data/nanoclaw.db" ]; then
     DB_FILE="$PROJECT_ROOT/data/nanoclaw.db"
+    DATA_DIR="$PROJECT_ROOT/data"
 else
     echo "❌ Database not found in:"
+    echo "   - $PROJECT_ROOT/store-bot1/messages.db"
+    echo "   - $PROJECT_ROOT/store/messages.db"
     echo "   - $PROJECT_ROOT/data/nanoclaw.db"
-    echo "   - $PROJECT_ROOT/data-bot1/nanoclaw.db"
     echo ""
     echo "Please ensure the service has been started at least once:"
     echo "   docker compose -f docker-compose.vps.yml up -d"
@@ -93,8 +101,8 @@ You are the AI assistant configured in ASSISTANT_NAME.
 This is the main administrative group with full privileges.
 EOF
 
-            # Create registered_groups.json (in same directory as database)
-            REGISTERED_GROUPS_FILE="$(dirname "$DB_FILE")/registered_groups.json"
+            # Create registered_groups.json (in data directory, not store)
+            REGISTERED_GROUPS_FILE="$DATA_DIR/registered_groups.json"
             cat > "$REGISTERED_GROUPS_FILE" << EOF
 {
   "$CHAT_ID": {
