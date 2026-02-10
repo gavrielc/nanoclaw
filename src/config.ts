@@ -22,7 +22,9 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
-export const VAULT_CONFIG_PATH = path.join(DATA_DIR, 'vault-config.json');
+// User configs stored outside project root — immune to rebases/checkouts
+const USER_CONFIG_DIR = path.join(HOME_DIR, '.config', 'nanoclaw');
+export const VAULT_CONFIG_PATH = path.join(USER_CONFIG_DIR, 'vault-config.json');
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
