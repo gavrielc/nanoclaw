@@ -79,6 +79,23 @@ Before making changes, ask:
    - Main chat: Responds to all (set `requiresTrigger: false`)
    - Other chats: Default requires trigger (`requiresTrigger: true`)
 
+## Architecture
+
+NanoClaw uses a **Channel abstraction** (`Channel` interface in `src/types.ts`). Each messaging platform implements this interface. Key files:
+
+| File | Purpose |
+|------|---------|
+| `src/types.ts` | `Channel` interface definition |
+| `src/channels/whatsapp.ts` | `WhatsAppChannel` class (reference implementation) |
+| `src/router.ts` | `findChannel()`, `routeOutbound()`, `formatOutbound()` |
+| `src/index.ts` | Orchestrator: creates channels, wires callbacks, starts subsystems |
+| `src/ipc.ts` | IPC watcher (uses `sendMessage` dep for outbound) |
+
+The Telegram channel follows the same pattern as WhatsApp:
+- Implements `Channel` interface (`connect`, `sendMessage`, `ownsJid`, `disconnect`, `setTyping`)
+- Delivers inbound messages via `onMessage` / `onChatMetadata` callbacks
+- The existing message loop in `src/index.ts` picks up stored messages automatically
+
 ## Implementation
 
 ### Step 1: Update Configuration
@@ -92,327 +109,299 @@ export const TELEGRAM_ONLY = process.env.TELEGRAM_ONLY === "true";
 
 These should be added near the top with other configuration exports.
 
-### Step 2: Add storeMessageDirect to Database
+### Step 2: Create Telegram Channel
 
-Read `src/db.ts` and add this function (place it near the `storeMessage` function):
-
-```typescript
-/**
- * Store a message directly (for non-WhatsApp channels that don't use Baileys proto).
- */
-export function storeMessageDirect(msg: {
-  id: string;
-  chat_jid: string;
-  sender: string;
-  sender_name: string;
-  content: string;
-  timestamp: string;
-  is_from_me: boolean;
-}): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-  );
-}
-```
-
-This uses the existing `db` instance from `db.ts`. No additional imports needed.
-
-### Step 3: Create Telegram Module
-
-Create `src/telegram.ts`. The Telegram module is a thin layer that stores incoming messages to the database. It does NOT call the agent directly — the existing `startMessageLoop()` in `src/index.ts` polls all registered group JIDs and picks up Telegram messages automatically.
+Create `src/channels/telegram.ts` implementing the `Channel` interface. Use `src/channels/whatsapp.ts` as a reference for the pattern.
 
 ```typescript
 import { Bot } from "grammy";
+
 import {
   ASSISTANT_NAME,
   TRIGGER_PATTERN,
-} from "./config.js";
-import {
-  getAllRegisteredGroups,
-  storeChatMetadata,
-  storeMessageDirect,
-} from "./db.js";
-import { logger } from "./logger.js";
+} from "../config.js";
+import { logger } from "../logger.js";
+import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from "../types.js";
 
-let bot: Bot | null = null;
-
-/** Store a placeholder message for non-text content (photos, voice, etc.) */
-function storeNonTextMessage(ctx: any, placeholder: string): void {
-  const chatId = `tg:${ctx.chat.id}`;
-  const registeredGroups = getAllRegisteredGroups();
-  if (!registeredGroups[chatId]) return;
-
-  const timestamp = new Date(ctx.message.date * 1000).toISOString();
-  const senderName =
-    ctx.from?.first_name || ctx.from?.username || ctx.from?.id?.toString() || "Unknown";
-  const caption = ctx.message.caption ? ` ${ctx.message.caption}` : "";
-
-  storeChatMetadata(chatId, timestamp);
-  storeMessageDirect({
-    id: ctx.message.message_id.toString(),
-    chat_jid: chatId,
-    sender: ctx.from?.id?.toString() || "",
-    sender_name: senderName,
-    content: `${placeholder}${caption}`,
-    timestamp,
-    is_from_me: false,
-  });
+export interface TelegramChannelOpts {
+  onMessage: OnInboundMessage;
+  onChatMetadata: OnChatMetadata;
+  registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
-export async function connectTelegram(botToken: string): Promise<void> {
-  bot = new Bot(botToken);
+export class TelegramChannel implements Channel {
+  name = "telegram";
+  prefixAssistantName = false; // Telegram bots already display their name
 
-  // Command to get chat ID (useful for registration)
-  bot.command("chatid", (ctx) => {
-    const chatId = ctx.chat.id;
-    const chatType = ctx.chat.type;
-    const chatName =
-      chatType === "private"
-        ? ctx.from?.first_name || "Private"
-        : (ctx.chat as any).title || "Unknown";
+  private bot: Bot | null = null;
+  private opts: TelegramChannelOpts;
+  private botToken: string;
 
-    ctx.reply(
-      `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
-      { parse_mode: "Markdown" },
-    );
-  });
+  constructor(botToken: string, opts: TelegramChannelOpts) {
+    this.botToken = botToken;
+    this.opts = opts;
+  }
 
-  // Command to check bot status
-  bot.command("ping", (ctx) => {
-    ctx.reply(`${ASSISTANT_NAME} is online.`);
-  });
+  async connect(): Promise<void> {
+    this.bot = new Bot(this.botToken);
 
-  bot.on("message:text", async (ctx) => {
-    // Skip commands
-    if (ctx.message.text.startsWith("/")) return;
+    // Command to get chat ID (useful for registration)
+    this.bot.command("chatid", (ctx) => {
+      const chatId = ctx.chat.id;
+      const chatType = ctx.chat.type;
+      const chatName =
+        chatType === "private"
+          ? ctx.from?.first_name || "Private"
+          : (ctx.chat as any).title || "Unknown";
 
-    const chatId = `tg:${ctx.chat.id}`;
-    let content = ctx.message.text;
-    const timestamp = new Date(ctx.message.date * 1000).toISOString();
-    const senderName =
-      ctx.from?.first_name ||
-      ctx.from?.username ||
-      ctx.from?.id.toString() ||
-      "Unknown";
-    const sender = ctx.from?.id.toString() || "";
-    const msgId = ctx.message.message_id.toString();
-
-    // Determine chat name
-    const chatName =
-      ctx.chat.type === "private"
-        ? senderName
-        : (ctx.chat as any).title || chatId;
-
-    // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
-    // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
-    // (e.g., ^@Andy\b), so we prepend the trigger when the bot is @mentioned.
-    const botUsername = ctx.me?.username?.toLowerCase();
-    if (botUsername) {
-      const entities = ctx.message.entities || [];
-      const isBotMentioned = entities.some((entity) => {
-        if (entity.type === "mention") {
-          const mentionText = content
-            .substring(entity.offset, entity.offset + entity.length)
-            .toLowerCase();
-          return mentionText === `@${botUsername}`;
-        }
-        return false;
-      });
-      if (isBotMentioned && !TRIGGER_PATTERN.test(content)) {
-        content = `@${ASSISTANT_NAME} ${content}`;
-      }
-    }
-
-    // Store chat metadata for discovery
-    storeChatMetadata(chatId, timestamp, chatName);
-
-    // Check if this chat is registered
-    const registeredGroups = getAllRegisteredGroups();
-    const group = registeredGroups[chatId];
-
-    if (!group) {
-      logger.debug(
-        { chatId, chatName },
-        "Message from unregistered Telegram chat",
+      ctx.reply(
+        `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
+        { parse_mode: "Markdown" },
       );
+    });
+
+    // Command to check bot status
+    this.bot.command("ping", (ctx) => {
+      ctx.reply(`${ASSISTANT_NAME} is online.`);
+    });
+
+    this.bot.on("message:text", async (ctx) => {
+      // Skip commands
+      if (ctx.message.text.startsWith("/")) return;
+
+      const chatJid = `tg:${ctx.chat.id}`;
+      let content = ctx.message.text;
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id.toString() ||
+        "Unknown";
+      const sender = ctx.from?.id.toString() || "";
+      const msgId = ctx.message.message_id.toString();
+
+      // Determine chat name
+      const chatName =
+        ctx.chat.type === "private"
+          ? senderName
+          : (ctx.chat as any).title || chatJid;
+
+      // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
+      // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
+      // (e.g., ^@Andy\b), so we prepend the trigger when the bot is @mentioned.
+      const botUsername = ctx.me?.username?.toLowerCase();
+      if (botUsername) {
+        const entities = ctx.message.entities || [];
+        const isBotMentioned = entities.some((entity) => {
+          if (entity.type === "mention") {
+            const mentionText = content
+              .substring(entity.offset, entity.offset + entity.length)
+              .toLowerCase();
+            return mentionText === `@${botUsername}`;
+          }
+          return false;
+        });
+        if (isBotMentioned && !TRIGGER_PATTERN.test(content)) {
+          content = `@${ASSISTANT_NAME} ${content}`;
+        }
+      }
+
+      // Store chat metadata for discovery
+      this.opts.onChatMetadata(chatJid, timestamp, chatName);
+
+      // Only deliver full message for registered groups
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        logger.debug(
+          { chatJid, chatName },
+          "Message from unregistered Telegram chat",
+        );
+        return;
+      }
+
+      // Deliver message — startMessageLoop() will pick it up
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender,
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+
+      logger.info(
+        { chatJid, chatName, sender: senderName },
+        "Telegram message stored",
+      );
+    });
+
+    // Handle non-text messages with placeholders so the agent knows something was sent
+    const storeNonText = (ctx: any, placeholder: string) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name || ctx.from?.username || ctx.from?.id?.toString() || "Unknown";
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : "";
+
+      this.opts.onChatMetadata(chatJid, timestamp);
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || "",
+        sender_name: senderName,
+        content: `${placeholder}${caption}`,
+        timestamp,
+        is_from_me: false,
+      });
+    };
+
+    this.bot.on("message:photo", (ctx) => storeNonText(ctx, "[Photo]"));
+    this.bot.on("message:video", (ctx) => storeNonText(ctx, "[Video]"));
+    this.bot.on("message:voice", (ctx) => storeNonText(ctx, "[Voice message]"));
+    this.bot.on("message:audio", (ctx) => storeNonText(ctx, "[Audio]"));
+    this.bot.on("message:document", (ctx) => {
+      const name = ctx.message.document?.file_name || "file";
+      storeNonText(ctx, `[Document: ${name}]`);
+    });
+    this.bot.on("message:sticker", (ctx) => {
+      const emoji = ctx.message.sticker?.emoji || "";
+      storeNonText(ctx, `[Sticker ${emoji}]`);
+    });
+    this.bot.on("message:location", (ctx) => storeNonText(ctx, "[Location]"));
+    this.bot.on("message:contact", (ctx) => storeNonText(ctx, "[Contact]"));
+
+    // Handle errors gracefully
+    this.bot.catch((err) => {
+      logger.error({ err: err.message }, "Telegram bot error");
+    });
+
+    // Start polling — returns a Promise that resolves when started
+    return new Promise<void>((resolve) => {
+      this.bot!.start({
+        onStart: (botInfo) => {
+          logger.info(
+            { username: botInfo.username, id: botInfo.id },
+            "Telegram bot connected",
+          );
+          console.log(`\n  Telegram bot: @${botInfo.username}`);
+          console.log(
+            `  Send /chatid to the bot to get a chat's registration ID\n`,
+          );
+          resolve();
+        },
+      });
+    });
+  }
+
+  async sendMessage(jid: string, text: string): Promise<void> {
+    if (!this.bot) {
+      logger.warn("Telegram bot not initialized");
       return;
     }
 
-    // Store message — startMessageLoop() will pick it up
-    storeMessageDirect({
-      id: msgId,
-      chat_jid: chatId,
-      sender,
-      sender_name: senderName,
-      content,
-      timestamp,
-      is_from_me: false,
-    });
+    try {
+      const numericId = jid.replace(/^tg:/, "");
 
-    logger.info(
-      { chatId, chatName, sender: senderName },
-      "Telegram message stored",
-    );
-  });
-
-  // Handle non-text messages with placeholders so the agent knows something was sent
-  bot.on("message:photo", (ctx) => storeNonTextMessage(ctx, "[Photo]"));
-  bot.on("message:video", (ctx) => storeNonTextMessage(ctx, "[Video]"));
-  bot.on("message:voice", (ctx) => storeNonTextMessage(ctx, "[Voice message]"));
-  bot.on("message:audio", (ctx) => storeNonTextMessage(ctx, "[Audio]"));
-  bot.on("message:document", (ctx) => {
-    const name = ctx.message.document?.file_name || "file";
-    storeNonTextMessage(ctx, `[Document: ${name}]`);
-  });
-  bot.on("message:sticker", (ctx) => {
-    const emoji = ctx.message.sticker?.emoji || "";
-    storeNonTextMessage(ctx, `[Sticker ${emoji}]`);
-  });
-  bot.on("message:location", (ctx) => storeNonTextMessage(ctx, "[Location]"));
-  bot.on("message:contact", (ctx) => storeNonTextMessage(ctx, "[Contact]"));
-
-  // Handle errors gracefully
-  bot.catch((err) => {
-    logger.error({ err: err.message }, "Telegram bot error");
-  });
-
-  // Start polling
-  bot.start({
-    onStart: (botInfo) => {
-      logger.info(
-        { username: botInfo.username, id: botInfo.id },
-        "Telegram bot connected",
-      );
-      console.log(`\n  Telegram bot: @${botInfo.username}`);
-      console.log(
-        `  Send /chatid to the bot to get a chat's registration ID\n`,
-      );
-    },
-  });
-}
-
-export async function sendTelegramMessage(
-  chatId: string,
-  text: string,
-): Promise<void> {
-  if (!bot) {
-    logger.warn("Telegram bot not initialized");
-    return;
-  }
-
-  try {
-    const numericId = chatId.replace(/^tg:/, "");
-
-    // Telegram has a 4096 character limit per message — split if needed
-    const MAX_LENGTH = 4096;
-    if (text.length <= MAX_LENGTH) {
-      await bot.api.sendMessage(numericId, text);
-    } else {
-      for (let i = 0; i < text.length; i += MAX_LENGTH) {
-        await bot.api.sendMessage(numericId, text.slice(i, i + MAX_LENGTH));
+      // Telegram has a 4096 character limit per message — split if needed
+      const MAX_LENGTH = 4096;
+      if (text.length <= MAX_LENGTH) {
+        await this.bot.api.sendMessage(numericId, text);
+      } else {
+        for (let i = 0; i < text.length; i += MAX_LENGTH) {
+          await this.bot.api.sendMessage(numericId, text.slice(i, i + MAX_LENGTH));
+        }
       }
+      logger.info({ jid, length: text.length }, "Telegram message sent");
+    } catch (err) {
+      logger.error({ jid, err }, "Failed to send Telegram message");
     }
-    logger.info({ chatId, length: text.length }, "Telegram message sent");
-  } catch (err) {
-    logger.error({ chatId, err }, "Failed to send Telegram message");
   }
-}
 
-export async function setTelegramTyping(chatId: string): Promise<void> {
-  if (!bot) return;
-  try {
-    const numericId = chatId.replace(/^tg:/, "");
-    await bot.api.sendChatAction(numericId, "typing");
-  } catch (err) {
-    logger.debug({ chatId, err }, "Failed to send Telegram typing indicator");
+  isConnected(): boolean {
+    return this.bot !== null;
   }
-}
 
-export function isTelegramConnected(): boolean {
-  return bot !== null;
-}
+  ownsJid(jid: string): boolean {
+    return jid.startsWith("tg:");
+  }
 
-export function stopTelegram(): void {
-  if (bot) {
-    bot.stop();
-    bot = null;
-    logger.info("Telegram bot stopped");
+  async disconnect(): Promise<void> {
+    if (this.bot) {
+      this.bot.stop();
+      this.bot = null;
+      logger.info("Telegram bot stopped");
+    }
+  }
+
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    if (!this.bot || !isTyping) return;
+    try {
+      const numericId = jid.replace(/^tg:/, "");
+      await this.bot.api.sendChatAction(numericId, "typing");
+    } catch (err) {
+      logger.debug({ jid, err }, "Failed to send Telegram typing indicator");
+    }
   }
 }
 ```
 
-Key differences from WhatsApp message handling:
-- No `onMessage` callback — messages are stored to DB and the existing message loop picks them up
-- Registration check uses `getAllRegisteredGroups()` from `db.ts` directly
-- Trigger matching is handled by `startMessageLoop()` / `processGroupMessages()`, not the Telegram module
+Key differences from the old standalone `src/telegram.ts`:
+- Implements `Channel` interface — same pattern as `WhatsAppChannel`
+- Uses `onMessage` / `onChatMetadata` callbacks instead of importing DB functions directly
+- Registration check via `registeredGroups()` callback, not `getAllRegisteredGroups()`
+- `prefixAssistantName = false` — Telegram bots already show their name, so `formatOutbound()` skips the prefix
+- No `storeMessageDirect` needed — `storeMessage()` in db.ts already accepts `NewMessage` directly
 
-### Step 4: Update Main Application
+### Step 3: Update Main Application
 
-Modify `src/index.ts`:
+Modify `src/index.ts` to support multiple channels. Read the file first to understand the current structure.
 
 1. **Add imports** at the top:
 
 ```typescript
-import {
-  connectTelegram,
-  sendTelegramMessage,
-  setTelegramTyping,
-  stopTelegram,
-} from "./telegram.js";
+import { TelegramChannel } from "./channels/telegram.js";
 import { TELEGRAM_BOT_TOKEN, TELEGRAM_ONLY } from "./config.js";
+import { findChannel } from "./router.js";
 ```
 
-2. **Update `sendMessage` function** to route Telegram messages. Find the `sendMessage` function and add a `tg:` prefix check before the WhatsApp path:
+2. **Add a channels array** alongside the existing `whatsapp` variable:
 
 ```typescript
-async function sendMessage(jid: string, text: string): Promise<void> {
-  // Route Telegram messages directly (no outgoing queue needed)
-  if (jid.startsWith("tg:")) {
-    await sendTelegramMessage(jid, text);
-    return;
-  }
-
-  // WhatsApp path (with outgoing queue for reconnection)
-  if (!waConnected) {
-    outgoingQueue.push({ jid, text });
-    logger.info({ jid, length: text.length, queueSize: outgoingQueue.length }, 'WA disconnected, message queued');
-    return;
-  }
-  try {
-    await sock.sendMessage(jid, { text });
-    logger.info({ jid, length: text.length }, 'Message sent');
-  } catch (err) {
-    outgoingQueue.push({ jid, text });
-    logger.warn({ jid, err, queueSize: outgoingQueue.length }, 'Failed to send, message queued');
-  }
-}
+let whatsapp: WhatsAppChannel;
+const channels: Channel[] = [];
 ```
 
-3. **Update `setTyping` function** to route Telegram typing indicators:
+Import `Channel` from `./types.js` if not already imported.
+
+3. **Update `processGroupMessages`** to find the correct channel for the JID instead of using `whatsapp` directly. Replace the direct `whatsapp.setTyping()` and `whatsapp.sendMessage()` calls:
 
 ```typescript
-async function setTyping(jid: string, isTyping: boolean): Promise<void> {
-  if (jid.startsWith("tg:")) {
-    if (isTyping) await setTelegramTyping(jid);
-    return;
-  }
-  try {
-    await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
-  } catch (err) {
-    logger.debug({ jid, err }, 'Failed to update typing status');
-  }
-}
+// Find the channel that owns this JID
+const channel = findChannel(channels, chatJid);
+if (!channel) return true; // No channel for this JID
+
+// ... (existing code for message fetching, trigger check, formatting)
+
+await channel.setTyping?.(chatJid, true);
+// ... (existing agent invocation, replacing whatsapp.sendMessage with channel.sendMessage)
+await channel.setTyping?.(chatJid, false);
 ```
 
-4. **Update `main()` function**. Add Telegram startup before `connectWhatsApp()` and wrap WhatsApp in a `TELEGRAM_ONLY` check:
+In the `onOutput` callback inside `processGroupMessages`, replace:
+```typescript
+await whatsapp.sendMessage(chatJid, `${ASSISTANT_NAME}: ${text}`);
+```
+with:
+```typescript
+const formatted = formatOutbound(channel, text);
+if (formatted) await channel.sendMessage(chatJid, formatted);
+```
+
+4. **Update `main()` function** to create channels conditionally and use them for deps:
 
 ```typescript
 async function main(): Promise<void> {
@@ -424,49 +413,70 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
-    stopTelegram();
     await queue.shutdown(10000);
+    for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Start Telegram bot if configured (independent of WhatsApp)
-  const hasTelegram = !!TELEGRAM_BOT_TOKEN;
-  if (hasTelegram) {
-    await connectTelegram(TELEGRAM_BOT_TOKEN);
+  // Channel callbacks (shared by all channels)
+  const channelOpts = {
+    onMessage: (chatJid: string, msg: NewMessage) => storeMessage(msg),
+    onChatMetadata: (chatJid: string, timestamp: string, name?: string) =>
+      storeChatMetadata(chatJid, timestamp, name),
+    registeredGroups: () => registeredGroups,
+  };
+
+  // Create and connect channels
+  if (!TELEGRAM_ONLY) {
+    whatsapp = new WhatsAppChannel(channelOpts);
+    channels.push(whatsapp);
+    await whatsapp.connect();
   }
 
-  if (!TELEGRAM_ONLY) {
-    await connectWhatsApp();
-  } else {
-    // Telegram-only mode: start all services that WhatsApp's connection.open normally starts
-    startSchedulerLoop({
-      registeredGroups: () => registeredGroups,
-      getSessions: () => sessions,
-      queue,
-      onProcess: (groupJid, proc, containerName, groupFolder) =>
-        queue.registerProcess(groupJid, proc, containerName, groupFolder),
-      sendMessage,
-      assistantName: ASSISTANT_NAME,
-    });
-    startIpcWatcher();
-    queue.setProcessMessagesFn(processGroupMessages);
-    recoverPendingMessages();
-    startMessageLoop();
-    logger.info(
-      `NanoClaw running (Telegram-only, trigger: @${ASSISTANT_NAME})`,
-    );
+  if (TELEGRAM_BOT_TOKEN) {
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+    channels.push(telegram);
+    await telegram.connect();
   }
+
+  // Start subsystems
+  startSchedulerLoop({
+    registeredGroups: () => registeredGroups,
+    getSessions: () => sessions,
+    queue,
+    onProcess: (groupJid, proc, containerName, groupFolder) =>
+      queue.registerProcess(groupJid, proc, containerName, groupFolder),
+    sendMessage: async (jid, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) return;
+      const text = formatOutbound(channel, rawText);
+      if (text) await channel.sendMessage(jid, text);
+    },
+  });
+  startIpcWatcher({
+    sendMessage: (jid, text) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      return channel.sendMessage(jid, text);
+    },
+    registeredGroups: () => registeredGroups,
+    registerGroup,
+    syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
+    getAvailableGroups,
+    writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
+  });
+  queue.setProcessMessagesFn(processGroupMessages);
+  recoverPendingMessages();
+  startMessageLoop();
 }
 ```
 
-Note: When running alongside WhatsApp, the `connection.open` handler in `connectWhatsApp()` already starts the scheduler, IPC watcher, queue, and message loop — no duplication needed.
-
-5. **Update `getAvailableGroups` function** to include Telegram chats. The current filter only shows WhatsApp groups (`@g.us`). Update it to also include `tg:` chats so the agent can discover and register Telegram chats via IPC:
+5. **Update `getAvailableGroups`** to include Telegram chats:
 
 ```typescript
-function getAvailableGroups(): AvailableGroup[] {
+export function getAvailableGroups(): AvailableGroup[] {
   const chats = getAllChats();
   const registeredJids = new Set(Object.keys(registeredGroups));
 
@@ -481,7 +491,7 @@ function getAvailableGroups(): AvailableGroup[] {
 }
 ```
 
-### Step 5: Update Environment
+### Step 4: Update Environment
 
 Add to `.env`:
 
@@ -500,7 +510,7 @@ cp .env data/env/env
 
 The container reads environment from `data/env/env`, not `.env` directly.
 
-### Step 6: Register a Telegram Chat
+### Step 5: Register a Telegram Chat
 
 After installing and starting the bot, tell the user:
 
@@ -534,7 +544,7 @@ The `RegisteredGroup` type requires a `trigger` string field and has an optional
 
 Alternatively, if the agent is already running in the main group, it can register new groups via IPC using the `register_group` task type.
 
-### Step 7: Build and Restart
+### Step 6: Build and Restart
 
 ```bash
 npm run build
@@ -548,7 +558,7 @@ npm run build
 systemctl --user restart nanoclaw
 ```
 
-### Step 8: Test
+### Step 7: Test
 
 Tell the user:
 
@@ -564,8 +574,8 @@ If user wants Telegram-only:
 
 1. Set `TELEGRAM_ONLY=true` in `.env`
 2. Run `cp .env data/env/env` to sync to container
-3. The WhatsApp connection code is automatically skipped
-4. All services (scheduler, IPC watcher, queue, message loop) start independently
+3. The WhatsApp channel is not created — only Telegram
+4. All services (scheduler, IPC watcher, queue, message loop) start normally
 5. Optionally remove `@whiskeysockets/baileys` dependency (but it's harmless to keep)
 
 ## Features
@@ -636,14 +646,11 @@ If they say yes, invoke the `/add-telegram-swarm` skill.
 
 To remove Telegram integration:
 
-1. Delete `src/telegram.ts`
-2. Remove Telegram imports from `src/index.ts`
-3. Remove `sendTelegramMessage` / `setTelegramTyping` routing from `sendMessage()` and `setTyping()` functions
-4. Remove `connectTelegram()` / `stopTelegram()` calls from `main()`
-5. Remove `TELEGRAM_ONLY` conditional in `main()`
-6. Revert `getAvailableGroups()` filter to only include `@g.us` chats
-7. Remove `storeMessageDirect` from `src/db.ts`
-8. Remove Telegram config (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ONLY`) from `src/config.ts`
-9. Remove Telegram registrations from SQLite: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE 'tg:%'"`
-10. Uninstall: `npm uninstall grammy`
-11. Rebuild: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
+1. Delete `src/channels/telegram.ts`
+2. Remove `TelegramChannel` import and creation from `src/index.ts`
+3. Remove `channels` array and revert to using `whatsapp` directly in `processGroupMessages`, scheduler deps, and IPC deps
+4. Revert `getAvailableGroups()` filter to only include `@g.us` chats
+5. Remove Telegram config (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ONLY`) from `src/config.ts`
+6. Remove Telegram registrations from SQLite: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE 'tg:%'"`
+7. Uninstall: `npm uninstall grammy`
+8. Rebuild: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw`

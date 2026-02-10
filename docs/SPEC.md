@@ -98,9 +98,13 @@ nanoclaw/
 ├── .gitignore
 │
 ├── src/
-│   ├── index.ts                   # Main application (WhatsApp + routing + message loop)
+│   ├── index.ts                   # Orchestrator: state, message loop, agent invocation
+│   ├── channels/
+│   │   └── whatsapp.ts            # WhatsApp connection, auth, send/receive
+│   ├── ipc.ts                     # IPC watcher and task processing
+│   ├── router.ts                  # Message formatting and outbound routing
 │   ├── config.ts                  # Configuration constants
-│   ├── types.ts                   # TypeScript interfaces
+│   ├── types.ts                   # TypeScript interfaces (includes Channel)
 │   ├── logger.ts                  # Pino logger setup
 │   ├── db.ts                      # SQLite database initialization and queries
 │   ├── group-queue.ts             # Per-group queue with global concurrency limit

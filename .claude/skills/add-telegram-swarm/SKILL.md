@@ -204,20 +204,11 @@ async (args) => {
 
 ### Step 4: Update Host IPC Routing
 
-Read `src/index.ts` and make these changes:
+Read `src/ipc.ts` and make these changes:
 
-1. **Add imports** — add `sendPoolMessage` and `initBotPool` to the Telegram imports, and `TELEGRAM_BOT_POOL` to the config imports.
+1. **Add imports** — add `sendPoolMessage` and `initBotPool` from the Telegram swarm module, and `TELEGRAM_BOT_POOL` from config.
 
-2. **Update IPC message routing** — in the `startIpcWatcher` / `processIpcFiles` function, find where IPC messages are sent:
-
-```typescript
-await sendMessage(
-  data.chatJid,
-  `${ASSISTANT_NAME}: ${data.text}`,
-);
-```
-
-Replace with:
+2. **Update IPC message routing** — in `src/ipc.ts`, find where the `sendMessage` dependency is called to deliver IPC messages (inside `processIpcFiles`). The `sendMessage` is passed in via the `IpcDeps` parameter. Wrap it to route Telegram swarm messages through the bot pool:
 
 ```typescript
 if (data.sender && data.chatJid.startsWith('tg:')) {
@@ -228,16 +219,13 @@ if (data.sender && data.chatJid.startsWith('tg:')) {
     sourceGroup,
   );
 } else {
-  // Telegram bots already show their name — skip prefix for tg: chats
-  const prefix = data.chatJid.startsWith('tg:') ? '' : `${ASSISTANT_NAME}: `;
-  await sendMessage(
-    data.chatJid,
-    `${prefix}${data.text}`,
-  );
+  await deps.sendMessage(data.chatJid, data.text);
 }
 ```
 
-3. **Initialize pool in `main()`** — after the `connectTelegram()` call, add:
+Note: The assistant name prefix is handled by `formatOutbound()` in the router — Telegram channels have `prefixAssistantName = false` so no prefix is added for `tg:` JIDs.
+
+3. **Initialize pool in `main()` in `src/index.ts`** — after creating the Telegram channel, add:
 
 ```typescript
 if (TELEGRAM_BOT_POOL.length > 0) {
