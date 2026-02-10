@@ -1,5 +1,9 @@
-import { ASSISTANT_NAME } from './config.js';
+import { ASSISTANT_NAME, ASSISTANT_HAS_OWN_NUMBER } from './config.js';
 import { Channel, NewMessage } from './types.js';
+
+export function isDirectChat(jid: string): boolean {
+  return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
+}
 
 export function escapeXml(s: string): string {
   return s
@@ -20,11 +24,15 @@ export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }
 
-export function formatOutbound(channel: Channel, rawText: string): string {
+export function formatOutbound(channel: Channel, rawText: string, jid?: string): string {
   const text = stripInternalTags(rawText);
   if (!text) return '';
-  const prefix =
-    channel.prefixAssistantName !== false ? `${ASSISTANT_NAME}: ` : '';
+  // Skip prefix if: channel says no, assistant has own number, or it's a direct chat
+  const skipPrefix =
+    channel.prefixAssistantName === false ||
+    ASSISTANT_HAS_OWN_NUMBER ||
+    (jid && isDirectChat(jid));
+  const prefix = skipPrefix ? '' : `${ASSISTANT_NAME}: `;
   return `${prefix}${text}`;
 }
 

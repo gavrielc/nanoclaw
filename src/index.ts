@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
   DATA_DIR,
   IDLE_TIMEOUT,
@@ -34,7 +35,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import { formatMessages, formatOutbound } from './router.js';
+import { formatMessages, formatOutbound, isDirectChat } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -177,7 +178,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await whatsapp.sendMessage(chatJid, `${ASSISTANT_NAME}: ${text}`);
+        const skipPrefix = ASSISTANT_HAS_OWN_NUMBER || isDirectChat(chatJid);
+        const formatted = skipPrefix ? text : `${ASSISTANT_NAME}: ${text}`;
+        await whatsapp.sendMessage(chatJid, formatted);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -486,7 +489,7 @@ async function main(): Promise<void> {
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) => queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
-      const text = formatOutbound(whatsapp, rawText);
+      const text = formatOutbound(whatsapp, rawText, jid);
       if (text) await whatsapp.sendMessage(jid, text);
     },
   });
