@@ -229,6 +229,7 @@ export function storeMessage(
   msg: proto.IWebMessageInfo,
   chatJid: string,
   pushName?: string,
+  translatedSender?: string,
 ): void {
   if (!msg.key) return;
 
@@ -240,7 +241,7 @@ export function storeMessage(
     '';
 
   const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
-  const sender = msg.key.participant || msg.key.remoteJid || '';
+  const sender = translatedSender || msg.key.participant || msg.key.remoteJid || '';
   const senderName = pushName || sender.split('@')[0];
   const msgId = msg.key.id || '';
 

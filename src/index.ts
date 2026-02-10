@@ -961,10 +961,15 @@ async function connectWhatsApp(): Promise<void> {
 
       // Only store full message content for registered groups
       if (registeredGroups[chatJid]) {
+        // Translate sender JID from LID to phone format before storing,
+        // so authorization lookups match the phone-based user registry
+        const rawSender = msg.key.participant || msg.key.remoteJid || '';
+        const translatedSender = translateJid(rawSender);
         storeMessage(
           msg,
           chatJid,
           msg.pushName || undefined,
+          translatedSender,
         );
       }
     }
