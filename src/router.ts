@@ -2,7 +2,7 @@ import { ASSISTANT_NAME, ASSISTANT_HAS_OWN_NUMBER } from './config.js';
 import { Channel, NewMessage } from './types.js';
 
 export function isDirectChat(jid: string): boolean {
-  return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
+  return !jid.endsWith('@g.us');
 }
 
 export function escapeXml(s: string): string {
