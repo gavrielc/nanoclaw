@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { HeartbeatConfig, NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database;
 
@@ -78,6 +78,15 @@ function createSchema(database: Database): void {
   try {
     database.exec(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add heartbeat column to registered_groups (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN heartbeat TEXT`,
     );
   } catch {
     /* column already exists */
@@ -466,6 +475,7 @@ export function getRegisteredGroup(
         added_at: string;
         container_config: string | null;
         requires_trigger: number | null;
+        heartbeat: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -479,6 +489,9 @@ export function getRegisteredGroup(
       ? JSON.parse(row.container_config)
       : undefined,
     requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    heartbeat: row.heartbeat
+      ? (JSON.parse(row.heartbeat) as HeartbeatConfig)
+      : undefined,
   };
 }
 
@@ -487,8 +500,8 @@ export function setRegisteredGroup(
   group: RegisteredGroup,
 ): void {
   db.query(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, heartbeat)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -497,6 +510,7 @@ export function setRegisteredGroup(
     group.added_at,
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
+    group.heartbeat ? JSON.stringify(group.heartbeat) : null,
   );
 }
 
@@ -511,6 +525,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     added_at: string;
     container_config: string | null;
     requires_trigger: number | null;
+    heartbeat: string | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -523,6 +538,9 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         ? JSON.parse(row.container_config)
         : undefined,
       requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      heartbeat: row.heartbeat
+        ? (JSON.parse(row.heartbeat) as HeartbeatConfig)
+        : undefined,
     };
   }
   return result;

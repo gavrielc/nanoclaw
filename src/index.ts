@@ -35,7 +35,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound } from './router.js';
-import { startSchedulerLoop } from './task-scheduler.js';
+import { reconcileHeartbeats, startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -465,6 +465,9 @@ async function main(): Promise<void> {
   // Connect — resolves when first connected
   await whatsapp.connect();
 
+  // Reconcile heartbeat tasks with group config before starting scheduler
+  reconcileHeartbeats(registeredGroups);
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
@@ -480,6 +483,10 @@ async function main(): Promise<void> {
     sendMessage: (jid, text) => whatsapp.sendMessage(jid, text),
     registeredGroups: () => registeredGroups,
     registerGroup,
+    updateGroup: (jid, group) => {
+      registeredGroups[jid] = group;
+      setRegisteredGroup(jid, group);
+    },
     syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),

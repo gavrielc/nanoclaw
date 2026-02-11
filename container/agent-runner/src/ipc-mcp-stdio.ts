@@ -239,6 +239,66 @@ server.tool(
 );
 
 server.tool(
+  'configure_heartbeat',
+  `Enable or disable the heartbeat for a group. The heartbeat is a recurring background task that runs on a schedule.
+
+What the heartbeat does is controlled by the ## Heartbeat section in CLAUDE.md — edit that to customize behavior. The heartbeat also reads ## Goals from CLAUDE.md, so maintain your goals there.
+
+After enabling, edit your CLAUDE.md to add/update the ## Heartbeat and ## Goals sections to control what the heartbeat does.`,
+  {
+    enabled: z.boolean().describe('Whether to enable or disable the heartbeat'),
+    interval: z.string().default('1800000').describe('Schedule: milliseconds for interval type, or cron expression for cron type (default: "1800000" = 30 min)'),
+    schedule_type: z.enum(['cron', 'interval']).default('interval').describe('Type of schedule (default: "interval")'),
+    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to configure. Defaults to current group.'),
+  },
+  async (args) => {
+    // Non-main groups can only configure themselves
+    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+
+    if (args.enabled && args.schedule_type === 'cron') {
+      try {
+        CronExpressionParser.parse(args.interval);
+      } catch {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid cron expression: "${args.interval}". Use format like "0 */30 * * *" (every 30 min) or "0 9 * * *" (daily 9am).` }],
+          isError: true,
+        };
+      }
+    } else if (args.enabled && args.schedule_type === 'interval') {
+      const ms = parseInt(args.interval, 10);
+      if (isNaN(ms) || ms <= 0) {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid interval: "${args.interval}". Must be positive milliseconds (e.g., "1800000" for 30 min).` }],
+          isError: true,
+        };
+      }
+    }
+
+    const data = {
+      type: 'configure_heartbeat',
+      enabled: args.enabled,
+      interval: args.interval,
+      heartbeat_schedule_type: args.schedule_type,
+      target_group_jid: targetJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    if (args.enabled) {
+      return {
+        content: [{ type: 'text' as const, text: `Heartbeat enabled (${args.schedule_type}: ${args.interval}). Edit ## Heartbeat and ## Goals in your CLAUDE.md to customize what the heartbeat does.` }],
+      };
+    } else {
+      return {
+        content: [{ type: 'text' as const, text: 'Heartbeat disabled. The recurring heartbeat task has been removed.' }],
+      };
+    }
+  },
+);
+
+server.tool(
   'register_group',
   `Register a new WhatsApp group so the agent can respond to messages there. Main group only.
 

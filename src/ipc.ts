@@ -11,14 +11,16 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getTaskById, setRegisteredGroup, updateTask } from './db.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { reconcileHeartbeats } from './task-scheduler.js';
+import { HeartbeatConfig, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
+  updateGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
   writeGroupsSnapshot: (
@@ -172,6 +174,11 @@ export async function processTaskIpc(
     folder?: string;
     trigger?: string;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For configure_heartbeat
+    enabled?: boolean;
+    interval?: string;
+    heartbeat_schedule_type?: string;
+    target_group_jid?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -374,6 +381,53 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'configure_heartbeat': {
+      if (data.enabled === undefined) {
+        logger.warn({ data }, 'configure_heartbeat missing enabled field');
+        break;
+      }
+
+      // Resolve target group
+      const targetJid = isMain && data.target_group_jid
+        ? data.target_group_jid
+        : Object.entries(registeredGroups).find(([, g]) => g.folder === sourceGroup)?.[0];
+
+      if (!targetJid) {
+        logger.warn({ sourceGroup }, 'configure_heartbeat: could not resolve target group');
+        break;
+      }
+
+      const targetGroup = registeredGroups[targetJid];
+      if (!targetGroup) {
+        logger.warn({ targetJid }, 'configure_heartbeat: target group not registered');
+        break;
+      }
+
+      // Authorization: non-main groups can only configure their own heartbeat
+      if (!isMain && targetGroup.folder !== sourceGroup) {
+        logger.warn({ sourceGroup, targetFolder: targetGroup.folder }, 'Unauthorized configure_heartbeat attempt');
+        break;
+      }
+
+      const heartbeat: HeartbeatConfig | undefined = data.enabled
+        ? {
+            enabled: true,
+            interval: data.interval || '1800000',
+            scheduleType: (data.heartbeat_schedule_type === 'cron' ? 'cron' : 'interval') as 'cron' | 'interval',
+          }
+        : undefined;
+
+      const updatedGroup: RegisteredGroup = { ...targetGroup, heartbeat };
+      deps.updateGroup(targetJid, updatedGroup);
+      reconcileHeartbeats(deps.registeredGroups());
+
+      logger.info(
+        { targetJid, folder: targetGroup.folder, enabled: data.enabled },
+        'Heartbeat configured via IPC',
+      );
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

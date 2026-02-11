@@ -39,6 +39,12 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
+export interface HeartbeatConfig {
+  enabled: boolean;
+  interval: string;        // cron expression or ms interval
+  scheduleType: 'cron' | 'interval';
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;
@@ -46,6 +52,7 @@ export interface RegisteredGroup {
   added_at: string;
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
+  heartbeat?: HeartbeatConfig;
 }
 
 export interface NewMessage {
