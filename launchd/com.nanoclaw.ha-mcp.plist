@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanoclaw.ha-mcp</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{HA_MCP_PATH}}</string>
+        <string>--port</string>
+        <string>8086</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{HOME}}/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+        <key>HOMEASSISTANT_URL</key>
+        <string>{{HA_URL}}</string>
+        <key>HOMEASSISTANT_TOKEN</key>
+        <string>{{HA_TOKEN}}</string>
+        <key>ENABLED_TOOL_MODULES</key>
+        <string>all</string>
+        <key>FUZZY_THRESHOLD</key>
+        <string>60</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/.nanoclaw/logs/ha-mcp.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/.nanoclaw/logs/ha-mcp.error.log</string>
+</dict>
+</plist>
