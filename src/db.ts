@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import fs from 'fs';
 import path from 'path';
 
@@ -7,7 +7,7 @@ import { proto } from '@whiskeysockets/baileys';
 import { DATA_DIR, STORE_DIR } from './config.js';
 import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
-let db: Database.Database;
+let db: Database;
 
 export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
@@ -123,7 +123,7 @@ export function storeChatMetadata(
 ): void {
   if (name) {
     // Update with name, preserving existing timestamp if newer
-    db.prepare(
+    db.query(
       `
       INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
@@ -133,7 +133,7 @@ export function storeChatMetadata(
     ).run(chatJid, name, timestamp);
   } else {
     // Update timestamp only, preserve existing name if any
-    db.prepare(
+    db.query(
       `
       INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
@@ -149,7 +149,7 @@ export function storeChatMetadata(
  * Used during group metadata sync.
  */
 export function updateChatName(chatJid: string, name: string): void {
-  db.prepare(
+  db.query(
     `
     INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET name = excluded.name
@@ -194,7 +194,7 @@ export function getLastGroupSync(): string | null {
  */
 export function setLastGroupSync(): void {
   const now = new Date().toISOString();
-  db.prepare(
+  db.query(
     `INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES ('__group_sync__', '__group_sync__', ?)`,
   ).run(now);
 }
@@ -223,7 +223,7 @@ export function storeMessage(
   const senderName = pushName || sender.split('@')[0];
   const msgId = msg.key.id || '';
 
-  db.prepare(
+  db.query(
     `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msgId,
@@ -284,7 +284,7 @@ export function getMessagesSince(
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
-  db.prepare(
+  db.query(
     `
     INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -304,7 +304,7 @@ export function createTask(
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
+  return db.query('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
     | ScheduledTask
     | undefined;
 }
@@ -333,7 +333,7 @@ export function updateTask(
   >,
 ): void {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | null)[] = [];
 
   if (updates.prompt !== undefined) {
     fields.push('prompt = ?');
@@ -359,15 +359,15 @@ export function updateTask(
   if (fields.length === 0) return;
 
   values.push(id);
-  db.prepare(
+  db.query(
     `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
   ).run(...values);
 }
 
 export function deleteTask(id: string): void {
   // Delete child records first (FK constraint)
-  db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  db.query('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
+  db.query('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
 }
 
 export function getDueTasks(): ScheduledTask[] {
@@ -389,7 +389,7 @@ export function updateTaskAfterRun(
   lastResult: string,
 ): void {
   const now = new Date().toISOString();
-  db.prepare(
+  db.query(
     `
     UPDATE scheduled_tasks
     SET next_run = ?, last_run = ?, last_result = ?, status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END
@@ -399,7 +399,7 @@ export function updateTaskAfterRun(
 }
 
 export function logTaskRun(log: TaskRunLog): void {
-  db.prepare(
+  db.query(
     `
     INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -424,7 +424,7 @@ export function getRouterState(key: string): string | undefined {
 }
 
 export function setRouterState(key: string, value: string): void {
-  db.prepare(
+  db.query(
     'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
   ).run(key, value);
 }
@@ -439,7 +439,7 @@ export function getSession(groupFolder: string): string | undefined {
 }
 
 export function setSession(groupFolder: string, sessionId: string): void {
-  db.prepare(
+  db.query(
     'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
   ).run(groupFolder, sessionId);
 }
@@ -491,7 +491,7 @@ export function setRegisteredGroup(
   jid: string,
   group: RegisteredGroup,
 ): void {
-  db.prepare(
+  db.query(
     `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(

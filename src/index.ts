@@ -1,4 +1,4 @@
-import { exec, execSync } from 'child_process';
+import { $ } from 'bun';
 import fs from 'fs';
 import path from 'path';
 
@@ -52,7 +52,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup } from './types.js';
+import { ContainerProcess, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -781,9 +781,7 @@ async function connectWhatsApp(): Promise<void> {
       const msg =
         'WhatsApp authentication required. Run /setup in Claude Code.';
       logger.error(msg);
-      exec(
-        `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
-      );
+      $`osascript -e ${`display notification "${msg}" with title "NanoClaw" sound name "Basso"`}`.quiet().nothrow();
       setTimeout(() => process.exit(1), 1000);
     }
 
@@ -988,17 +986,13 @@ function recoverPendingMessages(): void {
   }
 }
 
-function ensureContainerSystemRunning(): void {
-  try {
-    execSync('container system status', { stdio: 'pipe' });
-    logger.debug('Apple Container system already running');
-  } catch {
+async function ensureContainerSystemRunning(): Promise<void> {
+  const status = await $`container system status`.quiet().nothrow();
+  if (status.exitCode !== 0) {
     logger.info('Starting Apple Container system...');
-    try {
-      execSync('container system start', { stdio: 'pipe', timeout: 30000 });
-      logger.info('Apple Container system started');
-    } catch (err) {
-      logger.error({ err }, 'Failed to start Apple Container system');
+    const start = await $`container system start`.quiet().nothrow();
+    if (start.exitCode !== 0) {
+      logger.error({ stderr: start.stderr.toString() }, 'Failed to start Apple Container system');
       console.error(
         '\n╔════════════════════════════════════════════════════════════════╗',
       );
@@ -1025,22 +1019,20 @@ function ensureContainerSystemRunning(): void {
       );
       throw new Error('Apple Container system is required but failed to start');
     }
+    logger.info('Apple Container system started');
+  } else {
+    logger.debug('Apple Container system already running');
   }
 
   // Kill and clean up orphaned NanoClaw containers from previous runs
   try {
-    const output = execSync('container ls --format json', {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-    });
-    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
+    const lsResult = await $`container ls --format json`.quiet();
+    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(lsResult.text() || '[]');
     const orphans = containers
       .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
       .map((c) => c.configuration.id);
     for (const name of orphans) {
-      try {
-        execSync(`container stop ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
+      await $`container stop ${name}`.quiet().nothrow();
     }
     if (orphans.length > 0) {
       logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
@@ -1051,7 +1043,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
-  ensureContainerSystemRunning();
+  await ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
   loadState();

@@ -4,7 +4,7 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 ## Quick Context
 
-Single Node.js process that connects to WhatsApp, routes messages to Claude Agent SDK running in Apple Container (Linux VMs). Each group has isolated filesystem and memory.
+Single Bun process that connects to WhatsApp, routes messages to Claude Agent SDK running in Apple Container (Linux VMs). Each group has isolated filesystem and memory.
 
 ## Key Files
 
@@ -31,8 +31,8 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 Run commands directly—don't tell the user to run them.
 
 ```bash
-npm run dev          # Run with hot reload
-npm run build        # Compile TypeScript
+bun run dev          # Run with hot reload
+bun run build        # Compile TypeScript
 ./container/build.sh # Rebuild agent container
 ```
 

@@ -17,7 +17,6 @@
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { fileURLToPath } from 'url';
 
 interface ContainerInput {
   prompt: string;
@@ -395,7 +394,7 @@ async function runQuery(
       settingSources: ['project', 'user'],
       mcpServers: {
         nanoclaw: {
-          command: 'node',
+          command: 'bun',
           args: [mcpServerPath],
           env: {
             NANOCLAW_CHAT_JID: containerInput.chatJid,
@@ -460,8 +459,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
+  const mcpServerPath = path.join(import.meta.dir, 'ipc-mcp-stdio.ts');
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });

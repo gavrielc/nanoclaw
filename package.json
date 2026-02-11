@@ -3,19 +3,18 @@
   "version": "1.0.0",
   "description": "Personal Claude assistant. Lightweight, secure, customizable.",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "src/index.ts",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "auth": "tsx src/whatsapp-auth.ts",
-    "typecheck": "tsc --noEmit",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\""
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "auth": "bun src/whatsapp-auth.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "format": "bunx prettier --write \"src/**/*.ts\"",
+    "format:check": "bunx prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "link-preview-js": "^3.2.0",
     "pino": "^9.6.0",
@@ -24,14 +23,9 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.10.0",
+    "@types/bun": "latest",
     "@types/qrcode-terminal": "^0.12.2",
     "prettier": "^3.8.1",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
-  },
-  "engines": {
-    "node": ">=20"
   }
 }

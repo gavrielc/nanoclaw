@@ -1,4 +1,3 @@
-import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
@@ -20,13 +19,13 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { ContainerProcess, RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
-  onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
+  onProcess: (groupJid: string, proc: ContainerProcess, containerName: string, groupFolder: string) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
   assistantName: string;
 }

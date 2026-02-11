@@ -1,7 +1,7 @@
 # NanoClaw Agent Container
 # Runs Claude Agent SDK in isolated Linux VM with browser automation
 
-FROM node:22-slim
+FROM oven/bun:slim
 
 # Install system dependencies for Chromium
 RUN apt-get update && apt-get install -y \
@@ -39,22 +39,19 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+RUN bun install -g agent-browser @anthropic-ai/claude-code
 
 # Create app directory
 WORKDIR /app
 
 # Copy package files first for better caching
-COPY agent-runner/package*.json ./
+COPY agent-runner/package.json agent-runner/bun.lock* ./
 
 # Install dependencies
-RUN npm install
+RUN bun install
 
 # Copy source code
 COPY agent-runner/ ./
-
-# Build TypeScript
-RUN npm run build
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
@@ -63,7 +60,8 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 # Sources env from mounted /workspace/env-dir/env if it exists (workaround for Apple Container -i bug)
 # Stdin is buffered to /tmp then piped (Apple Container requires EOF to flush stdin pipe)
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\n[ -f /workspace/env-dir/env ] && export $(cat /workspace/env-dir/env | xargs)\nif [ -n "$GITHUB_TOKEN" ]; then\n  gh auth setup-git 2>/dev/null || true\n  git config --global user.name "${GIT_AUTHOR_NAME:-NanoClaw Agent}"\n  git config --global user.email "${GIT_AUTHOR_EMAIL:-nanoclaw@users.noreply.github.com}"\nfi\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# No build step needed — Bun runs TypeScript directly
+RUN printf '#!/bin/bash\nset -e\n[ -f /workspace/env-dir/env ] && export $(cat /workspace/env-dir/env | xargs)\nif [ -n "$GITHUB_TOKEN" ]; then\n  gh auth setup-git 2>/dev/null || true\n  git config --global user.name "${GIT_AUTHOR_NAME:-NanoClaw Agent}"\n  git config --global user.email "${GIT_AUTHOR_EMAIL:-nanoclaw@users.noreply.github.com}"\nfi\ncat > /tmp/input.json\nbun /app/src/index.ts < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace
