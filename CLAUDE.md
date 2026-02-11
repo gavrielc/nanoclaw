@@ -70,3 +70,5 @@ When the user asks to "make a PR":
 2. **Upstream PR:** Must be done separately. Create a dedicated branch off `upstream/main`, apply only the generic changes (no Omni references, no fork-specific code like bun:sqlite, email-channel, etc.), and PR from `omniaura:<branch>` → `qwibitai/nanoclaw:main`.
 
 Always confirm which target the user intends if it's ambiguous.
+
+**Common mistake:** `gh pr create` without `--repo omniaura/nanoclaw` defaults to the **upstream** (`qwibitai/nanoclaw`) because GitHub's fork metadata makes `gh` treat upstream as the default base. Always pass `--repo omniaura/nanoclaw --base main` explicitly when creating PRs for our fork.
