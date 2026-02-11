@@ -10,6 +10,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { CronExpressionParser } from 'cron-parser';
 
+import { ApiResponse, startApiServer, stopApiServer } from './api.js';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
@@ -462,6 +463,75 @@ async function runAgent(
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
   }
+}
+
+/**
+ * Process a message from the HTTP API.
+ * Routes through GroupQueue as owner-tier to the main channel,
+ * collects the agent's response, and returns it as structured data.
+ */
+async function processApiMessage(
+  text: string,
+  channel: string,
+  context: Record<string, unknown>,
+): Promise<ApiResponse> {
+  // Find main group
+  const mainEntry = Object.entries(registeredGroups).find(
+    ([, g]) => g.folder === MAIN_GROUP_FOLDER,
+  );
+  if (!mainEntry) {
+    throw new Error('Main channel not registered');
+  }
+
+  const [chatJid, group] = mainEntry;
+
+  // Format as message XML (matching the format the agent expects)
+  const contextStr =
+    Object.keys(context).length > 0
+      ? ` context="${escapeXml(JSON.stringify(context))}"`
+      : '';
+  const prompt = `<messages>\n<message sender="Owner" time="${new Date().toISOString()}" channel="${escapeXml(channel)}"${contextStr}>${escapeXml(text)}</message>\n</messages>`;
+
+  // Collect output from the agent
+  const textParts: string[] = [];
+
+  return new Promise<ApiResponse>((resolve, reject) => {
+    const taskId = `api-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    queue.enqueueTask(chatJid, taskId, async () => {
+      try {
+        const output = await runAgent(
+          group,
+          prompt,
+          chatJid,
+          'owner',
+          async (result) => {
+            if (result.result) {
+              const raw =
+                typeof result.result === 'string'
+                  ? result.result
+                  : JSON.stringify(result.result);
+              const cleaned = raw
+                .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+                .trim();
+              if (cleaned) textParts.push(cleaned);
+            }
+          },
+        );
+
+        if (output === 'error') {
+          reject(new Error('Agent processing failed'));
+        } else {
+          resolve({
+            text: textParts.join('\n'),
+            actions: [], // Populated when ha-mcp action capture is implemented
+          });
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
 }
 
 async function sendMessage(jid: string, text: string): Promise<void> {
@@ -1167,9 +1237,13 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Start HTTP API server (available before WhatsApp connects)
+  startApiServer(processApiMessage);
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    await stopApiServer();
     await queue.shutdown(10000);
     process.exit(0);
   };

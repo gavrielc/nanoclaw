@@ -22,6 +22,11 @@ export const VAULT_CONFIG_PATH = path.join(NANOCLAW_HOME, 'vault-config.json');
 export const ENV_FILE_PATH = path.join(NANOCLAW_HOME, 'env');
 export const MAIN_GROUP_FOLDER = 'main';
 
+export const API_PORT = parseInt(
+  process.env.NANOCLAW_API_PORT || '3100',
+  10,
+);
+
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
