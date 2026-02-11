@@ -3,6 +3,7 @@
  * External systems (voice plugin, webhooks, etc.) submit messages here
  * and receive structured responses (text + actions).
  */
+import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import fs from 'fs';
 
@@ -99,10 +100,15 @@ export function startApiServer(processMessage: ProcessMessageFn): void {
       }
 
       const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        sendJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      const tokenBuf = Buffer.from(apiToken);
+      const headerBuf = Buffer.from(authHeader.slice(7));
       if (
-        !authHeader ||
-        !authHeader.startsWith('Bearer ') ||
-        authHeader.slice(7) !== apiToken
+        tokenBuf.length !== headerBuf.length ||
+        !timingSafeEqual(tokenBuf, headerBuf)
       ) {
         sendJson(res, 401, { error: 'Unauthorized' });
         return;
@@ -164,8 +170,8 @@ export function startApiServer(processMessage: ProcessMessageFn): void {
     sendJson(res, 404, { error: 'Not found' });
   });
 
-  server.listen(API_PORT, () => {
-    logger.info({ port: API_PORT }, 'HTTP API server started');
+  server.listen(API_PORT, '127.0.0.1', () => {
+    logger.info({ port: API_PORT }, 'HTTP API server started (loopback only)');
   });
 }
 
@@ -179,5 +185,7 @@ export function stopApiServer(): Promise<void> {
       logger.info('HTTP API server stopped');
       resolve();
     });
+    // Drop in-flight connections so shutdown isn't blocked by long-running sync requests
+    server.closeAllConnections();
   });
 }
