@@ -64,10 +64,10 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 RUN printf '#!/bin/bash\nset -e\n[ -f /workspace/env-dir/env ] && export $(cat /workspace/env-dir/env | xargs)\nif [ -n "$GITHUB_TOKEN" ]; then\n  gh auth setup-git 2>/dev/null || true\n  git config --global user.name "${GIT_AUTHOR_NAME:-NanoClaw Agent}"\n  git config --global user.email "${GIT_AUTHOR_EMAIL:-nanoclaw@users.noreply.github.com}"\nfi\ncat > /tmp/input.json\nbun /app/src/index.ts < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace
+RUN chown -R bun:bun /workspace
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
-USER node
+USER bun
 
 # Set working directory to group workspace
 WORKDIR /workspace/group

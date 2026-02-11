@@ -139,7 +139,7 @@ function buildVolumeMounts(
   }
   mounts.push({
     hostPath: groupSessionsDir,
-    containerPath: '/home/node/.claude',
+    containerPath: '/home/bun/.claude',
     readonly: false,
   });
 
