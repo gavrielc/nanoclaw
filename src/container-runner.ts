@@ -13,6 +13,7 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  IDLE_TIMEOUT,
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -324,6 +325,7 @@ export async function runContainerAgent(
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
+            hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -362,7 +364,11 @@ export async function runContainerAgent(
     });
 
     let timedOut = false;
-    const timeoutMs = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    let hadStreamingOutput = false;
+    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
+    // graceful _close sentinel has time to trigger before the hard kill fires.
+    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;
@@ -397,17 +403,36 @@ export async function runContainerAgent(
           `Container: ${containerName}`,
           `Duration: ${duration}ms`,
           `Exit Code: ${code}`,
+          `Had Streaming Output: ${hadStreamingOutput}`,
         ].join('\n'));
+
+        // Timeout after output = idle cleanup, not failure.
+        // The agent already sent its response; this is just the
+        // container being reaped after the idle period expired.
+        if (hadStreamingOutput) {
+          logger.info(
+            { group: group.name, containerName, duration, code },
+            'Container timed out after output (idle cleanup)',
+          );
+          outputChain.then(() => {
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId,
+            });
+          });
+          return;
+        }
 
         logger.error(
           { group: group.name, containerName, duration, code },
-          'Container timed out',
+          'Container timed out with no output',
         );
 
         resolve({
           status: 'error',
           result: null,
-          error: `Container timed out after ${group.containerConfig?.timeout || CONTAINER_TIMEOUT}ms`,
+          error: `Container timed out after ${configTimeout}ms`,
         });
         return;
       }
