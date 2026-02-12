@@ -105,3 +105,14 @@
   - crates/microclaw-connectors added
 - Notes:
   - Added ConnectorId and Connector trait
+
+## 2026-02-12T23:39:19Z S11 Device scaffold
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-device --features host -> fail (package outside workspace)
+  - cargo test -p microclaw-device --features host -> pass
+- Key diffs:
+  - Cargo.toml updated (workspace members)
+  - apps/microclaw-device added
+- Notes:
+  - Added lib.rs for boot_message to support tests

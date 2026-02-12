@@ -8,6 +8,7 @@ members = [
   "crates/microclaw-scheduler",
   "crates/microclaw-bus",
   "crates/microclaw-sandbox",
-  "crates/microclaw-connectors"
+  "crates/microclaw-connectors",
+  "apps/microclaw-device"
 ]
 resolver = "2"

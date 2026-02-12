@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:38:13Z",
+    "updatedAt": "2026-02-12T23:39:19Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -164,9 +164,9 @@
       "intent": "Add microclaw-device app scaffold",
       "acceptance": ["cargo test -p microclaw-device --features host passes"],
       "gates": ["cargo test -p microclaw-device --features host"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-12T23:38:45Z",
+      "completedAt": "2026-02-12T23:39:19Z",
       "dependencies": ["S10"],
       "risks": ["ESP-IDF integration deferred"],
       "notes": "Host-compile stub"
