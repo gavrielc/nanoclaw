@@ -13,6 +13,22 @@ Single Node.js process that connects to WhatsApp. Group chats use containerized 
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
 | `src/complaint-handler.ts` | In-process Agent SDK path for 1:1 complaint chats |
 | `src/complaint-mcp-server.ts` | MCP server exposing complaint tools to the agent |
+| `src/admin-handler.ts` | Admin group notifications, #commands, NL replies, @ComplaintBot instructions |
+| `src/admin-commands.ts` | Karyakarta/area management command execution |
+| `src/admin-reply.ts` | AI reply interpreter for complaint notification replies |
+| `src/admin-instruction.ts` | AI instruction interpreter for @ComplaintBot NL management |
+| `src/karyakarta-handler.ts` | Karyakarta DM commands, validation flow, notifications |
+| `src/area-db.ts` | CRUD for areas, karyakartas, assignments, validations |
+| `src/area-matcher.ts` | Fuzzy area matching (Levenshtein) for complaint routing |
+| `src/voice.ts` | Voice note validation + Sarvam AI transcription |
+| `src/event-bus.ts` | Event emitter for complaint lifecycle notifications |
+| `src/roles.ts` | Role hierarchy (user/karyakarta/admin/superadmin) |
+| `src/rate-limiter.ts` | Per-user daily message + burst rate limiting |
+| `src/mla-escalation.ts` | MLA escalation flow (DM forwarding) |
+| `src/daily-summary.ts` | Daily complaint summary generation |
+| `src/validation-scheduler.ts` | Auto-escalation for unvalidated complaints |
+| `src/complaint-utils.ts` | Status transitions, note adding, complaint queries |
+| `src/user-notifications.ts` | Status change notifications to complainants |
 | `src/tenant-config.ts` | Tenant YAML loader + template variable injection |
 | `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
 | `src/ipc.ts` | IPC watcher and task processing |
@@ -27,6 +43,20 @@ Single Node.js process that connects to WhatsApp. Group chats use containerized 
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `groups/complaint/CLAUDE.md` | Complaint agent system prompt (template with {variables}) |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+
+## Architecture
+
+### Message Flow
+- **Admin group**: `#commands` → `handleCommand()`, reply-to-notification → `handleReply()` (AI), `@ComplaintBot` text → `handleInstruction()` (AI), standalone audio → transcribe → `handleInstruction()`
+- **1:1 chats**: complaint intake via Agent SDK, karyakarta validation replies, MLA DM forwarding
+- **Event bus**: `complaint:created` and `complaint:status-changed` trigger admin group notifications, karyakarta notifications, and user notifications
+
+### Environment Variables
+
+Required at runtime (via `.env` or `--env-file`):
+- `CLAUDE_CODE_OAUTH_TOKEN` — Claude Code subscription token
+- `SARVAM_API_KEY` — Sarvam AI speech-to-text (voice notes)
+- `TENANT_CONFIG_PATH` — Path to tenant YAML (default: `config/tenant.yaml`)
 
 ## Skills
 

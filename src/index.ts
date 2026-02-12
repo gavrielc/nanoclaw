@@ -62,10 +62,12 @@ import { downloadMediaMessage, type WAMessage } from '@whiskeysockets/baileys';
 import { handleComplaintMessage } from './complaint-handler.js';
 import { processVoiceNote, getDefaultVoiceConfig } from './voice.js';
 import { AdminService } from './admin-handler.js';
+import { extractComplaintId } from './admin-reply.js';
 import { checkRateLimit } from './rate-limiter.js';
 import { getUserRole } from './roles.js';
 import {
   handleKaryakartaCommand,
+  handleKaryakartaReply,
   initKaryakartaNotifications,
 } from './karyakarta-handler.js';
 import { handleMlaReply } from './mla-escalation.js';
@@ -752,6 +754,138 @@ function handleVoiceDirect(
   })();
 }
 
+/**
+ * Handle an audio message that is a reply to a notification (admin group or karyakarta DM).
+ * Transcribes the audio via Whisper, then routes the transcript as a text reply.
+ */
+function handleAudioReply(
+  chatJid: string,
+  msg: WAMessage,
+  metadata: import('./channels/whatsapp.js').AudioMetadata,
+  quotedText: string,
+  adminService: AdminService,
+): void {
+  const phone = phoneFromJid(metadata.senderJid || chatJid);
+
+  (async () => {
+    try {
+      await whatsapp.setTyping(chatJid, true);
+
+      // Download audio from WhatsApp servers
+      let audioBuffer: Buffer;
+      try {
+        audioBuffer = (await downloadMediaMessage(msg, 'buffer', {})) as Buffer;
+      } catch (err) {
+        logger.error({ err, messageId: metadata.messageId }, 'Failed to download audio for reply');
+        return;
+      }
+
+      // Transcribe via Sarvam AI
+      const language = getUserLanguage(getDb(), phone) || 'mr';
+      const voiceConfig = getDefaultVoiceConfig();
+      const voiceResult = await processVoiceNote(
+        audioBuffer,
+        language,
+        metadata.messageId,
+        voiceConfig,
+      );
+
+      if (voiceResult.status !== 'transcript' || !voiceResult.text) {
+        logger.warn({ phone, status: voiceResult.status }, 'Audio reply transcription failed');
+        await whatsapp.sendMessage(chatJid, 'Could not transcribe audio reply. Please type your response.');
+        return;
+      }
+
+      const transcript = voiceResult.text;
+      logger.info({ phone, chatJid, transcriptLength: transcript.length }, 'Audio reply transcribed');
+
+      // Route based on context: admin group or karyakarta DM
+      const isAdminGroup =
+        tenantConfig.wa_admin_group_jid &&
+        chatJid === tenantConfig.wa_admin_group_jid;
+
+      if (isAdminGroup) {
+        const response = await adminService.handleReply(phone, transcript, quotedText);
+        if (response) {
+          await whatsapp.sendMessage(chatJid, response);
+        }
+      } else {
+        // Karyakarta DM reply
+        const result = await handleKaryakartaReply(
+          {
+            db: getDb(),
+            sendMessage: async (jid, t) => whatsapp.sendMessage(jid, t),
+            adminGroupJid: tenantConfig.wa_admin_group_jid,
+          },
+          phone,
+          transcript,
+          quotedText,
+        );
+        if (result) {
+          await whatsapp.sendMessage(chatJid, result);
+        }
+      }
+    } catch (err) {
+      logger.error({ chatJid, err }, 'Audio reply handler error');
+    } finally {
+      await whatsapp.setTyping(chatJid, false);
+    }
+  })();
+}
+
+/**
+ * Handle standalone audio in admin group: transcribe → NL instruction.
+ */
+function handleAdminAudioInstruction(
+  chatJid: string,
+  msg: WAMessage,
+  metadata: import('./channels/whatsapp.js').AudioMetadata,
+  adminService: AdminService,
+): void {
+  const phone = phoneFromJid(metadata.senderJid || chatJid);
+
+  (async () => {
+    try {
+      await whatsapp.setTyping(chatJid, true);
+
+      let audioBuffer: Buffer;
+      try {
+        audioBuffer = (await downloadMediaMessage(msg, 'buffer', {})) as Buffer;
+      } catch (err) {
+        logger.error({ err, messageId: metadata.messageId }, 'Failed to download admin audio');
+        return;
+      }
+
+      const language = getUserLanguage(getDb(), phone) || 'mr';
+      const voiceConfig = getDefaultVoiceConfig();
+      const voiceResult = await processVoiceNote(
+        audioBuffer,
+        language,
+        metadata.messageId,
+        voiceConfig,
+      );
+
+      if (voiceResult.status !== 'transcript' || !voiceResult.text) {
+        logger.warn({ phone, status: voiceResult.status }, 'Admin audio transcription failed');
+        await whatsapp.sendMessage(chatJid, 'Could not transcribe audio. Please type your instruction.');
+        return;
+      }
+
+      const transcript = voiceResult.text;
+      logger.info({ phone, chatJid, transcriptLength: transcript.length }, 'Admin audio instruction transcribed');
+
+      const response = await adminService.handleInstruction(phone, transcript);
+      if (response) {
+        await whatsapp.sendMessage(chatJid, response);
+      }
+    } catch (err) {
+      logger.error({ chatJid, err }, 'Admin audio instruction handler error');
+    } finally {
+      await whatsapp.setTyping(chatJid, false);
+    }
+  })();
+}
+
 function ensureContainerSystemRunning(): void {
   try {
     execSync('container system status', { stdio: 'pipe' });
@@ -857,12 +991,13 @@ function handleInboundMessage(
   storeMessage(msg);
   if (msg.is_from_me) return;
 
-  // Admin group: handle #commands, ignore non-command messages
+  // Admin group: handle #commands and natural language replies
   if (
     tenantConfig.wa_admin_group_jid &&
     chatJid === tenantConfig.wa_admin_group_jid
   ) {
-    if (msg.content.trim().startsWith('#')) {
+    const trimmed = msg.content.trim();
+    if (trimmed.startsWith('#')) {
       (async () => {
         try {
           const response = await adminService.handleCommand(
@@ -876,6 +1011,43 @@ function handleInboundMessage(
           logger.error({ err }, 'Admin command error');
           try {
             await whatsapp.sendMessage(chatJid, 'Internal error processing admin command.');
+          } catch { /* best-effort */ }
+        }
+      })();
+    } else if (msg.quotedText && extractComplaintId(msg.quotedText)) {
+      // Natural language reply to a bot notification that contains a complaint ID
+      (async () => {
+        try {
+          const response = await adminService.handleReply(
+            phoneFromJid(msg.sender),
+            trimmed,
+            msg.quotedText!,
+          );
+          if (response) {
+            await whatsapp.sendMessage(chatJid, response);
+          }
+        } catch (err) {
+          logger.error({ err }, 'Admin reply handler error');
+          try {
+            await whatsapp.sendMessage(chatJid, 'Internal error processing reply.');
+          } catch { /* best-effort */ }
+        }
+      })();
+    } else if (TRIGGER_PATTERN.test(trimmed)) {
+      // @ComplaintBot tagged text — natural language admin instruction
+      (async () => {
+        try {
+          const response = await adminService.handleInstruction(
+            phoneFromJid(msg.sender),
+            trimmed,
+          );
+          if (response) {
+            await whatsapp.sendMessage(chatJid, response);
+          }
+        } catch (err) {
+          logger.error({ err }, 'Admin instruction handler error');
+          try {
+            await whatsapp.sendMessage(chatJid, 'Internal error processing instruction.');
           } catch { /* best-effort */ }
         }
       })();
@@ -920,6 +1092,46 @@ function handleInboundMessage(
         }
       })();
       return;
+    }
+
+    // Karyakarta reply to notification (natural language, no # needed)
+    // Only process if the quoted message contains a complaint ID (bot notification)
+    if (msg.quotedText && !text.startsWith('#') && extractComplaintId(msg.quotedText)) {
+      const role = getUserRole(getDb(), phone);
+      if (role === 'karyakarta') {
+        (async () => {
+          try {
+            const result = await handleKaryakartaReply(
+              {
+                db: getDb(),
+                sendMessage: async (jid, t) => whatsapp.sendMessage(jid, t),
+                adminGroupJid: tenantConfig.wa_admin_group_jid,
+              },
+              phone,
+              text,
+              msg.quotedText!,
+            );
+            if (result) {
+              await whatsapp.sendMessage(chatJid, result);
+              advanceCursor(chatJid, msg.timestamp);
+              return;
+            }
+          } catch (err) {
+            logger.error({ err, chatJid }, 'Karyakarta reply handler error');
+            try {
+              await whatsapp.sendMessage(
+                chatJid,
+                resolveFallbackErrorMessage(phone, text),
+              );
+            } catch { /* best-effort */ }
+            return;
+          }
+          // If handleKaryakartaReply returned null (not a complaint reply),
+          // fall through to complaint handler
+          handleComplaintDirect(chatJid, msg);
+        })();
+        return;
+      }
     }
 
     // Karyakarta #commands (#approve, #reject, #my-complaints)
@@ -1095,11 +1307,50 @@ async function main(): Promise<void> {
       // Skip bot's own audio messages
       if (msg.key.fromMe) return;
 
-      // Only handle 1:1 chats with virtual complaint group registered
+      // Admin group audio reply: transcribe and route to handleReply
+      // Only process if the quoted message contains a complaint ID (bot notification)
+      if (
+        tenantConfig.wa_admin_group_jid &&
+        chatJid === tenantConfig.wa_admin_group_jid
+      ) {
+        const audioCtx = msg.message?.audioMessage?.contextInfo;
+        const quotedMsg = audioCtx?.quotedMessage;
+        const quotedText =
+          quotedMsg?.conversation ||
+          quotedMsg?.extendedTextMessage?.text ||
+          undefined;
+
+        if (quotedText && extractComplaintId(quotedText)) {
+          handleAudioReply(chatJid, msg, metadata, quotedText, adminService);
+        } else {
+          // Standalone audio in admin group → transcribe → NL instruction
+          handleAdminAudioInstruction(chatJid, msg, metadata, adminService);
+        }
+        return;
+      }
+
+      // 1:1 chats: voice complaint handler
       if (
         isIndividualChat(chatJid) &&
         registeredGroups[VIRTUAL_COMPLAINT_GROUP_JID]
       ) {
+        // Check for karyakarta audio reply (reply to bot notification with complaint ID)
+        const audioCtx = msg.message?.audioMessage?.contextInfo;
+        const quotedMsg = audioCtx?.quotedMessage;
+        const quotedText =
+          quotedMsg?.conversation ||
+          quotedMsg?.extendedTextMessage?.text ||
+          undefined;
+
+        if (quotedText && extractComplaintId(quotedText)) {
+          const phone = phoneFromJid(chatJid);
+          const role = getUserRole(getDb(), phone);
+          if (role === 'karyakarta') {
+            handleAudioReply(chatJid, msg, metadata, quotedText, adminService);
+            return;
+          }
+        }
+
         handleVoiceDirect(chatJid, msg, metadata);
       }
     },

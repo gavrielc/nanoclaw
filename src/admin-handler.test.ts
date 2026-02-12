@@ -677,3 +677,317 @@ describe('handleCommand — errors', () => {
   // Auth is now based on group membership — only messages from the admin
   // group JID reach handleCommand (enforced in index.ts onMessage routing).
 });
+
+// ============================================================
+// handleReply — natural language replies
+// ============================================================
+
+// Mock admin-reply module
+vi.mock('./admin-reply.js', () => ({
+  extractComplaintId: vi.fn(),
+  interpretReply: vi.fn(),
+}));
+
+// Mock admin-instruction module
+vi.mock('./admin-instruction.js', () => ({
+  interpretInstruction: vi.fn(),
+  executeInstruction: vi.fn(),
+  HELP_MESSAGE: 'Supported instructions:\n• Add area: ...',
+}));
+
+import { extractComplaintId, interpretReply } from './admin-reply.js';
+import type { ReplyResult } from './admin-reply.js';
+
+const mockedExtractId = vi.mocked(extractComplaintId);
+const mockedInterpret = vi.mocked(interpretReply);
+
+describe('handleReply', () => {
+  let complaintId: string;
+
+  beforeEach(() => {
+    complaintId = createComplaint(db, {
+      phone: '919876543210',
+      category: 'water_supply',
+      description: 'No water for 3 days',
+      location: 'Ward 7',
+      language: 'mr',
+    });
+    vi.clearAllMocks();
+  });
+
+  it('extracts complaint ID from quoted text and executes status_change', async () => {
+    mockedExtractId.mockReturnValue(complaintId);
+    mockedInterpret.mockResolvedValue({
+      action: 'status_change',
+      newStatus: 'in_progress',
+      note: 'Assigned to team',
+      confidence: 0.95,
+    });
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Mark this as in progress, assigned to team',
+      `🆕 New Complaint\nID: ${complaintId}\nFrom: 919876543210`,
+    );
+
+    expect(result).toContain(complaintId);
+
+    const complaint = db
+      .prepare('SELECT status FROM complaints WHERE id = ?')
+      .get(complaintId) as { status: string };
+    expect(complaint.status).toBe('in_progress');
+  });
+
+  it('returns error when no complaint ID found in quoted text', async () => {
+    mockedExtractId.mockReturnValue(null);
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Do something',
+      'Hello everyone',
+    );
+
+    expect(result).toContain('Could not find complaint ID');
+  });
+
+  it('returns error when complaint not found in DB', async () => {
+    mockedExtractId.mockReturnValue('RK-99999999-9999');
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Resolve this',
+      'ID: RK-99999999-9999',
+    );
+
+    expect(result).toContain('not found');
+  });
+
+  it('handles add_note action without status change', async () => {
+    mockedExtractId.mockReturnValue(complaintId);
+    mockedInterpret.mockResolvedValue({
+      action: 'add_note',
+      note: 'Spoke with water dept',
+      confidence: 0.9,
+    });
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Note: spoke with water dept',
+      `ID: ${complaintId}`,
+    );
+
+    expect(result).toContain(complaintId);
+
+    // Verify note was added
+    const updates = db
+      .prepare('SELECT * FROM complaint_updates WHERE complaint_id = ?')
+      .all(complaintId) as { old_status: string; new_status: string; note: string }[];
+    expect(updates).toHaveLength(1);
+    expect(updates[0].note).toBe('Spoke with water dept');
+    expect(updates[0].old_status).toBe(updates[0].new_status); // No status change
+  });
+
+  it('handles escalate_to_mla action', async () => {
+    mockedExtractId.mockReturnValue(complaintId);
+    mockedInterpret.mockResolvedValue({
+      action: 'escalate_to_mla',
+      note: 'Urgent issue',
+      confidence: 0.9,
+    });
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Escalate this to MLA',
+      `ID: ${complaintId}`,
+    );
+
+    expect(result).toContain('escalated');
+
+    const complaint = db
+      .prepare('SELECT status FROM complaints WHERE id = ?')
+      .get(complaintId) as { status: string };
+    expect(complaint.status).toBe('escalated');
+  });
+
+  it('handles forward_to_officer action (sets in_progress)', async () => {
+    mockedExtractId.mockReturnValue(complaintId);
+    mockedInterpret.mockResolvedValue({
+      action: 'forward_to_officer',
+      note: 'Forwarded to officer',
+      confidence: 0.85,
+    });
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Send to officer',
+      `ID: ${complaintId}`,
+    );
+
+    expect(result).toContain(complaintId);
+
+    const complaint = db
+      .prepare('SELECT status FROM complaints WHERE id = ?')
+      .get(complaintId) as { status: string };
+    expect(complaint.status).toBe('in_progress');
+  });
+
+  it('returns message for unrecognized intent', async () => {
+    mockedExtractId.mockReturnValue(complaintId);
+    mockedInterpret.mockResolvedValue({
+      action: 'unrecognized',
+      confidence: 0,
+    });
+
+    const service = createTestService();
+    const result = await service.handleReply(
+      ADMIN_PHONES[0],
+      'Good morning',
+      `ID: ${complaintId}`,
+    );
+
+    expect(result).toContain('#commands');
+  });
+});
+
+// ============================================================
+// Notification hints
+// ============================================================
+
+describe('notification reply hints', () => {
+  it('new complaint notification includes reply hint', async () => {
+    const service = createTestService();
+    await service.notifyNewComplaint({
+      complaintId: 'RK-20260212-0050',
+      phone: '919876543210',
+      description: 'Test',
+      language: 'mr',
+      status: 'registered',
+    });
+
+    const msg = sendMessage.mock.calls[0][1] as string;
+    expect(msg).toContain('Reply to this message');
+  });
+
+  it('status change notification includes reply hint', async () => {
+    const service = createTestService();
+    await service.notifyStatusChange({
+      complaintId: 'RK-20260212-0050',
+      phone: '919876543210',
+      oldStatus: 'registered',
+      newStatus: 'in_progress',
+      updatedBy: 'admin',
+    });
+
+    const msg = sendMessage.mock.calls[0][1] as string;
+    expect(msg).toContain('Reply to this message');
+  });
+});
+
+// ============================================================
+// handleInstruction — natural language admin instructions
+// ============================================================
+
+import {
+  interpretInstruction,
+  executeInstruction,
+  HELP_MESSAGE as INSTRUCTION_HELP,
+} from './admin-instruction.js';
+import type { InstructionResult } from './admin-instruction.js';
+
+const mockedInterpretInstruction = vi.mocked(interpretInstruction);
+const mockedExecuteInstruction = vi.mocked(executeInstruction);
+
+describe('handleInstruction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('strips @ComplaintBot prefix and interprets text', async () => {
+    mockedInterpretInstruction.mockResolvedValue({
+      action: 'add_area',
+      areaName: 'Shivaji Nagar',
+      confidence: 0.95,
+    });
+    mockedExecuteInstruction.mockReturnValue("Area 'Shivaji Nagar' created with slug 'shivaji-nagar'.");
+
+    const service = createTestService();
+    const result = await service.handleInstruction(
+      ADMIN_PHONES[0],
+      '@ComplaintBot add Shivaji Nagar area',
+    );
+
+    expect(mockedInterpretInstruction).toHaveBeenCalledWith('add Shivaji Nagar area');
+    expect(mockedExecuteInstruction).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ action: 'add_area' }),
+      ADMIN_PHONES[0],
+    );
+    expect(result).toContain('Shivaji Nagar');
+  });
+
+  it('returns help when text is empty after stripping prefix', async () => {
+    const service = createTestService();
+    const result = await service.handleInstruction(
+      ADMIN_PHONES[0],
+      '@ComplaintBot',
+    );
+
+    expect(result).toBe(INSTRUCTION_HELP);
+    expect(mockedInterpretInstruction).not.toHaveBeenCalled();
+  });
+
+  it('returns help when instruction is unrecognized', async () => {
+    mockedInterpretInstruction.mockResolvedValue({
+      action: 'unrecognized',
+      confidence: 0.95,
+    });
+
+    const service = createTestService();
+    const result = await service.handleInstruction(
+      ADMIN_PHONES[0],
+      '@ComplaintBot good morning everyone',
+    );
+
+    expect(result).toBe(INSTRUCTION_HELP);
+    expect(mockedExecuteInstruction).not.toHaveBeenCalled();
+  });
+
+  it('handles text without @prefix (for voice transcripts)', async () => {
+    mockedInterpretInstruction.mockResolvedValue({
+      action: 'list_areas',
+      confidence: 0.95,
+    });
+    mockedExecuteInstruction.mockReturnValue('No active areas found.');
+
+    const service = createTestService();
+    const result = await service.handleInstruction(
+      ADMIN_PHONES[0],
+      'show all areas',
+    );
+
+    expect(mockedInterpretInstruction).toHaveBeenCalledWith('show all areas');
+    expect(result).toContain('No active areas');
+  });
+
+  it('strips case-insensitive @complaintbot prefix', async () => {
+    mockedInterpretInstruction.mockResolvedValue({
+      action: 'list_karyakartas',
+      confidence: 0.95,
+    });
+    mockedExecuteInstruction.mockReturnValue('No active karyakartas found.');
+
+    const service = createTestService();
+    await service.handleInstruction(
+      ADMIN_PHONES[0],
+      '@complaintbot list karyakartas',
+    );
+
+    expect(mockedInterpretInstruction).toHaveBeenCalledWith('list karyakartas');
+  });
+});

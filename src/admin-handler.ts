@@ -8,7 +8,16 @@
 import type Database from 'better-sqlite3';
 
 import { executeAdminCommand, isKaryakartaCommand } from './admin-commands.js';
-import { transitionComplaintStatus } from './complaint-utils.js';
+import {
+  executeInstruction,
+  HELP_MESSAGE as INSTRUCTION_HELP,
+  interpretInstruction,
+} from './admin-instruction.js';
+import { extractComplaintId, interpretReply } from './admin-reply.js';
+import {
+  addComplaintNote,
+  transitionComplaintStatus,
+} from './complaint-utils.js';
 import { eventBus } from './event-bus.js';
 import type { ComplaintEvent, StatusChangeEvent } from './event-bus.js';
 import { logger } from './logger.js';
@@ -27,6 +36,48 @@ export interface AdminServiceDeps {
 }
 
 const VALID_STATUSES = VALID_COMPLAINT_STATUSES as readonly string[];
+
+/** Localized reply messages for admin/karyakarta reply handlers. */
+function replyMsg(
+  lang: string,
+  key: 'status_updated' | 'note_added' | 'forwarded' | 'unrecognized' | 'approved' | 'rejected',
+  ...args: string[]
+): string {
+  const templates: Record<string, Record<string, string>> = {
+    status_updated: {
+      mr: `तक्रार ${args[0]} स्थिती अद्ययावत: ${args[1]}.`,
+      hi: `शिकायत ${args[0]} स्थिति अपडेट: ${args[1]}.`,
+      en: `Complaint ${args[0]} updated to ${args[1]}.`,
+    },
+    note_added: {
+      mr: `तक्रार ${args[0]} वर टीप जोडली.`,
+      hi: `शिकायत ${args[0]} पर नोट जोड़ी गई.`,
+      en: `Note added to ${args[0]}.`,
+    },
+    forwarded: {
+      mr: `तक्रार ${args[0]} अधिकाऱ्याकडे पाठवली (स्थिती: कार्यरत).`,
+      hi: `शिकायत ${args[0]} अधिकारी को भेजी गई (स्थिति: कार्यरत).`,
+      en: `Complaint ${args[0]} forwarded to officer (status: in_progress).`,
+    },
+    approved: {
+      mr: `तक्रार ${args[0]} मंजूर आणि प्रशासन गटाकडे पाठवली.`,
+      hi: `शिकायत ${args[0]} स्वीकृत और प्रशासन समूह को भेजी गई.`,
+      en: `Complaint ${args[0]} approved and forwarded to admin group.`,
+    },
+    rejected: {
+      mr: `तक्रार ${args[0]} नाकारली (${args[1]}).`,
+      hi: `शिकायत ${args[0]} अस्वीकृत (${args[1]}).`,
+      en: `Complaint ${args[0]} rejected (${args[1]}).`,
+    },
+    unrecognized: {
+      mr: 'तुमचा प्रतिसाद समजला नाही. कृपया #commands वापरा किंवा स्पष्ट कृती सांगा.',
+      hi: 'आपका जवाब समझ नहीं आया. कृपया #commands इस्तेमाल करें या स्पष्ट कार्रवाई बताएं.',
+      en: 'Could not understand your reply. Use #commands or reply with a clear action.',
+    },
+  };
+  const t = templates[key];
+  return t?.[lang] ?? t?.en ?? `Complaint ${args[0] ?? ''}: ${key}`;
+}
 
 const VALID_ROLES = ['user', 'karyakarta', 'admin', 'superadmin'];
 
@@ -87,6 +138,8 @@ export class AdminService {
 
     lines.push(`Description: ${event.description}`);
     lines.push(`Status: ${formatStatus(event.status)}`);
+    lines.push('');
+    lines.push('Reply to this message to take action.');
 
     await this.deps.sendMessage(this.deps.adminGroupJid, lines.join('\n'));
   }
@@ -104,6 +157,8 @@ export class AdminService {
     if (event.note) {
       lines.push(`Note: ${event.note}`);
     }
+    lines.push('');
+    lines.push('Reply to this message to take action.');
 
     await this.deps.sendMessage(this.deps.adminGroupJid, lines.join('\n'));
   }
@@ -157,6 +212,123 @@ export class AdminService {
         }
         return `Unknown command: #${command}\n\n${USAGE_TEXT}`;
     }
+  }
+
+  /**
+   * Handle a natural language reply to a complaint notification.
+   * Extracts complaint ID from the quoted message, classifies intent via AI,
+   * and executes the appropriate action.
+   */
+  async handleReply(
+    senderPhone: string,
+    replyText: string,
+    quotedText: string,
+  ): Promise<string> {
+    const complaintId = extractComplaintId(quotedText);
+    if (!complaintId) {
+      return 'Could not find complaint ID in the quoted message.';
+    }
+
+    const complaint = this.deps.db
+      .prepare(
+        'SELECT id, phone, category, description, status, language FROM complaints WHERE id = ?',
+      )
+      .get(complaintId) as
+      | { id: string; phone: string; category: string | null; description: string; status: string; language: string }
+      | undefined;
+
+    if (!complaint) {
+      return `Complaint '${complaintId}' not found.`;
+    }
+
+    const result = await interpretReply(
+      replyText,
+      complaint,
+      'admin',
+      VALID_STATUSES as string[],
+    );
+
+    const lang = complaint.language || 'mr';
+
+    switch (result.action) {
+      case 'status_change': {
+        if (!result.newStatus || !VALID_STATUSES.includes(result.newStatus)) {
+          return `Invalid status '${result.newStatus}'. Valid: ${VALID_STATUSES.join(', ')}`;
+        }
+        const oldStatus = transitionComplaintStatus(
+          this.deps.db,
+          complaintId,
+          result.newStatus,
+          result.note,
+          senderPhone,
+        );
+        if (oldStatus === null) return `Complaint '${complaintId}' not found.`;
+        return replyMsg(lang, 'status_updated', complaintId, formatStatus(result.newStatus));
+      }
+
+      case 'add_note': {
+        addComplaintNote(
+          this.deps.db,
+          complaintId,
+          result.note ?? replyText,
+          senderPhone,
+        );
+        return replyMsg(lang, 'note_added', complaintId);
+      }
+
+      case 'escalate_to_mla': {
+        return escalateToMla(
+          {
+            db: this.deps.db,
+            sendMessage: this.deps.sendMessage,
+            adminGroupJid: this.deps.adminGroupJid,
+            mlaPhone: this.deps.mlaPhone,
+          },
+          complaintId,
+          result.note ?? 'Escalated via reply',
+          senderPhone,
+        );
+      }
+
+      case 'forward_to_officer': {
+        const note = result.note ?? 'Forwarded to concerned officer';
+        transitionComplaintStatus(
+          this.deps.db,
+          complaintId,
+          'in_progress',
+          note,
+          senderPhone,
+        );
+        return replyMsg(lang, 'forwarded', complaintId);
+      }
+
+      default:
+        return replyMsg(lang, 'unrecognized');
+    }
+  }
+
+  /**
+   * Handle a natural language admin instruction (via @ComplaintBot tag or voice).
+   * Strips the @tag prefix, interprets intent via AI, and executes the action.
+   */
+  async handleInstruction(
+    senderPhone: string,
+    text: string,
+  ): Promise<string> {
+    // Strip @ComplaintBot prefix (case-insensitive)
+    const stripped = text.replace(/^@\S+\s*/i, '').trim();
+
+    if (!stripped) {
+      return INSTRUCTION_HELP;
+    }
+
+    const result = await interpretInstruction(stripped);
+
+    if (result.action === 'unrecognized') {
+      return INSTRUCTION_HELP;
+    }
+
+    return executeInstruction(this.deps.db, result, senderPhone);
   }
 
   // --- Command handlers ---
