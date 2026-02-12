@@ -1,0 +1,175 @@
+{
+  "meta": {
+    "title": "MicroClaw Phase 1 (Parity + Hardening)",
+    "createdAt": "2026-02-12T23:27:08Z",
+    "updatedAt": "2026-02-12T23:28:22Z",
+    "minCycles": 5,
+    "staleSeconds": 14400
+  },
+  "stories": [
+    {
+      "id": "S0",
+      "title": "Initialize Ralph state + plan doc",
+      "intent": "Create PRD + .ralph state files and track the phase 1 implementation plan doc",
+      "acceptance": [
+        "PRD JSON exists at .agents/tasks/prd-microclaw-phase1.json",
+        ".ralph state files exist and are initialized",
+        "Phase 1 implementation plan doc exists"
+      ],
+      "gates": [
+        "test -f .agents/tasks/prd-microclaw-phase1.json",
+        "test -f .ralph/progress.md",
+        "test -f docs/plans/2026-02-12-microclaw-phase1-implementation-plan.md"
+      ],
+      "status": "done",
+      "startedAt": "2026-02-12T23:28:03Z",
+      "completedAt": "2026-02-12T23:28:22Z",
+      "dependencies": [],
+      "risks": ["None"],
+      "notes": "Bootstrap for autonomous loop state"
+    },
+    {
+      "id": "S1",
+      "title": "Core workspace + core crate",
+      "intent": "Add Rust workspace and core crate with version()",
+      "acceptance": ["cargo test -p microclaw-core passes"],
+      "gates": ["cargo test -p microclaw-core"],
+      "status": "done",
+      "startedAt": "2026-02-12T23:00:00Z",
+      "completedAt": "2026-02-12T23:05:00Z",
+      "dependencies": ["S0"],
+      "risks": ["Minimal API coverage"],
+      "notes": "Implemented in worktree prior to Ralph loop"
+    },
+    {
+      "id": "S2",
+      "title": "Protocol crate (envelope + ids)",
+      "intent": "Add microclaw-protocol crate with Envelope and MessageId",
+      "acceptance": ["cargo test -p microclaw-protocol passes"],
+      "gates": ["cargo test -p microclaw-protocol"],
+      "status": "done",
+      "startedAt": "2026-02-12T23:05:00Z",
+      "completedAt": "2026-02-12T23:10:00Z",
+      "dependencies": ["S1"],
+      "risks": ["Envelope fields are minimal"],
+      "notes": "Implemented in worktree prior to Ralph loop"
+    },
+    {
+      "id": "S3",
+      "title": "Config crate defaults",
+      "intent": "Add microclaw-config HostConfig with default backend",
+      "acceptance": ["cargo test -p microclaw-config passes"],
+      "gates": ["cargo test -p microclaw-config"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S2"],
+      "risks": ["Config shape may change"],
+      "notes": "Keep minimal"
+    },
+    {
+      "id": "S4",
+      "title": "Store schema + migrations",
+      "intent": "Add microclaw-store with schema_version and in-memory store",
+      "acceptance": ["cargo test -p microclaw-store passes"],
+      "gates": ["cargo test -p microclaw-store"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S3"],
+      "risks": ["Migration layout may change"],
+      "notes": "Start with minimal schema_version"
+    },
+    {
+      "id": "S5",
+      "title": "Queue per-group FIFO",
+      "intent": "Add microclaw-queue GroupQueue with per-group FIFO",
+      "acceptance": ["cargo test -p microclaw-queue passes"],
+      "gates": ["cargo test -p microclaw-queue"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S4"],
+      "risks": ["Capacity semantics may evolve"],
+      "notes": "In-memory only"
+    },
+    {
+      "id": "S6",
+      "title": "Scheduler due logic",
+      "intent": "Add microclaw-scheduler with due()",
+      "acceptance": ["cargo test -p microclaw-scheduler passes"],
+      "gates": ["cargo test -p microclaw-scheduler"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S5"],
+      "risks": ["No recurring semantics yet"],
+      "notes": "Minimal once scheduling"
+    },
+    {
+      "id": "S7",
+      "title": "Bus idempotency",
+      "intent": "Add microclaw-bus with idempotent publish",
+      "acceptance": ["cargo test -p microclaw-bus passes"],
+      "gates": ["cargo test -p microclaw-bus"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S6"],
+      "risks": ["Keying strategy may change"],
+      "notes": "In-memory only"
+    },
+    {
+      "id": "S8",
+      "title": "Sandbox apple backend stub",
+      "intent": "Add microclaw-sandbox with Apple Container backend stub",
+      "acceptance": ["cargo test -p microclaw-sandbox passes"],
+      "gates": ["cargo test -p microclaw-sandbox"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S7"],
+      "risks": ["Real exec not implemented"],
+      "notes": "Interface only"
+    },
+    {
+      "id": "S9",
+      "title": "Sandbox docker backend stub",
+      "intent": "Add Docker backend stub",
+      "acceptance": ["cargo test -p microclaw-sandbox passes"],
+      "gates": ["cargo test -p microclaw-sandbox"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S8"],
+      "risks": ["Real exec not implemented"],
+      "notes": "Interface only"
+    },
+    {
+      "id": "S10",
+      "title": "Connector trait",
+      "intent": "Add microclaw-connectors trait",
+      "acceptance": ["cargo test -p microclaw-connectors passes"],
+      "gates": ["cargo test -p microclaw-connectors"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S9"],
+      "risks": ["Trait shape may evolve"],
+      "notes": "Minimal id only"
+    },
+    {
+      "id": "S11",
+      "title": "Device scaffold",
+      "intent": "Add microclaw-device app scaffold",
+      "acceptance": ["cargo test -p microclaw-device --features host passes"],
+      "gates": ["cargo test -p microclaw-device --features host"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S10"],
+      "risks": ["ESP-IDF integration deferred"],
+      "notes": "Host-compile stub"
+    }
+  ]
+}
