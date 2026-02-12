@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:39:19Z",
+    "updatedAt": "2026-02-12T23:41:22Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -170,6 +170,25 @@
       "dependencies": ["S10"],
       "risks": ["ESP-IDF integration deferred"],
       "notes": "Host-compile stub"
+    },
+    {
+      "id": "S12",
+      "title": "Lockfile + ignore target",
+      "intent": "Commit Cargo.lock updates and ignore Rust target directory",
+      "acceptance": [
+        "Cargo.lock includes workspace members",
+        ".gitignore contains target/"
+      ],
+      "gates": [
+        "git diff --exit-code Cargo.lock",
+        "rg -n \"^target/$\" .gitignore"
+      ],
+      "status": "done",
+      "startedAt": "2026-02-12T23:40:48Z",
+      "completedAt": "2026-02-12T23:41:22Z",
+      "dependencies": ["S11"],
+      "risks": ["None"],
+      "notes": "Housekeeping after Rust workspace expansion"
     }
   ]
 }

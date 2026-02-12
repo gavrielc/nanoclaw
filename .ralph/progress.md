@@ -116,3 +116,16 @@
   - apps/microclaw-device added
 - Notes:
   - Added lib.rs for boot_message to support tests
+
+## 2026-02-12T23:41:22Z S12 Lockfile + ignore target
+- Outcome: pass
+- Commands:
+  - git diff --exit-code Cargo.lock -> fail
+  - rg -n "^target/$" .gitignore -> fail
+  - git diff --exit-code Cargo.lock -> pass
+  - rg -n "^target/$" .gitignore -> pass
+- Key diffs:
+  - Cargo.lock updated with workspace packages
+  - .gitignore now ignores target/
+- Notes:
+  - Keeps worktree clean after Rust builds

@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+target/
 
 # Local data & auth
 store/

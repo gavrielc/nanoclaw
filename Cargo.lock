@@ -84,7 +84,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "microclaw-bus"
+version = "0.1.0"
+dependencies = [
+ "microclaw-protocol",
+]
+
+[[package]]
 name = "microclaw-config"
+version = "0.1.0"
+
+[[package]]
+name = "microclaw-connectors"
 version = "0.1.0"
 
 [[package]]
@@ -92,7 +103,23 @@ name = "microclaw-core"
 version = "0.1.0"
 
 [[package]]
+name = "microclaw-device"
+version = "0.1.0"
+
+[[package]]
 name = "microclaw-protocol"
+version = "0.1.0"
+
+[[package]]
+name = "microclaw-queue"
+version = "0.1.0"
+
+[[package]]
+name = "microclaw-sandbox"
+version = "0.1.0"
+
+[[package]]
+name = "microclaw-scheduler"
 version = "0.1.0"
 
 [[package]]
