@@ -1,13 +1,19 @@
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageId(String);
 
 impl MessageId {
     pub fn new(v: impl Into<String>) -> Self {
         Self(v.into())
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Envelope {
     pub v: u8,
     pub seq: u64,

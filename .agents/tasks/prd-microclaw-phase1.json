@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:52:00Z",
+    "updatedAt": "2026-02-12T23:54:19Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -225,9 +225,9 @@
       "intent": "Add durable spool and replay support to microclaw-bus",
       "acceptance": ["cargo test -p microclaw-bus passes"],
       "gates": ["cargo test -p microclaw-bus"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-12T23:52:45Z",
+      "completedAt": "2026-02-12T23:54:19Z",
       "dependencies": ["S14"],
       "risks": ["Replay semantics need clarity"],
       "notes": "Add SQLite-backed log and idempotency"

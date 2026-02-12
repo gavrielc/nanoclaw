@@ -153,3 +153,16 @@
   - crates/microclaw-store/tests/schema_parity.rs added
 - Notes:
   - Added NanoClaw table parity and context_mode column
+
+## 2026-02-12T23:54:19Z S15 Bus WAL + replay
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-bus -> fail (missing WAL APIs)
+  - cargo test -p microclaw-bus -> pass
+- Key diffs:
+  - crates/microclaw-bus/src/lib.rs updated
+  - crates/microclaw-bus/Cargo.toml updated (rusqlite, serde_json)
+  - crates/microclaw-protocol updated (serde, as_str)
+  - crates/microclaw-bus/tests/idempotent.rs updated
+- Notes:
+  - Added SQLite-backed bus_events table and replay

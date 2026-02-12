@@ -11,3 +11,4 @@
 2026-02-12T23:41:22Z S12 lockfile + ignore target
 2026-02-12T23:49:06Z S13 core trigger policy
 2026-02-12T23:52:00Z S14 store schema parity
+2026-02-12T23:54:19Z S15 bus WAL + replay
