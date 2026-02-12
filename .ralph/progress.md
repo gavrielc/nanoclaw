@@ -47,3 +47,15 @@
   - crates/microclaw-queue added
 - Notes:
   - Added bounded per-group FIFO queue
+
+## 2026-02-12T23:33:30Z S6 Scheduler due logic
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-scheduler -> fail (package not found)
+  - cargo test -p microclaw-scheduler -> fail (Scheduler/TaskSpec missing)
+  - cargo test -p microclaw-scheduler -> pass (warning: unused id)
+- Key diffs:
+  - Cargo.toml updated (workspace members)
+  - crates/microclaw-scheduler added
+- Notes:
+  - Minimal due() implementation; id field unused

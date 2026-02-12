@@ -1,0 +1,6 @@
+[package]
+name = "microclaw-scheduler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

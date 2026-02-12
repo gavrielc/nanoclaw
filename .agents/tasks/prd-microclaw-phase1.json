@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:32:26Z",
+    "updatedAt": "2026-02-12T23:33:30Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -99,9 +99,9 @@
       "intent": "Add microclaw-scheduler with due()",
       "acceptance": ["cargo test -p microclaw-scheduler passes"],
       "gates": ["cargo test -p microclaw-scheduler"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-12T23:32:48Z",
+      "completedAt": "2026-02-12T23:33:30Z",
       "dependencies": ["S5"],
       "risks": ["No recurring semantics yet"],
       "notes": "Minimal once scheduling"
