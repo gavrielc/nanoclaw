@@ -40,18 +40,18 @@ describe('Whisper K8s manifests', () => {
       expect(container.image).toMatch(/^fedirz\/faster-whisper-server/);
     });
 
-    it('sets resource limits (512Mi memory, 1000m CPU)', () => {
+    it('sets resource limits (2560Mi memory, 2000m CPU)', () => {
       doc = loadDeployment();
       const container = doc.spec.template.spec.containers[0];
-      expect(container.resources.limits.memory).toBe('512Mi');
-      expect(container.resources.limits.cpu).toBe('1000m');
+      expect(container.resources.limits.memory).toBe('2560Mi');
+      expect(container.resources.limits.cpu).toBe('2000m');
     });
 
-    it('sets resource requests (256Mi memory, 250m CPU)', () => {
+    it('sets resource requests (1Gi memory, 500m CPU)', () => {
       doc = loadDeployment();
       const container = doc.spec.template.spec.containers[0];
-      expect(container.resources.requests.memory).toBe('256Mi');
-      expect(container.resources.requests.cpu).toBe('250m');
+      expect(container.resources.requests.memory).toBe('1Gi');
+      expect(container.resources.requests.cpu).toBe('500m');
     });
 
     it('configures whisper-small model via WHISPER__MODEL env', () => {

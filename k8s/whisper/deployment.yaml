@@ -32,11 +32,11 @@ spec:
               value: cpu
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "250m"
+              memory: "1Gi"
+              cpu: "500m"
             limits:
-              memory: "512Mi"
-              cpu: "1000m"
+              memory: "2560Mi"
+              cpu: "2000m"
           readinessProbe:
             httpGet:
               path: /health
@@ -47,5 +47,5 @@ spec:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 60
+            initialDelaySeconds: 120
             periodSeconds: 30
