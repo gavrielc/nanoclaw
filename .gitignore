@@ -30,3 +30,5 @@ groups/global/*
 .vscode/
 
 agents-sdk-docs
+
+.worktrees/
