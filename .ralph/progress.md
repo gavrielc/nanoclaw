@@ -83,3 +83,13 @@
   - crates/microclaw-sandbox added
 - Notes:
   - Added ContainerBackend trait and AppleContainer stub
+
+## 2026-02-12T23:36:59Z S9 Sandbox docker backend stub
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-sandbox -> fail (DockerBackend missing)
+  - cargo test -p microclaw-sandbox -> pass
+- Key diffs:
+  - crates/microclaw-sandbox updated
+- Notes:
+  - Added DockerBackend stub

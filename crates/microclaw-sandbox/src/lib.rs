@@ -15,3 +15,17 @@ impl ContainerBackend for AppleContainer {
         "apple"
     }
 }
+
+pub struct DockerBackend;
+
+impl DockerBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ContainerBackend for DockerBackend {
+    fn name(&self) -> &'static str {
+        "docker"
+    }
+}
