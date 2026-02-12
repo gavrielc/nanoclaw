@@ -81,31 +81,51 @@ class SpriteClient {
     return true;
   }
 
-  /** Execute a command and return stdout/stderr. */
+  /** Execute a command and return stdout/stderr via the sprite CLI. */
   async exec(cmd: string, opts?: { timeout?: number }): Promise<{ stdout: string; stderr: string }> {
-    const resp = await fetch(`${API_BASE}/sprites/${this.spriteName}/exec`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        cmd: ['bash', '-c', cmd],
-      }),
-      signal: opts?.timeout ? AbortSignal.timeout(opts.timeout) : undefined,
-    });
+    const proc = Bun.spawn(
+      ['sprite', 'exec', '-o', 'peyton-spencer', '-s', this.spriteName, '--', 'bash', '-c', cmd],
+      { stdout: 'pipe', stderr: 'pipe' },
+    );
 
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`Exec failed (${resp.status}): ${body}`);
+    let stdout = '';
+    let stderr = '';
+
+    // Read stdout
+    if (proc.stdout && typeof proc.stdout !== 'number') {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          stdout += decoder.decode(value, { stream: true });
+        }
+      } catch { /* stream closed */ }
     }
 
-    const result = await resp.json() as { stdout: string; stderr: string; exit_code: number };
-    if (result.exit_code !== 0) {
-      const err = new Error(`Command failed with exit code ${result.exit_code}: ${result.stderr}`);
-      (err as any).exitCode = result.exit_code;
-      (err as any).stdout = result.stdout;
-      (err as any).stderr = result.stderr;
+    // Read stderr
+    if (proc.stderr && typeof proc.stderr !== 'number') {
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          stderr += decoder.decode(value, { stream: true });
+        }
+      } catch { /* stream closed */ }
+    }
+
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      const err = new Error(`Command failed with exit code ${exitCode}: ${stderr}`);
+      (err as any).exitCode = exitCode;
+      (err as any).stdout = stdout;
+      (err as any).stderr = stderr;
       throw err;
     }
-    return { stdout: result.stdout, stderr: result.stderr };
+    return { stdout, stderr };
   }
 
   /** Read a file from the Sprite filesystem. */
@@ -220,22 +240,37 @@ export class SpritesBackend implements AgentBackend {
     // Sync files that may change between invocations
     await this.syncFiles(sprite, group, input.isMain);
 
-    // Write input JSON
+    // Write input JSON via filesystem API
     await sprite.writeFile('/tmp/input.json', JSON.stringify(input), { mkdir: true });
 
-    // Run the entrypoint
+    // Clean up any stale close sentinel
+    try { await sprite.exec('rm -f /workspace/ipc/input/_close'); } catch { /* ignore */ }
+
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
-    // Create a mock process object for the queue
-    let killed = false;
-    const mockProcess: ContainerProcess = {
-      get killed() { return killed; },
-      kill(_signal?: number | string) { killed = true; },
-      pid: 0,
-    };
+    // Spawn the agent via `sprite exec` CLI (uses WebSocket for real-time streaming)
+    const proc = Bun.spawn(
+      [
+        'sprite', 'exec', '-o', 'peyton-spencer', '-s', sprite.name,
+        '--', 'bash', '-c',
+        'bash /app/entrypoint.sh < /tmp/input.json',
+      ],
+      { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
+    );
 
-    onProcess(mockProcess, sprite.name);
+    // Create a wrapper process for the queue
+    onProcess(proc, sprite.name);
+
+    // Close stdin immediately (input is via file, not pipe)
+    if (proc.stdin && typeof proc.stdin !== 'number') {
+      proc.stdin.end();
+    }
+
+    const killOnTimeout = () => {
+      logger.error({ group: group.name, sprite: sprite.name }, 'Sprites agent timeout, killing');
+      proc.kill(9);
+    };
 
     const parser = new StreamParser({
       groupName: group.name,
@@ -244,90 +279,94 @@ export class SpritesBackend implements AgentBackend {
       startupTimeoutMs: CONTAINER_STARTUP_TIMEOUT,
       maxOutputSize: CONTAINER_MAX_OUTPUT_SIZE,
       onOutput,
-      onTimeout: () => {
-        killed = true;
-      },
+      onTimeout: killOnTimeout,
     });
 
-    try {
-      // Execute via POST exec with streaming
-      // The Sprites exec POST API returns stdout/stderr after completion.
-      // For streaming, we use the entrypoint which writes OUTPUT markers to stdout.
-      const result = await sprite.exec(
-        'bash /app/entrypoint.sh < /tmp/input.json 2>/tmp/stderr.log',
-        { timeout: timeoutMs + 30_000 },
-      );
-
-      // Feed parser the output
-      parser.feedStdout(result.stdout);
-
-      // Read stderr from the log file
+    // Read stderr in background
+    const stderrPromise = (async () => {
+      if (!proc.stderr || typeof proc.stderr === 'number') return;
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
       try {
-        const stderrResult = await sprite.exec('cat /tmp/stderr.log 2>/dev/null || true');
-        parser.feedStderr(stderrResult.stdout);
-      } catch {
-        // ignore stderr read failures
-      }
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parser.feedStderr(decoder.decode(value, { stream: true }));
+        }
+      } catch { /* stream closed */ }
+    })();
 
-      parser.cleanup();
-      const state = parser.getState();
-      const duration = Date.now() - startTime;
-
-      if (onOutput) {
-        await state.outputChain;
-        logger.info(
-          { group: group.name, duration, newSessionId: state.newSessionId },
-          'Sprites agent completed (streaming mode)',
-        );
-        return { status: 'success', result: null, newSessionId: state.newSessionId };
-      }
-
-      // Legacy mode
+    // Read stdout (streaming output markers)
+    if (proc.stdout && typeof proc.stdout !== 'number') {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
       try {
-        const output = parser.parseFinalOutput();
-        logger.info(
-          { group: group.name, duration, status: output.status },
-          'Sprites agent completed',
-        );
-        return output;
-      } catch (err) {
-        logger.error(
-          { group: group.name, error: err },
-          'Failed to parse Sprites agent output',
-        );
-        return {
-          status: 'error',
-          result: null,
-          error: `Failed to parse output: ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
-    } catch (err) {
-      parser.cleanup();
-      const duration = Date.now() - startTime;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parser.feedStdout(decoder.decode(value, { stream: true }));
+        }
+      } catch { /* stream closed */ }
+    }
 
-      // Check if output was already streamed
-      const state = parser.getState();
+    const exitCode = await proc.exited;
+    await stderrPromise;
+    parser.cleanup();
+
+    const duration = Date.now() - startTime;
+    const state = parser.getState();
+
+    // Download files that may have changed
+    await this.downloadChangedFiles(sprite, group);
+
+    if (state.timedOut) {
       if (state.hadStreamingOutput) {
         await state.outputChain;
-        logger.info(
-          { group: group.name, duration },
-          'Sprites agent exited after streaming output',
-        );
         return { status: 'success', result: null, newSessionId: state.newSessionId };
       }
+      return { status: 'error', result: null, error: `Sprites agent timed out after ${configTimeout}ms` };
+    }
 
+    if (exitCode !== 0 && !state.hadStreamingOutput) {
       logger.error(
-        { group: group.name, sprite: sprite.name, error: err, duration },
-        'Sprites agent error',
+        { group: group.name, sprite: sprite.name, code: exitCode, duration },
+        'Sprites agent exited with error',
       );
       return {
         status: 'error',
         result: null,
-        error: `Sprites exec error: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Sprites agent exited with code ${exitCode}: ${state.stderr.slice(-200)}`,
       };
-    } finally {
-      // Download files that may have changed (CLAUDE.md, conversations)
-      await this.downloadChangedFiles(sprite, group);
+    }
+
+    // Streaming mode
+    if (onOutput) {
+      await state.outputChain;
+      logger.info(
+        { group: group.name, duration, newSessionId: state.newSessionId },
+        'Sprites agent completed (streaming mode)',
+      );
+      return { status: 'success', result: null, newSessionId: state.newSessionId };
+    }
+
+    // Legacy mode
+    try {
+      const output = parser.parseFinalOutput();
+      logger.info(
+        { group: group.name, duration, status: output.status },
+        'Sprites agent completed',
+      );
+      return output;
+    } catch (err) {
+      logger.error(
+        { group: group.name, error: err },
+        'Failed to parse Sprites agent output',
+      );
+      return {
+        status: 'error',
+        result: null,
+        error: `Failed to parse output: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
