@@ -9,9 +9,11 @@ import {
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   SESSION_MAX_AGE,
+  TELEGRAM_BOT_TOKEN,
   TRIGGER_PATTERN,
 } from './config.js';
 import { DiscordChannel } from './channels/discord.js';
+import { TelegramChannel } from './channels/telegram.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import {
   initializeBackends,
@@ -557,6 +559,7 @@ function recoverPendingMessages(): void {
 function buildAgentRegistry(): void {
   const registry = Object.entries(registeredGroups).map(([jid, group]) => ({
     id: group.folder,
+    jid,
     name: group.name,
     description: group.description || '',
     backend: group.backend || 'apple-container',
@@ -749,6 +752,21 @@ async function main(): Promise<void> {
       await backfillDiscordGuildIds(discord);
     } catch (err) {
       logger.error({ err }, 'Failed to connect Discord bot (continuing without Discord)');
+    }
+  }
+
+  // Conditionally connect Telegram
+  if (TELEGRAM_BOT_TOKEN) {
+    try {
+      const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, {
+        onMessage: (chatJid, msg) => storeMessage(msg),
+        onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp, name),
+        registeredGroups: () => registeredGroups,
+      });
+      await telegram.connect();
+      channels.push(telegram);
+    } catch (err) {
+      logger.error({ err }, 'Failed to connect Telegram bot (continuing without Telegram)');
     }
   }
 

@@ -43,16 +43,14 @@ const server = new McpServer({
 
 server.tool(
   'send_message',
-  `Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group.${isMain ? ' As the main agent, you can also send to other groups by specifying target_jid.' : ''}`,
+  `Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group. You can also send to other agents by specifying target_jid (check agent_registry.json for available agents and their JIDs).`,
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
-    ...(isMain ? { target_jid: z.string().optional().describe('(Main only) Send to a different group by JID. Defaults to current group.') } : {}),
+    target_jid: z.string().optional().describe('Send to a different group/agent by JID. Check /workspace/ipc/agent_registry.json for available targets. Defaults to current group.'),
   },
   async (args) => {
-    const targetJid = isMain && (args as { target_jid?: string }).target_jid
-      ? (args as { target_jid?: string }).target_jid!
-      : chatJid;
+    const targetJid = args.target_jid || chatJid;
 
     const data: Record<string, string | undefined> = {
       type: 'message',

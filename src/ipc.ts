@@ -110,18 +110,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
+                // Authorization: any registered agent can message any other registered agent
                 const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
+                const isSelf = targetGroup && targetGroup.folder === sourceGroup;
+                const isRegisteredTarget = !!targetGroup;
+                if (isMain || isSelf || isRegisteredTarget) {
                   await deps.sendMessage(
                     data.chatJid,
                     data.text,
                   );
-                  // Cross-group message from main: also wake up the target agent
-                  if (isMain && targetGroup && targetGroup.folder !== sourceGroup) {
+                  // Cross-group message: also wake up the target agent
+                  if (targetGroup && targetGroup.folder !== sourceGroup) {
                     deps.notifyGroup(data.chatJid, data.text);
                   }
                   logger.info(
@@ -131,7 +130,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 } else {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
+                    'Unauthorized IPC message attempt blocked (target not registered)',
                   );
                 }
               }
@@ -207,12 +206,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
     registeredGroups: deps.registeredGroups,
     processMessage: async (sourceGroup, data) => {
       const registeredGroups = deps.registeredGroups();
-      const isMain = sourceGroup === MAIN_GROUP_FOLDER;
       if (data.type === 'message' && data.chatJid && data.text) {
         const targetGroup = registeredGroups[data.chatJid];
-        if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+        const isRegisteredTarget = !!targetGroup;
+        const isSelf = targetGroup && targetGroup.folder === sourceGroup;
+        const isMain = sourceGroup === MAIN_GROUP_FOLDER;
+        if (isMain || isSelf || isRegisteredTarget) {
           await deps.sendMessage(data.chatJid, data.text);
-          if (isMain && targetGroup && targetGroup.folder !== sourceGroup) {
+          // Cross-group message: also wake up the target agent
+          if (targetGroup && targetGroup.folder !== sourceGroup) {
             deps.notifyGroup(data.chatJid, data.text);
           }
           logger.info({ chatJid: data.chatJid, sourceGroup }, 'Sprites IPC message sent');
