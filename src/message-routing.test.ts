@@ -7,10 +7,7 @@ import {
   getMessagesSince,
 } from './db.js';
 import { getAvailableGroups, _setRegisteredGroups } from './index.js';
-import {
-  formatMessagesWithUserContext,
-  resolveRouteJid,
-} from './router.js';
+import { formatMessagesWithUserContext, resolveRouteJid } from './router.js';
 import {
   isIndividualChat,
   extractPhoneNumber,
@@ -67,7 +64,11 @@ describe('formatMessagesWithUserContext', () => {
       }),
     ];
 
-    const result = formatMessagesWithUserContext(msgs, '919876543210', 'Rajesh');
+    const result = formatMessagesWithUserContext(
+      msgs,
+      '919876543210',
+      'Rajesh',
+    );
     expect(result).toContain('phone="919876543210"');
   });
 
@@ -81,7 +82,11 @@ describe('formatMessagesWithUserContext', () => {
       }),
     ];
 
-    const result = formatMessagesWithUserContext(msgs, '919876543210', 'Rajesh Kumar');
+    const result = formatMessagesWithUserContext(
+      msgs,
+      '919876543210',
+      'Rajesh Kumar',
+    );
     expect(result).toContain('name="Rajesh Kumar"');
   });
 
@@ -95,7 +100,11 @@ describe('formatMessagesWithUserContext', () => {
       }),
     ];
 
-    const result = formatMessagesWithUserContext(msgs, '919876543210', 'Rajesh');
+    const result = formatMessagesWithUserContext(
+      msgs,
+      '919876543210',
+      'Rajesh',
+    );
     expect(result).toContain('<messages>');
     expect(result).toContain('Water supply issue');
     expect(result).toContain('</messages>');
@@ -178,7 +187,10 @@ describe('1:1 message routing integration', () => {
     expect(routeJid).toBe(VIRTUAL_COMPLAINT_GROUP_JID);
 
     // The complaint group has requiresTrigger=false so every message is processed
-    const groups = { [VIRTUAL_COMPLAINT_GROUP_JID]: complaintGroup } as Record<string, RegisteredGroup>;
+    const groups = { [VIRTUAL_COMPLAINT_GROUP_JID]: complaintGroup } as Record<
+      string,
+      RegisteredGroup
+    >;
     expect(groups[routeJid]!.requiresTrigger).toBe(false);
   });
 

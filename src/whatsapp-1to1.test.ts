@@ -54,11 +54,15 @@ describe('isGroupChat', () => {
 
 describe('extractPhoneNumber', () => {
   it('extracts phone number from individual JID', () => {
-    expect(extractPhoneNumber('919876543210@s.whatsapp.net')).toBe('919876543210');
+    expect(extractPhoneNumber('919876543210@s.whatsapp.net')).toBe(
+      '919876543210',
+    );
   });
 
   it('extracts phone number with country code', () => {
-    expect(extractPhoneNumber('12025551234@s.whatsapp.net')).toBe('12025551234');
+    expect(extractPhoneNumber('12025551234@s.whatsapp.net')).toBe(
+      '12025551234',
+    );
   });
 
   it('returns null for group JID', () => {

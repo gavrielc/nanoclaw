@@ -52,7 +52,8 @@ describe('P1-S1: Project setup', () => {
   });
 
   it('loadTenantConfig returns valid default config', async () => {
-    const { loadTenantConfig, _clearConfigCache } = await import('./tenant-config.js');
+    const { loadTenantConfig, _clearConfigCache } =
+      await import('./tenant-config.js');
     _clearConfigCache();
     const config = loadTenantConfig();
     expect(config.mla_name).toBe('Rahul Kul');

@@ -1,0 +1,51 @@
+# Whisper speech-to-text deployment (faster-whisper-server)
+# Prerequisite: kubectl create namespace tenant-rahulkul
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisper
+  namespace: tenant-rahulkul
+  labels:
+    app: whisper
+    tenant: rahulkul
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: whisper
+  template:
+    metadata:
+      labels:
+        app: whisper
+        tenant: rahulkul
+    spec:
+      containers:
+        - name: whisper
+          image: fedirz/faster-whisper-server:latest-cpu
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: WHISPER__MODEL
+              value: Systran/faster-whisper-small
+            - name: WHISPER__INFERENCE_DEVICE
+              value: cpu
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30

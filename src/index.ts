@@ -23,6 +23,7 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  findGroupJidByName,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -53,8 +54,22 @@ import {
   loadTenantConfig,
   injectTemplateVariables,
   cacheTenantConfigToDb,
+  type TenantConfig,
 } from './tenant-config.js';
+import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { handleComplaintMessage } from './complaint-handler.js';
+import { processVoiceNote, getDefaultVoiceConfig } from './voice.js';
+import { AdminService } from './admin-handler.js';
+import { checkRateLimit } from './rate-limiter.js';
+import { getUserRole } from './roles.js';
+import {
+  handleKaryakartaCommand,
+  initKaryakartaNotifications,
+} from './karyakarta-handler.js';
+import { handleMlaReply } from './mla-escalation.js';
+import { initUserNotifications } from './user-notifications.js';
+import { runDailySummary } from './daily-summary.js';
+import { checkPendingValidations } from './validation-scheduler.js';
 import {
   detectLanguageFromText,
   getFallbackErrorMessage,
@@ -71,6 +86,7 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+let tenantConfig: TenantConfig;
 
 /** Extract phone number from JID, falling back to the JID prefix if extraction fails. */
 function phoneFromJid(jid: string): string {
@@ -122,10 +138,19 @@ function loadState(): void {
 
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
-  setRouterState(
-    'last_agent_timestamp',
-    JSON.stringify(lastAgentTimestamp),
-  );
+  setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function registerAdminGroup(jid: string): void {
+  if (registeredGroups[jid]) return;
+  registerGroup(jid, {
+    name: 'Admin',
+    folder: 'admin',
+    trigger: '',
+    added_at: new Date().toISOString(),
+    requiresTrigger: true,
+  });
+  logger.info({ jid }, 'Registered admin group for command routing');
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -161,7 +186,9 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
 }
 
 /** @internal - exported for testing */
-export function _setRegisteredGroups(groups: Record<string, RegisteredGroup>): void {
+export function _setRegisteredGroups(
+  groups: Record<string, RegisteredGroup>,
+): void {
   registeredGroups = groups;
 }
 
@@ -214,7 +241,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, chatJid, messageCount: missedMessages.length, isIndividual },
+    {
+      group: group.name,
+      chatJid,
+      messageCount: missedMessages.length,
+      isIndividual,
+    },
     'Processing messages',
   );
 
@@ -224,7 +256,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ group: group.name }, 'Idle timeout, closing container stdin');
+      logger.debug(
+        { group: group.name },
+        'Idle timeout, closing container stdin',
+      );
       queue.closeStdin(chatJid);
     }, IDLE_TIMEOUT);
   };
@@ -233,24 +268,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
 
   const sessionFolder = getSessionFolder(group.folder, chatJid);
-  const output = await runAgent(group, prompt, chatJid, sessionFolder, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = stripInternalTags(raw);
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await whatsapp.sendMessage(chatJid, `${ASSISTANT_NAME}: ${text}`);
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    sessionFolder,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = stripInternalTags(raw);
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await whatsapp.sendMessage(chatJid, `${ASSISTANT_NAME}: ${text}`);
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await whatsapp.setTyping(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -259,7 +306,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
-    logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
+    logger.warn(
+      { group: group.name },
+      'Agent error, rolled back message cursor for retry',
+    );
     return false;
   }
 
@@ -323,7 +373,8 @@ async function runAgent(
         chatJid,
         isMain,
       },
-      (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, containerName) =>
+        queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
     );
 
@@ -433,44 +484,52 @@ async function startMessageLoop(): Promise<void> {
 }
 
 /**
- * Startup recovery: check for unprocessed messages in registered groups AND
- * individual chats. 1:1 chats store messages under their phone JID, not the
- * virtual group JID, so we also scan for those.
+ * Advance all message cursors to the latest stored message so the bot
+ * starts clean after a restart — no replayed messages, no echo loops,
+ * no accidental rate-limit hits from old traffic.
  */
-function recoverPendingMessages(): void {
-  // Recover group messages
-  for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    if (chatJid === VIRTUAL_COMPLAINT_GROUP_JID) continue; // virtual, no direct messages
-    const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+function skipPendingMessages(): void {
+  let skipped = 0;
+
+  // Advance cursors for registered groups
+  for (const [chatJid] of Object.entries(registeredGroups)) {
+    if (chatJid === VIRTUAL_COMPLAINT_GROUP_JID) continue;
+    const pending = getMessagesSince(
+      chatJid,
+      lastAgentTimestamp[chatJid] || '',
+      ASSISTANT_NAME,
+    );
     if (pending.length > 0) {
-      logger.info(
-        { group: group.name, pendingCount: pending.length },
-        'Recovery: found unprocessed group messages',
-      );
-      queue.enqueueMessageCheck(chatJid);
+      lastAgentTimestamp[chatJid] =
+        pending[pending.length - 1].timestamp;
+      skipped += pending.length;
     }
   }
 
-  // Recover 1:1 individual chat messages: find distinct chat_jids for individual
-  // chats that have messages newer than their last agent cursor.
-  // Uses the direct in-process handler (no container/queue).
+  // Advance cursors for 1:1 individual chats
   if (registeredGroups[VIRTUAL_COMPLAINT_GROUP_JID]) {
     const allChats = getAllChats();
     for (const chat of allChats) {
       if (!isIndividualChat(chat.jid)) continue;
-      const sinceTimestamp = lastAgentTimestamp[chat.jid] || '';
-      const pending = getMessagesSince(chat.jid, sinceTimestamp, ASSISTANT_NAME);
+      const pending = getMessagesSince(
+        chat.jid,
+        lastAgentTimestamp[chat.jid] || '',
+        ASSISTANT_NAME,
+      );
       if (pending.length > 0) {
-        logger.info(
-          { chatJid: chat.jid, pendingCount: pending.length },
-          'Recovery: found unprocessed 1:1 messages',
-        );
-        // Process each pending message directly (last one is most relevant)
-        const lastMsg = pending[pending.length - 1];
-        handleComplaintDirect(chat.jid, lastMsg);
+        lastAgentTimestamp[chat.jid] =
+          pending[pending.length - 1].timestamp;
+        skipped += pending.length;
       }
     }
+  }
+
+  if (skipped > 0) {
+    saveState();
+    logger.info(
+      { skipped },
+      'Skipped pending messages from before restart',
+    );
   }
 }
 
@@ -488,6 +547,16 @@ function handleComplaintDirect(chatJid: string, msg: NewMessage): void {
     return;
   }
 
+  // Rate limit check (skip for karyakartas and admins — they're trusted)
+  const userRole = getUserRole(getDb(), phone);
+  if (userRole === 'user') {
+    const rateResult = checkRateLimit(getDb(), phone, tenantConfig);
+    if (!rateResult.allowed) {
+      whatsapp.sendMessage(chatJid, rateResult.reason!);
+      return;
+    }
+  }
+
   // Fire-and-forget: handle asynchronously, don't block the message callback
   (async () => {
     try {
@@ -497,18 +566,154 @@ function handleComplaintDirect(chatJid: string, msg: NewMessage): void {
       if (text) {
         // 1:1 chats don't need the bot name prefix — WhatsApp already shows the sender
         await whatsapp.sendMessage(chatJid, text);
-        // Only advance cursor after a reply was actually sent
+        lastAgentTimestamp[chatJid] = msg.timestamp;
+        saveState();
+      } else if (result.length > 0) {
+        // Agent produced output but it was all <internal> tags — don't retry
+        // forever, send fallback and advance cursor
+        logger.warn(
+          { chatJid, phone, resultLength: result.length },
+          'Agent response was entirely internal tags — sending fallback',
+        );
+        await whatsapp.sendMessage(
+          chatJid,
+          resolveFallbackErrorMessage(phone, msg.content),
+        );
         lastAgentTimestamp[chatJid] = msg.timestamp;
         saveState();
       } else {
-        logger.warn({ chatJid, phone }, 'Complaint handler returned empty result, NOT advancing cursor — message will be retried');
+        logger.warn(
+          { chatJid, phone },
+          'Complaint handler returned empty result, NOT advancing cursor — message will be retried',
+        );
       }
     } catch (err) {
       logger.error({ chatJid, err }, 'Direct complaint handler error');
       // Send fallback error message so user isn't left without a response
       try {
-        await whatsapp.sendMessage(chatJid, resolveFallbackErrorMessage(phone, msg.content));
-      } catch { /* best-effort */ }
+        await whatsapp.sendMessage(
+          chatJid,
+          resolveFallbackErrorMessage(phone, msg.content),
+        );
+      } catch {
+        /* best-effort */
+      }
+    } finally {
+      await whatsapp.setTyping(chatJid, false);
+    }
+  })();
+}
+
+/**
+ * Handle a voice note from a 1:1 chat.
+ * Downloads audio, validates, transcribes via Whisper, then passes
+ * transcript to the complaint handler.
+ */
+function handleVoiceDirect(
+  chatJid: string,
+  msg: any,
+  metadata: import('./channels/whatsapp.js').AudioMetadata,
+): void {
+  const phone = phoneFromJid(chatJid);
+
+  // Block check — skip download entirely for blocked users
+  if (isUserBlocked(phone)) {
+    logger.info({ phone, chatJid }, 'Blocked user voice message ignored');
+    return;
+  }
+
+  // Rate limit check (skip for karyakartas and admins)
+  const userRole = getUserRole(getDb(), phone);
+  if (userRole === 'user') {
+    const rateResult = checkRateLimit(getDb(), phone, tenantConfig);
+    if (!rateResult.allowed) {
+      whatsapp.sendMessage(chatJid, rateResult.reason!);
+      return;
+    }
+  }
+
+  // Fire-and-forget
+  (async () => {
+    try {
+      await whatsapp.setTyping(chatJid, true);
+
+      // Look up user language for Whisper hint + error messages
+      const userRow = getDb()
+        .prepare('SELECT language FROM users WHERE phone = ?')
+        .get(phone) as { language?: string } | undefined;
+      const language = userRow?.language || 'mr';
+
+      // Download audio from WhatsApp servers
+      let audioBuffer: Buffer;
+      try {
+        audioBuffer = (await downloadMediaMessage(
+          msg,
+          'buffer',
+          {},
+        )) as Buffer;
+      } catch (err) {
+        logger.error(
+          { err, messageId: metadata.messageId },
+          'Failed to download audio',
+        );
+        await whatsapp.sendMessage(
+          chatJid,
+          resolveFallbackErrorMessage(phone, ''),
+        );
+        lastAgentTimestamp[chatJid] = metadata.timestamp;
+        saveState();
+        return;
+      }
+
+      // Validate + transcribe via voice.ts
+      const voiceConfig = getDefaultVoiceConfig();
+      const result = await processVoiceNote(
+        audioBuffer,
+        language,
+        metadata.messageId,
+        voiceConfig,
+      );
+
+      // Handle rejection/error
+      if (result.status === 'rejected' || result.status === 'error') {
+        await whatsapp.sendMessage(chatJid, result.message!);
+        lastAgentTimestamp[chatJid] = metadata.timestamp;
+        saveState();
+        return;
+      }
+
+      // Pass transcript to complaint handler
+      const transcript = result.text!;
+      logger.info(
+        {
+          phone,
+          messageId: metadata.messageId,
+          transcriptLength: transcript.length,
+        },
+        'Voice note transcribed, routing to complaint handler',
+      );
+
+      const agentResult = await handleComplaintMessage(
+        phone,
+        metadata.senderName,
+        transcript,
+      );
+      const text = stripInternalTags(agentResult);
+      if (text) {
+        await whatsapp.sendMessage(chatJid, text);
+        lastAgentTimestamp[chatJid] = metadata.timestamp;
+        saveState();
+      }
+    } catch (err) {
+      logger.error({ chatJid, err }, 'Voice message handler error');
+      try {
+        await whatsapp.sendMessage(
+          chatJid,
+          resolveFallbackErrorMessage(phone, ''),
+        );
+      } catch {
+        /* best-effort */
+      }
     } finally {
       await whatsapp.setTyping(chatJid, false);
     }
@@ -560,17 +765,26 @@ function ensureContainerSystemRunning(): void {
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf-8',
     });
-    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
+    const containers: { status: string; configuration: { id: string } }[] =
+      JSON.parse(output || '[]');
     const orphans = containers
-      .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
+      .filter(
+        (c) =>
+          c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'),
+      )
       .map((c) => c.configuration.id);
     for (const name of orphans) {
       try {
         execSync(`container stop ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
+      } catch {
+        /* already stopped */
+      }
     }
     if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+      logger.info(
+        { count: orphans.length, names: orphans },
+        'Stopped orphaned containers',
+      );
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');
@@ -584,12 +798,39 @@ async function main(): Promise<void> {
   loadState();
 
   // Load tenant config, cache to DB, and inject template variables into CLAUDE.md
-  const tenantConfig = loadTenantConfig();
+  tenantConfig = loadTenantConfig();
   cacheTenantConfigToDb(getDb(), tenantConfig);
   logger.info(
     { mla: tenantConfig.mla_name, constituency: tenantConfig.constituency },
     'Tenant config loaded and cached to DB',
   );
+
+  // Phase 2: Initialize admin service and notification listeners
+  // adminDeps is kept as a mutable reference — wa_admin_group_jid may be
+  // auto-discovered after WhatsApp connects and group metadata syncs.
+  const adminDeps = {
+    db: getDb(),
+    sendMessage: async (jid: string, text: string) =>
+      whatsapp.sendMessage(jid, text),
+    adminGroupJid: tenantConfig.wa_admin_group_jid,
+    adminPhones: tenantConfig.admin_phones ?? [],
+    mlaPhone: tenantConfig.mla_phone,
+  };
+  const adminService = new AdminService(adminDeps);
+  adminService.init();
+
+  initUserNotifications({
+    db: getDb(),
+    sendMessage: async (jid, text) => whatsapp.sendMessage(jid, text),
+  });
+
+  initKaryakartaNotifications({
+    db: getDb(),
+    sendMessage: async (jid, text) => whatsapp.sendMessage(jid, text),
+    get adminGroupJid() {
+      return tenantConfig.wa_admin_group_jid;
+    },
+  });
 
   // Process CLAUDE.md template variables for the complaint group.
   // Write the injected version to data/runtime/ so the source template stays intact.
@@ -624,6 +865,12 @@ async function main(): Promise<void> {
     logger.info('Registered virtual complaint group for 1:1 message routing');
   }
 
+  // Register admin group so WhatsApp channel delivers its messages to onMessage.
+  // requiresTrigger: true prevents the message loop from spawning container agents.
+  if (tenantConfig.wa_admin_group_jid) {
+    registerAdminGroup(tenantConfig.wa_admin_group_jid);
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
@@ -640,24 +887,151 @@ async function main(): Promise<void> {
       storeMessage(msg);
       // Skip bot's own outgoing messages — WhatsApp echoes them back via messages.upsert
       if (msg.is_from_me) return;
-      // For 1:1 chats, use the direct in-process handler (no container)
-      if (isIndividualChat(chatJid) && registeredGroups[VIRTUAL_COMPLAINT_GROUP_JID]) {
+
+      // Admin group: handle #commands, ignore non-command messages
+      if (
+        tenantConfig.wa_admin_group_jid &&
+        chatJid === tenantConfig.wa_admin_group_jid
+      ) {
+        if (msg.content.trim().startsWith('#')) {
+          (async () => {
+            try {
+              const response = await adminService.handleCommand(
+                phoneFromJid(msg.sender),
+                msg.content,
+              );
+              if (response) {
+                await whatsapp.sendMessage(chatJid, response);
+              }
+            } catch (err) {
+              logger.error({ err }, 'Admin command error');
+            }
+          })();
+        }
+        return;
+      }
+
+      // 1:1 chats: role-aware routing
+      if (
+        isIndividualChat(chatJid) &&
+        registeredGroups[VIRTUAL_COMPLAINT_GROUP_JID]
+      ) {
+        const phone = phoneFromJid(chatJid);
+        const text = msg.content.trim();
+
+        // MLA replies → forward to admin group
+        if (tenantConfig.mla_phone && phone === tenantConfig.mla_phone) {
+          (async () => {
+            try {
+              const result = await handleMlaReply(
+                {
+                  db: getDb(),
+                  sendMessage: async (jid, t) =>
+                    whatsapp.sendMessage(jid, t),
+                  adminGroupJid: tenantConfig.wa_admin_group_jid,
+                  mlaPhone: tenantConfig.mla_phone,
+                },
+                phone,
+                text,
+              );
+              if (result) {
+                await whatsapp.sendMessage(chatJid, result);
+                lastAgentTimestamp[chatJid] = msg.timestamp;
+                saveState();
+              }
+            } catch (err) {
+              logger.error({ err, chatJid }, 'MLA reply handler error');
+            }
+          })();
+          return;
+        }
+
+        // Karyakarta #commands (#approve, #reject, #my-complaints)
+        if (text.startsWith('#')) {
+          const role = getUserRole(getDb(), phone);
+          if (role === 'karyakarta') {
+            (async () => {
+              try {
+                const result = await handleKaryakartaCommand(
+                  {
+                    db: getDb(),
+                    sendMessage: async (jid, t) =>
+                      whatsapp.sendMessage(jid, t),
+                    adminGroupJid: tenantConfig.wa_admin_group_jid,
+                  },
+                  phone,
+                  text,
+                );
+                if (result) {
+                  await whatsapp.sendMessage(chatJid, result);
+                  lastAgentTimestamp[chatJid] = msg.timestamp;
+                  saveState();
+                } else {
+                  // Unrecognized command — treat as complaint message
+                  handleComplaintDirect(chatJid, msg);
+                }
+              } catch (err) {
+                logger.error({ err, chatJid }, 'Karyakarta command error');
+              }
+            })();
+            return;
+          }
+        }
+
+        // Default: complaint handler (includes block check + rate limiting)
         handleComplaintDirect(chatJid, msg);
       }
     },
-    onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp, name),
+    onAudioMessage: (chatJid, msg, metadata) => {
+      storeChatMetadata(chatJid, metadata.timestamp, metadata.senderName);
+
+      // Skip bot's own audio messages
+      if (msg.key.fromMe) return;
+
+      // Only handle 1:1 chats with virtual complaint group registered
+      if (
+        isIndividualChat(chatJid) &&
+        registeredGroups[VIRTUAL_COMPLAINT_GROUP_JID]
+      ) {
+        handleVoiceDirect(chatJid, msg, metadata);
+      }
+    },
+    onChatMetadata: (chatJid, timestamp, name) =>
+      storeChatMetadata(chatJid, timestamp, name),
     registeredGroups: () => registeredGroups,
   });
 
   // Connect — resolves when first connected
   await whatsapp.connect();
 
+  // Auto-discover admin group by name if JID not already set
+  if (tenantConfig.admin_group_name && !tenantConfig.wa_admin_group_jid) {
+    await whatsapp.syncGroupMetadata(true);
+    const resolvedJid = findGroupJidByName(tenantConfig.admin_group_name);
+    if (resolvedJid) {
+      tenantConfig.wa_admin_group_jid = resolvedJid;
+      adminDeps.adminGroupJid = resolvedJid;
+      cacheTenantConfigToDb(getDb(), tenantConfig);
+      registerAdminGroup(resolvedJid);
+      logger.info(
+        { jid: resolvedJid, name: tenantConfig.admin_group_name },
+        'Auto-discovered admin group',
+      );
+    } else {
+      logger.warn(
+        { name: tenantConfig.admin_group_name },
+        'Admin group not found — create a WhatsApp group with this name and restart',
+      );
+    }
+  }
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
     queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) => queue.registerProcess(groupJid, proc, containerName, groupFolder),
+    onProcess: (groupJid, proc, containerName, groupFolder) =>
+      queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
       const text = formatOutbound(whatsapp, rawText);
       if (text) await whatsapp.sendMessage(jid, text);
@@ -669,17 +1043,62 @@ async function main(): Promise<void> {
     registerGroup,
     syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),
     getAvailableGroups,
-    writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
+    writeGroupsSnapshot: (gf, im, ag, rj) =>
+      writeGroupsSnapshot(gf, im, ag, rj),
   });
   queue.setProcessMessagesFn(processGroupMessages);
-  recoverPendingMessages();
+  skipPendingMessages();
   startMessageLoop();
+
+  // Phase 2: Hourly scheduled tasks (validation reminders + daily summary)
+  let lastDailySummaryDate = '';
+  setInterval(async () => {
+    if (!tenantConfig.wa_admin_group_jid) return;
+
+    // Validation check: reminders and auto-escalation for pending complaints
+    try {
+      const result = await checkPendingValidations({
+        db: getDb(),
+        sendMessage: async (jid, text) => whatsapp.sendMessage(jid, text),
+        adminGroupJid: tenantConfig.wa_admin_group_jid,
+      });
+      if (result.reminders > 0 || result.escalated > 0) {
+        logger.info(result, 'Validation check completed');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Validation check failed');
+    }
+
+    // Daily summary at 9 AM IST
+    try {
+      const istHour = parseInt(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Kolkata',
+          hour: 'numeric',
+          hour12: false,
+        }).format(new Date()),
+      );
+      const today = new Date().toISOString().slice(0, 10);
+      if (istHour === 9 && lastDailySummaryDate !== today) {
+        lastDailySummaryDate = today;
+        await runDailySummary(
+          getDb(),
+          async (jid, text) => whatsapp.sendMessage(jid, text),
+          tenantConfig.wa_admin_group_jid,
+        );
+        logger.info('Daily summary sent');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Daily summary failed');
+    }
+  }, 3600_000);
 }
 
 // Guard: only run when executed directly, not when imported by tests
 const isDirectRun =
   process.argv[1] &&
-  new URL(import.meta.url).pathname === new URL(`file://${process.argv[1]}`).pathname;
+  new URL(import.meta.url).pathname ===
+    new URL(`file://${process.argv[1]}`).pathname;
 
 if (isDirectRun) {
   main().catch((err) => {

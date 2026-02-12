@@ -7,7 +7,7 @@ const CLAUDE_MD_PATH = resolve(
   '..',
   'groups',
   'complaint',
-  'CLAUDE.md'
+  'CLAUDE.md',
 );
 
 describe('P1-S4: CLAUDE.md — the bot brain', () => {

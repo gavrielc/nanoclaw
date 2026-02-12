@@ -1,8 +1,8 @@
-# Phase 2: Rate Limiting, Safety & Admin Notifications
+# Phase 2: Rate Limiting, Safety, Admin & Karyakarta Hierarchy
 
-**Goal**: Production-ready bot with abuse prevention, content safety, and admin group integration for real-world deployment.
+**Goal**: Production-ready bot with abuse prevention, content safety, admin group integration, karyakarta validation layer, area model, and MLA escalation.
 
-**Deliverable**: Bot enforces daily message limits, detects spam, handles abusive users gracefully. New complaints auto-posted to admin WhatsApp group. Admins can update complaint status from the group.
+**Deliverable**: Bot enforces daily message limits, detects spam, handles abusive users gracefully. New complaints auto-posted to admin WhatsApp group. Admins can update complaint status from the group. Karyakartas validate complaints in their area before admin review. MLA can receive urgent escalations via personal WhatsApp.
 
 ---
 
@@ -497,4 +497,264 @@ Use `/verification-before-completion`:
 
 #### Step 5: Mark Complete
 Check off all acceptance criteria. Update STORIES_INDEX.md.
+
+---
+
+## P2-S7: Schema for Areas and Karyakartas
+
+**As a** developer
+**I want** a database schema for geographic areas, karyakartas (local reps), and complaint validation records
+**So that** the system can track area assignments, karyakarta-area mappings, and complaint validation history
+
+### Dependencies
+
+| Depends On | Story Title | Why |
+|------------|-------------|-----|
+| P2-S2 | Content safety + roles | Need role column on users before adding karyakarta records |
+
+> :no_entry: **DO NOT START** this story until all dependencies above are marked completed.
+
+### Acceptance Criteria
+
+1. [ ] Migration `004-areas-karyakartas.sql` creates `areas`, `karyakartas`, `karyakarta_areas`, `complaint_validations` tables
+2. [ ] Migration adds `area_id` column to `complaints` table
+3. [ ] `src/area-db.ts` created with CRUD functions: `createArea`, `getArea`, `listAreas`, `updateArea`, `deactivateArea`
+4. [ ] Karyakarta CRUD: `addKaryakarta`, `removeKaryakarta`, `getKaryakarta`, `listKaryakartas`
+5. [ ] Assignment CRUD: `assignKaryakartaToArea`, `unassignKaryakartaFromArea`, `getKaryakartasForArea`, `getAreasForKaryakarta`
+6. [ ] Validation CRUD: `createValidation`, `getValidationsForComplaint`
+7. [ ] `src/test-helpers.ts` created with shared seeding functions for Phase 2 tests
+8. [ ] Area slugs auto-generated from name (e.g., "Shivaji Nagar" → "shivaji-nagar")
+9. [ ] Areas support multilingual names (name, name_mr, name_hi)
+
+### Testing Requirements (TDD Workflow)
+
+Use the `/test-driven-development` skill.
+
+1. **Write tests FIRST**:
+   - Test: create area with slug auto-generation
+   - Test: list active areas
+   - Test: deactivate area
+   - Test: add karyakarta (creates user with karyakarta role if not exists)
+   - Test: remove karyakarta (deactivates, doesn't delete)
+   - Test: assign karyakarta to area
+   - Test: unassign karyakarta from area
+   - Test: get karyakartas for a specific area
+   - Test: get areas for a specific karyakarta
+   - Test: create complaint validation record
+   - Test: get validation history for complaint
+   - Test: area_id column on complaints works correctly
+   - Edge case: duplicate area name returns error
+   - Edge case: assign to non-existent area returns error
+2. **Run tests** — confirm they fail
+3. **Implement** — migration + CRUD functions
+4. **Refactor** — ensure clean separation
+
+---
+
+## P2-S8: Admin Commands for Karyakarta Management
+
+**As a** developer
+**I want** admin group commands for managing karyakartas, areas, and overriding rejected complaints
+**So that** the admin team can manage the karyakarta network directly from WhatsApp
+
+### Dependencies
+
+| Depends On | Story Title | Why |
+|------------|-------------|-----|
+| P2-S3 | Admin group notifications | Need AdminService and command parsing infrastructure |
+| P2-S7 | Schema for areas/karyakartas | Need area and karyakarta tables to manage |
+
+> :no_entry: **DO NOT START** this story until all dependencies above are marked completed.
+
+### Acceptance Criteria
+
+1. [ ] `src/admin-commands.ts` created with command parser and executor
+2. [ ] `#add-karyakarta +919876543210 AreaSlug` — adds karyakarta, assigns to area, confirms
+3. [ ] `#remove-karyakarta +919876543210` — deactivates karyakarta, confirms
+4. [ ] `#assign-area +919876543210 AreaSlug` — assigns karyakarta to additional area
+5. [ ] `#unassign-area +919876543210 AreaSlug` — removes karyakarta from area
+6. [ ] `#add-area AreaName` — creates new area with auto-slug
+7. [ ] `#rename-area old-slug NewName` — renames area, updates slug
+8. [ ] `#remove-area AreaSlug` — deactivates area (soft delete)
+9. [ ] `#list-karyakartas` — lists all active karyakartas with their areas
+10. [ ] `#list-areas` — lists all active areas with karyakarta count
+11. [ ] `#override-reject RK-XXXX: reason` — moves rejected complaint to validated status
+12. [ ] All commands integrated into AdminService.handleCommand()
+13. [ ] Invalid inputs return helpful error messages
+
+### Testing Requirements (TDD Workflow)
+
+Use the `/test-driven-development` skill.
+
+1. **Write tests FIRST** for each command (parse + execute)
+2. **Run tests** — confirm they fail
+3. **Implement** — command parser + executor
+4. **Refactor** — clean up
+
+---
+
+## P2-S9: Area-Based Complaint Routing
+
+**As a** developer
+**I want** complaints to be matched to geographic areas using fuzzy text matching
+**So that** the right karyakarta is notified about complaints in their assigned area
+
+### Dependencies
+
+| Depends On | Story Title | Why |
+|------------|-------------|-----|
+| P2-S7 | Schema for areas/karyakartas | Need area tables for matching |
+
+> :no_entry: **DO NOT START** this story until all dependencies above are marked completed.
+
+### Acceptance Criteria
+
+1. [ ] `src/area-matcher.ts` created with `matchArea(db, locationText): AreaMatch[]`
+2. [ ] Fuzzy matching using Levenshtein distance with configurable threshold
+3. [ ] Returns ranked matches with confidence scores
+4. [ ] New MCP tool `resolve_area` registered in complaint-handler.ts
+5. [ ] When `karyakarta_validation_enabled`, createComplaint sets status to `pending_validation` and sets `area_id`
+6. [ ] When `karyakarta_validation_enabled` is false, complaints behave as Phase 1 (status = registered, no area_id)
+7. [ ] Updated complaint CLAUDE.md: agent calls `resolve_area` after location extraction
+8. [ ] If area match is ambiguous, agent asks user to clarify
+
+### Testing Requirements (TDD Workflow)
+
+Use the `/test-driven-development` skill.
+
+1. **Write tests FIRST**:
+   - Test: exact area name match returns confidence 1.0
+   - Test: fuzzy match "Shivaji Nagr" → "Shivaji Nagar" with high confidence
+   - Test: no match returns empty array
+   - Test: multiple partial matches ranked by confidence
+   - Test: resolve_area MCP tool returns formatted results
+   - Test: with feature flag on, createComplaint sets pending_validation + area_id
+   - Test: with feature flag off, createComplaint sets registered (no area_id)
+   - Edge case: empty location text
+   - Edge case: Marathi/Hindi location text matching
+2. **Run tests** — confirm they fail
+3. **Implement** — area matcher + MCP tool
+4. **Refactor** — optimize matching algorithm
+
+---
+
+## P2-S10: Karyakarta Validation Flow
+
+**As a** developer
+**I want** karyakartas to approve or reject complaints via WhatsApp commands
+**So that** local reps can validate complaints in their area before they reach the admin team
+
+### Dependencies
+
+| Depends On | Story Title | Why |
+|------------|-------------|-----|
+| P2-S8 | Admin commands for karyakarta mgmt | Need karyakarta management infrastructure |
+| P2-S9 | Area-based complaint routing | Need area matching to route complaints to karyakartas |
+
+> :no_entry: **DO NOT START** this story until all dependencies above are marked completed.
+
+### Acceptance Criteria
+
+1. [ ] `src/karyakarta-handler.ts` created with `handleKaryakartaCommand()`
+2. [ ] DM notification sent to karyakarta(s) assigned to area when complaint created with pending_validation
+3. [ ] `#approve RK-XXXX: note` — status → validated, forward to admin group, notify constituent
+4. [ ] `#reject RK-XXXX reason_code: note` — status → rejected, log validation, notify constituent
+5. [ ] Rejection reasons: duplicate, fraud, not_genuine, out_of_area, insufficient_info, other
+6. [ ] `#my-complaints` — lists pending complaints for karyakarta's assigned areas
+7. [ ] Admin `#override-reject RK-XXXX: reason` moves rejected → validated
+8. [ ] Role-based dispatch in index.ts: if karyakarta + `#command` → karyakarta-handler
+9. [ ] Validation record created in `complaint_validations` table
+10. [ ] Constituent notified of approval/rejection in their language
+
+### Testing Requirements (TDD Workflow)
+
+Use the `/test-driven-development` skill.
+
+1. **Write tests FIRST** for each command and notification
+2. **Run tests** — confirm they fail
+3. **Implement** — handler + notifications
+4. **Refactor** — clean up
+
+---
+
+## P2-S11: Validation Timeout and Reminders
+
+**As a** developer
+**I want** automatic reminders to karyakartas for pending validations and auto-escalation on timeout
+**So that** complaints don't get stuck waiting for karyakarta response indefinitely
+
+### Dependencies
+
+| Depends On | Story Title | Why |
+|------------|-------------|-----|
+| P2-S10 | Karyakarta validation flow | Need the validation flow to add timeout logic |
+
+> :no_entry: **DO NOT START** this story until all dependencies above are marked completed.
+
+### Acceptance Criteria
+
+1. [ ] `src/validation-scheduler.ts` created with `checkPendingValidations()` run hourly
+2. [ ] 12h (configurable): send reminder DM to karyakarta
+3. [ ] 24h (configurable): auto-escalate → status `escalated_timeout`, notify admin group + constituent
+4. [ ] Timeouts configurable via `karyakarta_response_timeout_hours` and `karyakarta_reminder_hours` in tenant YAML
+5. [ ] Validation record created with action `escalated_timeout`
+6. [ ] Already-actioned complaints skip reminder/escalation
+
+### Testing Requirements (TDD Workflow)
+
+Use the `/test-driven-development` skill.
+
+1. **Write tests FIRST**:
+   - Test: complaint pending < 12h → no action
+   - Test: complaint pending 12h → reminder sent to karyakarta
+   - Test: complaint pending 24h → auto-escalated, admin + constituent notified
+   - Test: already approved complaint → no reminder
+   - Test: configurable timeout hours
+   - Edge case: multiple karyakartas for same area — all get reminded
+2. **Run tests** — confirm they fail
+3. **Implement** — scheduler + notifications
+4. **Refactor** — optimize queries
+
+---
+
+## P2-S12: MLA Escalation
+
+**As a** developer
+**I want** admins to escalate urgent complaints directly to the MLA's personal WhatsApp
+**So that** critical issues reach the MLA immediately for personal attention
+
+### Dependencies
+
+| Depends On | Story Title | Why |
+|------------|-------------|-----|
+| P2-S10 | Karyakarta validation flow | Need the full validation pipeline |
+| P2-S5 | Daily summary scheduled task | MLA escalation count included in summary |
+
+> :no_entry: **DO NOT START** this story until all dependencies above are marked completed.
+
+### Acceptance Criteria
+
+1. [ ] `src/mla-escalation.ts` created with `formatMlaEscalation()` and `handleMlaReply()`
+2. [ ] Admin command `#escalate-to-mla RK-XXXX: reason` sends DM to MLA phone from tenant config
+3. [ ] MLA DM includes complaint summary, reason, and reply instructions
+4. [ ] MLA reply detection in onMessage: match `mla_phone` from config → forward to admin group
+5. [ ] Escalation logged in complaint_updates with `updated_by = 'admin'`
+6. [ ] MLA phone configurable via tenant YAML (`mla_phone`)
+7. [ ] Error if `mla_phone` not configured
+
+### Testing Requirements (TDD Workflow)
+
+Use the `/test-driven-development` skill.
+
+1. **Write tests FIRST**:
+   - Test: escalate-to-mla sends formatted DM to MLA phone
+   - Test: MLA reply forwarded to admin group
+   - Test: escalation logged in complaint_updates
+   - Test: error when mla_phone not configured
+   - Test: MLA DM format includes complaint details
+   - Edge case: MLA sends unrelated message → not forwarded
+2. **Run tests** — confirm they fail
+3. **Implement** — escalation handler + MLA reply detection
+4. **Refactor** — clean up
+
 Note: Phase 2 is now complete — Phase 3 and Phase 4 stories are unblocked.

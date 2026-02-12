@@ -69,7 +69,12 @@ describe('formatMessages', () => {
 
   it('formats multiple messages', () => {
     const msgs = [
-      makeMsg({ id: '1', sender_name: 'Alice', content: 'hi', timestamp: 't1' }),
+      makeMsg({
+        id: '1',
+        sender_name: 'Alice',
+        content: 'hi',
+        timestamp: 't1',
+      }),
       makeMsg({ id: '2', sender_name: 'Bob', content: 'hey', timestamp: 't2' }),
     ];
     const result = formatMessages(msgs);
@@ -107,8 +112,12 @@ describe('TRIGGER_PATTERN', () => {
   });
 
   it('matches case-insensitively', () => {
-    expect(TRIGGER_PATTERN.test(`@${ASSISTANT_NAME.toLowerCase()} hello`)).toBe(true);
-    expect(TRIGGER_PATTERN.test(`@${ASSISTANT_NAME.toUpperCase()} hello`)).toBe(true);
+    expect(TRIGGER_PATTERN.test(`@${ASSISTANT_NAME.toLowerCase()} hello`)).toBe(
+      true,
+    );
+    expect(TRIGGER_PATTERN.test(`@${ASSISTANT_NAME.toUpperCase()} hello`)).toBe(
+      true,
+    );
   });
 
   it('does not match when not at start of message', () => {
@@ -149,9 +158,7 @@ describe('stripInternalTags', () => {
 
   it('strips multiple internal tag blocks', () => {
     expect(
-      stripInternalTags(
-        '<internal>a</internal>hello<internal>b</internal>',
-      ),
+      stripInternalTags('<internal>a</internal>hello<internal>b</internal>'),
     ).toBe('hello');
   });
 
@@ -187,7 +194,10 @@ describe('formatOutbound', () => {
 
   it('strips internal tags and prefixes remaining text', () => {
     expect(
-      formatOutbound(waChannel, '<internal>thinking</internal>The answer is 42'),
+      formatOutbound(
+        waChannel,
+        '<internal>thinking</internal>The answer is 42',
+      ),
     ).toBe(`${ASSISTANT_NAME}: The answer is 42`);
   });
 });

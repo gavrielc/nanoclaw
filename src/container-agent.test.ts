@@ -6,7 +6,7 @@ const DOCKERFILE_PATH = resolve(
   import.meta.dirname,
   '..',
   'container',
-  'Dockerfile'
+  'Dockerfile',
 );
 
 const AGENT_RUNNER_PATH = resolve(
@@ -15,12 +15,12 @@ const AGENT_RUNNER_PATH = resolve(
   'container',
   'agent-runner',
   'src',
-  'index.ts'
+  'index.ts',
 );
 
 const CONTAINER_RUNNER_PATH = resolve(
   import.meta.dirname,
-  'container-runner.ts'
+  'container-runner.ts',
 );
 
 describe('P1-S5: Container agent configuration', () => {
@@ -59,7 +59,9 @@ describe('P1-S5: Container agent configuration', () => {
     it('passes the model option to query()', () => {
       agentRunner = readFileSync(AGENT_RUNNER_PATH, 'utf-8');
       // The model should be set in the query options
-      expect(agentRunner).toMatch(/model:\s*['"]claude-sonnet-4-5-20250929['"]/);
+      expect(agentRunner).toMatch(
+        /model:\s*['"]claude-sonnet-4-5-20250929['"]/,
+      );
     });
 
     it('preserves session persistence via resume option', () => {
@@ -90,7 +92,7 @@ describe('P1-S5: Container agent configuration', () => {
       containerRunner = readFileSync(CONTAINER_RUNNER_PATH, 'utf-8');
       // Find the tools mount block and verify it's readonly
       const toolsMountMatch = containerRunner.match(
-        /containerPath:\s*'\/workspace\/tools'[\s\S]*?readonly:\s*(true|false)/
+        /containerPath:\s*'\/workspace\/tools'[\s\S]*?readonly:\s*(true|false)/,
       );
       expect(toolsMountMatch).not.toBeNull();
       expect(toolsMountMatch![1]).toBe('true');
@@ -100,7 +102,7 @@ describe('P1-S5: Container agent configuration', () => {
       containerRunner = readFileSync(CONTAINER_RUNNER_PATH, 'utf-8');
       // Find the store mount block and verify it's read-write
       const storeMountMatch = containerRunner.match(
-        /containerPath:\s*'\/workspace\/store'[\s\S]*?readonly:\s*(true|false)/
+        /containerPath:\s*'\/workspace\/store'[\s\S]*?readonly:\s*(true|false)/,
       );
       expect(storeMountMatch).not.toBeNull();
       expect(storeMountMatch![1]).toBe('false');
@@ -110,7 +112,7 @@ describe('P1-S5: Container agent configuration', () => {
       containerRunner = readFileSync(CONTAINER_RUNNER_PATH, 'utf-8');
       // Find the config mount block and verify it's readonly
       const configMountMatch = containerRunner.match(
-        /containerPath:\s*'\/workspace\/config'[\s\S]*?readonly:\s*(true|false)/
+        /containerPath:\s*'\/workspace\/config'[\s\S]*?readonly:\s*(true|false)/,
       );
       expect(configMountMatch).not.toBeNull();
       expect(configMountMatch![1]).toBe('true');

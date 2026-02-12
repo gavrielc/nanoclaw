@@ -72,7 +72,9 @@ describe('P1-S8: .env.example', () => {
   it('does not contain actual token values', () => {
     const content = fs.readFileSync(envExamplePath, 'utf-8');
     // Should only have a placeholder, not a real token
-    const lines = content.split('\n').filter((l) => l.startsWith('CLAUDE_CODE_OAUTH_TOKEN='));
+    const lines = content
+      .split('\n')
+      .filter((l) => l.startsWith('CLAUDE_CODE_OAUTH_TOKEN='));
     for (const line of lines) {
       const value = line.split('=')[1];
       // Value should be empty or a placeholder like "your_token_here"
@@ -100,7 +102,12 @@ describe('P1-S8: Startup integration', () => {
 
   it('CLAUDE.md template variables are replaced with tenant config values', () => {
     const configPath = path.join(PROJECT_ROOT, 'config', 'tenant.yaml');
-    const claudeMdPath = path.join(PROJECT_ROOT, 'groups', 'complaint', 'CLAUDE.md');
+    const claudeMdPath = path.join(
+      PROJECT_ROOT,
+      'groups',
+      'complaint',
+      'CLAUDE.md',
+    );
 
     expect(fs.existsSync(claudeMdPath)).toBe(true);
 
@@ -130,9 +137,9 @@ describe('P1-S8: Startup integration', () => {
     );
     cacheTenantConfigToDb(db, config);
 
-    const row = db.prepare('SELECT value FROM tenant_config WHERE key = ?').get('mla_name') as
-      | { value: string }
-      | undefined;
+    const row = db
+      .prepare('SELECT value FROM tenant_config WHERE key = ?')
+      .get('mla_name') as { value: string } | undefined;
     expect(row?.value).toBe('Rahul Kul');
 
     const prefix = db

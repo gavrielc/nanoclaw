@@ -6,6 +6,10 @@
  * Used by complaint-handler.ts via the Agent SDK's in-process MCP server.
  */
 import type Database from 'better-sqlite3';
+import { matchArea } from './area-matcher.js';
+import { setUserRole } from './roles.js';
+import type { UserRole } from './types.js';
+import { eventBus } from './event-bus.js';
 
 /** ISO timestamp without milliseconds (matches shell script format). */
 function nowISO(): string {
@@ -28,18 +32,50 @@ export function createComplaint(
     description: string;
     location?: string;
     language: string;
+    area_id?: string;
+    source?: 'text' | 'voice';
+    voice_message_id?: string;
   },
 ): string {
-  const { phone, category, description, location, language } = params;
+  const { phone, category, description, location, language, area_id } = params;
 
   // Read tracking ID prefix from tenant_config
   const prefixRow = db
-    .prepare("SELECT value FROM tenant_config WHERE key = 'complaint_id_prefix'")
+    .prepare(
+      "SELECT value FROM tenant_config WHERE key = 'complaint_id_prefix'",
+    )
     .get() as { value: string } | undefined;
   if (!prefixRow) {
     throw new Error('complaint_id_prefix not found in tenant_config');
   }
   const prefix = prefixRow.value;
+
+  // Read karyakarta_validation_enabled feature flag
+  const flagRow = db
+    .prepare(
+      "SELECT value FROM tenant_config WHERE key = 'karyakarta_validation_enabled'",
+    )
+    .get() as { value: string } | undefined;
+  const validationEnabled = flagRow?.value === 'true';
+
+  // Auto-resolve area from location/description text when validation is enabled
+  // and area_id wasn't explicitly provided (the AI agent typically doesn't pass it).
+  let resolvedAreaId = area_id;
+  if (validationEnabled && !resolvedAreaId) {
+    // Try location first, then fall back to description
+    const textsToTry = [location, description].filter(Boolean) as string[];
+    for (const text of textsToTry) {
+      const matches = matchArea(db, text);
+      if (matches.length > 0) {
+        resolvedAreaId = matches[0].id;
+        break;
+      }
+    }
+  }
+
+  // Determine initial status based on feature flag and resolved area
+  const initialStatus =
+    validationEnabled && resolvedAreaId ? 'pending_validation' : 'registered';
 
   const now = nowISO();
   const today = now.slice(0, 10).replace(/-/g, '');
@@ -65,9 +101,22 @@ export function createComplaint(
 
     // Insert complaint
     db.prepare(
-      `INSERT INTO complaints (id, phone, category, subcategory, description, location, language, status, priority, source, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, ?, ?, ?, 'registered', 'normal', 'text', ?, ?)`,
-    ).run(complaintId, phone, category ?? null, description, location ?? null, language, now, now);
+      `INSERT INTO complaints (id, phone, category, subcategory, description, location, language, status, priority, source, voice_message_id, area_id, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'normal', ?, ?, ?, ?, ?)`,
+    ).run(
+      complaintId,
+      phone,
+      category ?? null,
+      description,
+      location ?? null,
+      language,
+      initialStatus,
+      params.source ?? 'text',
+      params.voice_message_id ?? null,
+      resolvedAreaId ?? null,
+      now,
+      now,
+    );
 
     // Increment user complaint count
     db.prepare(
@@ -77,7 +126,20 @@ export function createComplaint(
     return complaintId;
   });
 
-  return run();
+  const complaintId = run();
+
+  // Emit event for admin notifications
+  eventBus.emit('complaint:created', {
+    complaintId,
+    phone,
+    category,
+    description,
+    location,
+    language,
+    status: initialStatus,
+  });
+
+  return complaintId;
 }
 
 export function queryComplaints(
@@ -85,9 +147,7 @@ export function queryComplaints(
   params: { phone?: string; id?: string },
 ): unknown[] {
   if (params.id) {
-    return db
-      .prepare(`${COMPLAINT_SELECT} WHERE id = ?`)
-      .all(params.id);
+    return db.prepare(`${COMPLAINT_SELECT} WHERE id = ?`).all(params.id);
   }
   if (params.phone) {
     return db
@@ -103,6 +163,10 @@ export function updateComplaint(
 ): string {
   const validStatuses = [
     'registered',
+    'pending_validation',
+    'validated',
+    'rejected',
+    'escalated_timeout',
     'acknowledged',
     'in_progress',
     'action_taken',
@@ -137,6 +201,19 @@ export function updateComplaint(
      VALUES (?, ?, ?, ?, 'chatbot', ?)`,
   ).run(params.id, current.status, params.status, params.note ?? null, now);
 
+  // Emit event for admin notifications
+  const complaint = db
+    .prepare('SELECT phone FROM complaints WHERE id = ?')
+    .get(params.id) as { phone: string };
+  eventBus.emit('complaint:status-changed', {
+    complaintId: params.id,
+    phone: complaint.phone,
+    oldStatus: current.status,
+    newStatus: params.status,
+    note: params.note,
+    updatedBy: 'chatbot',
+  });
+
   return 'OK';
 }
 
@@ -158,7 +235,7 @@ export function getUser(
   return (
     db
       .prepare(
-        `SELECT phone, name, language, date_of_birth, first_seen, last_seen, total_complaints, is_blocked
+        `SELECT phone, name, language, date_of_birth, first_seen, last_seen, total_complaints, is_blocked, role, blocked_until
        FROM users WHERE phone = ?`,
       )
       .get(params.phone) ?? null
@@ -167,7 +244,12 @@ export function getUser(
 
 export function updateUser(
   db: Database.Database,
-  params: { phone: string; name?: string; date_of_birth?: string; language?: string },
+  params: {
+    phone: string;
+    name?: string;
+    date_of_birth?: string;
+    language?: string;
+  },
 ): string {
   const now = nowISO();
 
@@ -199,13 +281,74 @@ export function blockUser(
   db: Database.Database,
   params: { phone: string; reason: string },
 ): string {
+  // Check if target has admin/superadmin role — refuse to block
+  const user = db
+    .prepare('SELECT role FROM users WHERE phone = ?')
+    .get(params.phone) as { role: string | null } | undefined;
+  const role = user?.role ?? 'user';
+  if (role === 'admin' || role === 'superadmin') {
+    return 'This user is an admin and cannot be blocked.';
+  }
+
+  // Read block_duration_hours from tenant config
+  const configRow = db
+    .prepare(
+      "SELECT value FROM tenant_config WHERE key = 'block_duration_hours'",
+    )
+    .get() as { value: string } | undefined;
+  const hours = configRow ? Number(configRow.value) : 24;
+
   const now = nowISO();
+  const blockedUntil = new Date(Date.now() + hours * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z');
 
   db.prepare(
-    `INSERT INTO users (phone, is_blocked, block_reason, first_seen, last_seen)
-     VALUES (?, 1, ?, ?, ?)
-     ON CONFLICT(phone) DO UPDATE SET is_blocked = 1, block_reason = ?, last_seen = ?`,
-  ).run(params.phone, params.reason, now, now, params.reason, now);
+    `INSERT INTO users (phone, is_blocked, block_reason, blocked_until, first_seen, last_seen)
+     VALUES (?, 1, ?, ?, ?, ?)
+     ON CONFLICT(phone) DO UPDATE SET is_blocked = 1, block_reason = ?, blocked_until = ?, last_seen = ?`,
+  ).run(
+    params.phone,
+    params.reason,
+    blockedUntil,
+    now,
+    now,
+    params.reason,
+    blockedUntil,
+    now,
+  );
 
   return 'OK';
+}
+
+export function setUserRoleTool(
+  db: Database.Database,
+  params: { phone: string; role: string; caller_role: string },
+): string {
+  const validRoles = ['user', 'karyakarta', 'admin', 'superadmin'];
+  if (!validRoles.includes(params.role)) {
+    return `Invalid role '${params.role}'. Valid: ${validRoles.join(', ')}`;
+  }
+  if (!validRoles.includes(params.caller_role)) {
+    return `Invalid caller_role '${params.caller_role}'. Valid: ${validRoles.join(', ')}`;
+  }
+
+  return setUserRole(
+    db,
+    params.phone,
+    params.role as UserRole,
+    params.caller_role as UserRole,
+  );
+}
+
+// --- Area resolution ---
+
+export function resolveArea(
+  db: Database.Database,
+  params: { location_text: string },
+): unknown {
+  const matches = matchArea(db, params.location_text);
+  if (matches.length === 0)
+    return { matches: [], message: 'No matching area found' };
+  return { matches };
 }

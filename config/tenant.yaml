@@ -1,15 +1,30 @@
 mla_name: "Rahul Kul"
 constituency: "Daund"
 complaint_id_prefix: "RK"
-# Optional until admin notifications are enabled in Phase 2.
+# Admin group: set the name, bot auto-discovers the JID after connecting.
+# Create a WhatsApp group with this exact name and add the bot.
+admin_group_name: "Daund Complaints Admin"
 wa_admin_group_jid: ""
 admin_phones:
   - "918600822444"
+  - "918282830830"
 languages:
   - mr
   - hi
   - en
 daily_msg_limit: 20
-office_phone: ""
+office_phone: "09822667799"
 office_address: ""
 website_domain: "rahulkul.udyami.ai"
+
+# Phase 2: Safety & blocking
+block_duration_hours: 24
+mla_phone: "918600822444"
+
+# Phase 2: Karyakarta validation
+karyakarta_validation_enabled: true
+karyakarta_response_timeout_hours: 24
+karyakarta_reminder_hours: 12
+
+# Phase 2: Daily summary
+daily_summary_cron: "0 9 * * *"

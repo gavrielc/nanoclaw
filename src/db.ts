@@ -3,7 +3,12 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import {
+  NewMessage,
+  RegisteredGroup,
+  ScheduledTask,
+  TaskRunLog,
+} from './types.js';
 
 let db: Database.Database;
 
@@ -12,18 +17,26 @@ let db: Database.Database;
  * Each migration uses IF NOT EXISTS so it is safe to run multiple times.
  */
 export function runMigrations(database: Database.Database): void {
-  const migrationsDir = path.join(path.dirname(new URL(import.meta.url).pathname), 'migrations');
+  const migrationsDir = path.join(
+    path.dirname(new URL(import.meta.url).pathname),
+    'migrations',
+  );
   if (!fs.existsSync(migrationsDir)) return;
 
   // Track applied migrations to avoid re-running ALTER TABLE statements
-  database.exec('CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+  database.exec(
+    'CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)',
+  );
 
-  const files = fs.readdirSync(migrationsDir)
+  const files = fs
+    .readdirSync(migrationsDir)
     .filter((f) => f.endsWith('.sql'))
     .sort();
 
   for (const file of files) {
-    const applied = database.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(file);
+    const applied = database
+      .prepare('SELECT 1 FROM _migrations WHERE name = ?')
+      .get(file);
     if (applied) continue;
 
     const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
@@ -32,13 +45,18 @@ export function runMigrations(database: Database.Database): void {
     } catch (err: any) {
       // Tolerate "duplicate column" errors — column already exists from a previous run
       // whose _migrations record was lost (e.g., DB flush without schema reset).
-      if (err?.code === 'SQLITE_ERROR' && /duplicate column/i.test(err.message)) {
+      if (
+        err?.code === 'SQLITE_ERROR' &&
+        /duplicate column/i.test(err.message)
+      ) {
         // Column already exists; migration is effectively applied
       } else {
         throw err;
       }
     }
-    database.prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)').run(file, new Date().toISOString());
+    database
+      .prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
+      .run(file, new Date().toISOString());
   }
 }
 
@@ -196,6 +214,21 @@ export interface ChatInfo {
   jid: string;
   name: string;
   last_message_time: string;
+}
+
+/**
+ * Find a group JID by its display name (case-insensitive).
+ * Returns the most recently active match, or null if not found.
+ */
+export function findGroupJidByName(name: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT jid FROM chats
+       WHERE name = ? COLLATE NOCASE AND jid LIKE '%@g.us'
+       ORDER BY last_message_time DESC LIMIT 1`,
+    )
+    .get(name) as { jid: string } | undefined;
+  return row?.jid ?? null;
 }
 
 /**
@@ -513,12 +546,35 @@ export function setComplaintSession(phone: string, sessionId: string): void {
   ).run(`complaint-direct-${phone}`, sessionId);
 }
 
-/** Check if a user is blocked. Returns false for unknown users. */
+/** Check if a user is blocked. Returns false for unknown users, admins, and superadmins.
+ *  Auto-unblocks if blocked_until has expired. */
 export function isUserBlocked(phone: string): boolean {
   const row = db
-    .prepare('SELECT is_blocked FROM users WHERE phone = ?')
-    .get(phone) as { is_blocked: number } | undefined;
-  return row?.is_blocked === 1;
+    .prepare(
+      'SELECT role, is_blocked, blocked_until FROM users WHERE phone = ?',
+    )
+    .get(phone) as
+    | { role: string | null; is_blocked: number; blocked_until: string | null }
+    | undefined;
+  if (!row) return false;
+
+  // Admins, superadmins, and karyakartas are never blocked
+  const role = row.role ?? 'user';
+  if (role === 'admin' || role === 'superadmin' || role === 'karyakarta')
+    return false;
+
+  // If blocked_until is set and expired, auto-unblock
+  if (row.blocked_until) {
+    const expiry = new Date(row.blocked_until).getTime();
+    if (expiry <= Date.now()) {
+      db.prepare(
+        'UPDATE users SET is_blocked = 0, blocked_until = NULL WHERE phone = ?',
+      ).run(phone);
+      return false;
+    }
+  }
+
+  return row.is_blocked === 1;
 }
 
 // --- Registered group accessors ---
@@ -549,14 +605,12 @@ export function getRegisteredGroup(
     containerConfig: row.container_config
       ? JSON.parse(row.container_config)
       : undefined,
-    requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    requiresTrigger:
+      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
   };
 }
 
-export function setRegisteredGroup(
-  jid: string,
-  group: RegisteredGroup,
-): void {
+export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   db.prepare(
     `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -572,9 +626,7 @@ export function setRegisteredGroup(
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db
-    .prepare('SELECT * FROM registered_groups')
-    .all() as Array<{
+  const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
     jid: string;
     name: string;
     folder: string;
@@ -593,7 +645,8 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       containerConfig: row.container_config
         ? JSON.parse(row.container_config)
         : undefined,
-      requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      requiresTrigger:
+        row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     };
   }
   return result;

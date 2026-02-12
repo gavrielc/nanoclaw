@@ -74,7 +74,9 @@ describe('P1-S3: Database migrations', () => {
     runMigrations(db);
 
     const indexes = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'`)
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'`,
+      )
       .all() as { name: string }[];
 
     const indexNames = indexes.map((i) => i.name);
@@ -107,7 +109,9 @@ describe('P1-S3: Database migrations', () => {
     ).run();
 
     // Insert a complaint created 5 days ago
-    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const fiveDaysAgo = new Date(
+      Date.now() - 5 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     db.prepare(
       `INSERT INTO complaints (id, phone, description, language, status, created_at, updated_at) VALUES (?, '919999999999', 'test', 'en', 'registered', ?, ?)`,
     ).run('TEST-20260101-0001', fiveDaysAgo, fiveDaysAgo);
@@ -167,7 +171,9 @@ describe('P1-S3: Shell script tools', () => {
     }
 
     // Seed tenant config with prefix
-    db.prepare(`INSERT INTO tenant_config (key, value) VALUES ('complaint_id_prefix', 'RK')`).run();
+    db.prepare(
+      `INSERT INTO tenant_config (key, value) VALUES ('complaint_id_prefix', 'RK')`,
+    ).run();
 
     // Seed a test user
     db.prepare(
@@ -189,19 +195,33 @@ describe('P1-S3: Shell script tools', () => {
 
   describe('create-complaint.sh', () => {
     it('generates sequential IDs within the same day', () => {
-      const r1 = runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Water not available',
-        '--language', 'en',
-      ], dbPath);
+      const r1 = runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Water not available',
+          '--language',
+          'en',
+        ],
+        dbPath,
+      );
       expect(r1.exitCode).toBe(0);
       expect(r1.stdout).toMatch(/^RK-\d{8}-0001$/);
 
-      const r2 = runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Road is broken',
-        '--language', 'en',
-      ], dbPath);
+      const r2 = runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Road is broken',
+          '--language',
+          'en',
+        ],
+        dbPath,
+      );
       expect(r2.exitCode).toBe(0);
       expect(r2.stdout).toMatch(/^RK-\d{8}-0002$/);
     });
@@ -209,64 +229,95 @@ describe('P1-S3: Shell script tools', () => {
     it('tracking ID prefix comes from tenant config', () => {
       // Change prefix to 'XY'
       const db = new Database(dbPath);
-      db.prepare(`UPDATE tenant_config SET value = 'XY' WHERE key = 'complaint_id_prefix'`).run();
+      db.prepare(
+        `UPDATE tenant_config SET value = 'XY' WHERE key = 'complaint_id_prefix'`,
+      ).run();
       db.close();
 
-      const r = runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Test complaint',
-        '--language', 'mr',
-      ], dbPath);
+      const r = runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Test complaint',
+          '--language',
+          'mr',
+        ],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
       expect(r.stdout).toMatch(/^XY-\d{8}-0001$/);
     });
 
     it('returns non-zero on missing required args', () => {
       // Missing --phone
-      const r = runTool('create-complaint.sh', [
-        '--description', 'Test',
-        '--language', 'en',
-      ], dbPath);
+      const r = runTool(
+        'create-complaint.sh',
+        ['--description', 'Test', '--language', 'en'],
+        dbPath,
+      );
       expect(r.exitCode).not.toBe(0);
     });
 
     it('returns non-zero on missing --description', () => {
-      const r = runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--language', 'en',
-      ], dbPath);
+      const r = runTool(
+        'create-complaint.sh',
+        ['--phone', '919876543210', '--language', 'en'],
+        dbPath,
+      );
       expect(r.exitCode).not.toBe(0);
     });
 
     it('accepts optional --category and --location', () => {
-      const r = runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Pothole on main road',
-        '--language', 'en',
-        '--category', 'roads',
-        '--location', 'Ward 5',
-      ], dbPath);
+      const r = runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Pothole on main road',
+          '--language',
+          'en',
+          '--category',
+          'roads',
+          '--location',
+          'Ward 5',
+        ],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
       expect(r.stdout).toMatch(/^RK-\d{8}-0001$/);
 
       // Verify stored
       const db = new Database(dbPath);
-      const row = db.prepare(`SELECT category, location FROM complaints WHERE id = ?`).get(r.stdout) as { category: string; location: string };
+      const row = db
+        .prepare(`SELECT category, location FROM complaints WHERE id = ?`)
+        .get(r.stdout) as { category: string; location: string };
       expect(row.category).toBe('roads');
       expect(row.location).toBe('Ward 5');
       db.close();
     });
 
     it('auto-creates user if not exists', () => {
-      const r = runTool('create-complaint.sh', [
-        '--phone', '919111111111',
-        '--description', 'New user complaint',
-        '--language', 'hi',
-      ], dbPath);
+      const r = runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919111111111',
+          '--description',
+          'New user complaint',
+          '--language',
+          'hi',
+        ],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
 
       const db = new Database(dbPath);
-      const user = db.prepare(`SELECT * FROM users WHERE phone = '919111111111'`).get() as { phone: string } | undefined;
+      const user = db
+        .prepare(`SELECT * FROM users WHERE phone = '919111111111'`)
+        .get() as { phone: string } | undefined;
       expect(user).toBeDefined();
       db.close();
     });
@@ -277,24 +328,42 @@ describe('P1-S3: Shell script tools', () => {
   describe('query-complaints.sh', () => {
     beforeEach(() => {
       // Create two complaints
-      runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Water issue',
-        '--language', 'en',
-        '--category', 'water_supply',
-      ], dbPath);
-      runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Road issue',
-        '--language', 'en',
-        '--category', 'roads',
-      ], dbPath);
+      runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Water issue',
+          '--language',
+          'en',
+          '--category',
+          'water_supply',
+        ],
+        dbPath,
+      );
+      runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Road issue',
+          '--language',
+          'en',
+          '--category',
+          'roads',
+        ],
+        dbPath,
+      );
     });
 
     it('returns complaints by phone number', () => {
-      const r = runTool('query-complaints.sh', [
-        '--phone', '919876543210',
-      ], dbPath);
+      const r = runTool(
+        'query-complaints.sh',
+        ['--phone', '919876543210'],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
       // Should contain both complaints in JSON
       const data = JSON.parse(r.stdout);
@@ -302,9 +371,14 @@ describe('P1-S3: Shell script tools', () => {
     });
 
     it('returns complaint by complaint ID', () => {
-      const r = runTool('query-complaints.sh', [
-        '--id', `RK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-0001`,
-      ], dbPath);
+      const r = runTool(
+        'query-complaints.sh',
+        [
+          '--id',
+          `RK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-0001`,
+        ],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
       const data = JSON.parse(r.stdout);
       expect(data).toHaveLength(1);
@@ -312,9 +386,11 @@ describe('P1-S3: Shell script tools', () => {
     });
 
     it('returns empty array for unknown phone', () => {
-      const r = runTool('query-complaints.sh', [
-        '--phone', '910000000000',
-      ], dbPath);
+      const r = runTool(
+        'query-complaints.sh',
+        ['--phone', '910000000000'],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
       const data = JSON.parse(r.stdout);
       expect(data).toHaveLength(0);
@@ -332,28 +408,40 @@ describe('P1-S3: Shell script tools', () => {
     let complaintId: string;
 
     beforeEach(() => {
-      const r = runTool('create-complaint.sh', [
-        '--phone', '919876543210',
-        '--description', 'Test for update',
-        '--language', 'en',
-      ], dbPath);
+      const r = runTool(
+        'create-complaint.sh',
+        [
+          '--phone',
+          '919876543210',
+          '--description',
+          'Test for update',
+          '--language',
+          'en',
+        ],
+        dbPath,
+      );
       complaintId = r.stdout;
     });
 
     it('changes status and creates audit record', () => {
-      const r = runTool('update-complaint.sh', [
-        '--id', complaintId,
-        '--status', 'acknowledged',
-      ], dbPath);
+      const r = runTool(
+        'update-complaint.sh',
+        ['--id', complaintId, '--status', 'acknowledged'],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
 
       // Verify status changed
       const db = new Database(dbPath);
-      const complaint = db.prepare(`SELECT status FROM complaints WHERE id = ?`).get(complaintId) as { status: string };
+      const complaint = db
+        .prepare(`SELECT status FROM complaints WHERE id = ?`)
+        .get(complaintId) as { status: string };
       expect(complaint.status).toBe('acknowledged');
 
       // Verify audit record
-      const audit = db.prepare(`SELECT * FROM complaint_updates WHERE complaint_id = ?`).all(complaintId) as Array<{ old_status: string; new_status: string }>;
+      const audit = db
+        .prepare(`SELECT * FROM complaint_updates WHERE complaint_id = ?`)
+        .all(complaintId) as Array<{ old_status: string; new_status: string }>;
       expect(audit).toHaveLength(1);
       expect(audit[0].old_status).toBe('registered');
       expect(audit[0].new_status).toBe('acknowledged');
@@ -361,60 +449,83 @@ describe('P1-S3: Shell script tools', () => {
     });
 
     it('rejects invalid status values', () => {
-      const r = runTool('update-complaint.sh', [
-        '--id', complaintId,
-        '--status', 'invalid_status',
-      ], dbPath);
+      const r = runTool(
+        'update-complaint.sh',
+        ['--id', complaintId, '--status', 'invalid_status'],
+        dbPath,
+      );
       expect(r.exitCode).not.toBe(0);
     });
 
     it('accepts all valid statuses', () => {
       const validStatuses = [
-        'registered', 'acknowledged', 'in_progress',
-        'action_taken', 'resolved', 'on_hold', 'escalated',
+        'registered',
+        'acknowledged',
+        'in_progress',
+        'action_taken',
+        'resolved',
+        'on_hold',
+        'escalated',
       ];
       for (const status of validStatuses) {
-        const r = runTool('update-complaint.sh', [
-          '--id', complaintId,
-          '--status', status,
-        ], dbPath);
+        const r = runTool(
+          'update-complaint.sh',
+          ['--id', complaintId, '--status', status],
+          dbPath,
+        );
         expect(r.exitCode, `status '${status}' should be accepted`).toBe(0);
       }
     });
 
     it('accepts optional --note and --updated-by', () => {
-      const r = runTool('update-complaint.sh', [
-        '--id', complaintId,
-        '--status', 'in_progress',
-        '--note', 'Work has started',
-        '--updated-by', '919876543210',
-      ], dbPath);
+      const r = runTool(
+        'update-complaint.sh',
+        [
+          '--id',
+          complaintId,
+          '--status',
+          'in_progress',
+          '--note',
+          'Work has started',
+          '--updated-by',
+          '919876543210',
+        ],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
 
       const db = new Database(dbPath);
-      const audit = db.prepare(`SELECT note, updated_by FROM complaint_updates WHERE complaint_id = ? ORDER BY id DESC LIMIT 1`).get(complaintId) as { note: string; updated_by: string };
+      const audit = db
+        .prepare(
+          `SELECT note, updated_by FROM complaint_updates WHERE complaint_id = ? ORDER BY id DESC LIMIT 1`,
+        )
+        .get(complaintId) as { note: string; updated_by: string };
       expect(audit.note).toBe('Work has started');
       expect(audit.updated_by).toBe('919876543210');
       db.close();
     });
 
     it('returns non-zero for non-existent complaint', () => {
-      const r = runTool('update-complaint.sh', [
-        '--id', 'NONEXIST-00000000-0000',
-        '--status', 'acknowledged',
-      ], dbPath);
+      const r = runTool(
+        'update-complaint.sh',
+        ['--id', 'NONEXIST-00000000-0000', '--status', 'acknowledged'],
+        dbPath,
+      );
       expect(r.exitCode).not.toBe(0);
     });
 
     it('sets resolved_at when transitioning to resolved', () => {
-      const r = runTool('update-complaint.sh', [
-        '--id', complaintId,
-        '--status', 'resolved',
-      ], dbPath);
+      const r = runTool(
+        'update-complaint.sh',
+        ['--id', complaintId, '--status', 'resolved'],
+        dbPath,
+      );
       expect(r.exitCode).toBe(0);
 
       const db = new Database(dbPath);
-      const complaint = db.prepare(`SELECT resolved_at FROM complaints WHERE id = ?`).get(complaintId) as { resolved_at: string | null };
+      const complaint = db
+        .prepare(`SELECT resolved_at FROM complaints WHERE id = ?`)
+        .get(complaintId) as { resolved_at: string | null };
       expect(complaint.resolved_at).not.toBeNull();
       db.close();
     });
@@ -428,13 +539,17 @@ describe('P1-S3: Shell script tools', () => {
       expect(r.exitCode).toBe(0);
       const data = JSON.parse(r.stdout);
       expect(data).toHaveLength(2);
-      expect(data.map((c: { name: string }) => c.name)).toContain('water_supply');
+      expect(data.map((c: { name: string }) => c.name)).toContain(
+        'water_supply',
+      );
       expect(data.map((c: { name: string }) => c.name)).toContain('roads');
     });
 
     it('excludes inactive categories', () => {
       const db = new Database(dbPath);
-      db.prepare(`UPDATE categories SET is_active = 0 WHERE name = 'roads'`).run();
+      db.prepare(
+        `UPDATE categories SET is_active = 0 WHERE name = 'roads'`,
+      ).run();
       db.close();
 
       const r = runTool('get-categories.sh', [], dbPath);

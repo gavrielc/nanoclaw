@@ -97,8 +97,14 @@ export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
 
 // --- Complaint domain types ---
 
+export type UserRole = 'user' | 'karyakarta' | 'admin' | 'superadmin';
+
 export type ComplaintStatus =
   | 'registered'
+  | 'pending_validation'
+  | 'validated'
+  | 'rejected'
+  | 'escalated_timeout'
   | 'acknowledged'
   | 'in_progress'
   | 'action_taken'
@@ -107,6 +113,14 @@ export type ComplaintStatus =
   | 'escalated';
 
 export type ComplaintPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+export type RejectionReason =
+  | 'duplicate'
+  | 'fraud'
+  | 'not_genuine'
+  | 'out_of_area'
+  | 'insufficient_info'
+  | 'other';
 
 export interface Complaint {
   id: string;
@@ -125,6 +139,7 @@ export interface Complaint {
   updated_at: string;
   resolved_at: string | null;
   days_open: number;
+  area_id: string | null;
 }
 
 export interface ComplaintUpdate {
@@ -141,10 +156,49 @@ export interface User {
   phone: string;
   name: string | null;
   language: string;
+  role: UserRole;
   first_seen: string;
   last_seen: string;
   total_complaints: number;
   is_blocked: number;
+  blocked_until: string | null;
+}
+
+export interface Area {
+  id: string;
+  name: string;
+  name_mr: string | null;
+  name_hi: string | null;
+  type: 'village' | 'town' | 'ward' | 'custom';
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Karyakarta {
+  phone: string;
+  is_active: number;
+  onboarded_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KaryakartaArea {
+  karyakarta_phone: string;
+  area_id: string;
+  assigned_at: string;
+  assigned_by: string | null;
+}
+
+export interface ComplaintValidation {
+  id: number;
+  complaint_id: string;
+  validated_by: string | null;
+  action: 'approved' | 'rejected' | 'escalated_timeout' | 'admin_override';
+  reason_code: RejectionReason | null;
+  comment: string | null;
+  ai_suggested_reason: string | null;
+  created_at: string;
 }
 
 export interface Conversation {
@@ -169,4 +223,8 @@ export interface Category {
 // Callback for chat metadata discovery.
 // name is optional — channels that deliver names inline (Telegram) pass it here;
 // channels that sync names separately (WhatsApp syncGroupMetadata) omit it.
-export type OnChatMetadata = (chatJid: string, timestamp: string, name?: string) => void;
+export type OnChatMetadata = (
+  chatJid: string,
+  timestamp: string,
+  name?: string,
+) => void;

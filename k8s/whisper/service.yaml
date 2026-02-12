@@ -1,0 +1,19 @@
+# Whisper ClusterIP service — internal only
+# P3-S2 voice handler connects at http://whisper-svc:9000/v1/audio/transcriptions
+apiVersion: v1
+kind: Service
+metadata:
+  name: whisper-svc
+  namespace: tenant-rahulkul
+  labels:
+    app: whisper
+    tenant: rahulkul
+spec:
+  type: ClusterIP
+  selector:
+    app: whisper
+  ports:
+    - port: 9000
+      targetPort: 8000
+      protocol: TCP
+      name: http

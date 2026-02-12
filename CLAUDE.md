@@ -11,6 +11,9 @@ Single Node.js process that connects to WhatsApp. Group chats use containerized 
 | File | Purpose |
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
+| `src/complaint-handler.ts` | In-process Agent SDK path for 1:1 complaint chats |
+| `src/complaint-mcp-server.ts` | MCP server exposing complaint tools to the agent |
+| `src/tenant-config.ts` | Tenant YAML loader + template variable injection |
 | `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |
@@ -18,7 +21,11 @@ Single Node.js process that connects to WhatsApp. Group chats use containerized 
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
+| `src/error-fallback.ts` | Graceful error responses when agent fails |
+| `src/group-queue.ts` | Per-group message queuing and concurrency |
+| `config/tenant.yaml` | Tenant config (MLA name, constituency, limits) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `groups/complaint/CLAUDE.md` | Complaint agent system prompt (template with {variables}) |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
 
 ## Skills
@@ -36,6 +43,10 @@ Run commands directly—don't tell the user to run them.
 ```bash
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
+npm test             # Run tests (vitest)
+npm run typecheck    # Type-check without emitting
+npm run format       # Format with prettier
+npm run auth         # WhatsApp QR code authentication
 ./container/build.sh # Rebuild agent container
 ```
 
@@ -55,3 +66,12 @@ container builder stop && container builder rm && container builder start
 ```
 
 Always verify after rebuild: `container run -i --rm --entrypoint wc constituency-bot-agent:latest -l /app/src/index.ts`
+
+## Testing
+
+Tests are colocated: `src/foo.test.ts` next to `src/foo.ts`. Uses vitest.
+
+```bash
+npm test                       # Run all tests
+npx vitest run src/db.test.ts  # Run a single test file
+```

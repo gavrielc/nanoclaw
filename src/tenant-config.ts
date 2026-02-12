@@ -10,12 +10,20 @@ export interface TenantConfig {
   constituency: string;
   complaint_id_prefix: string;
   wa_admin_group_jid: string;
+  admin_group_name: string;
   admin_phones?: string[];
   languages: string[];
   daily_msg_limit: number;
   office_phone: string;
   office_address: string;
   website_domain: string;
+  // Phase 2 additions
+  block_duration_hours: number;
+  mla_phone: string;
+  karyakarta_validation_enabled: boolean;
+  karyakarta_response_timeout_hours: number;
+  karyakarta_reminder_hours: number;
+  daily_summary_cron: string;
 }
 
 const REQUIRED_FIELDS: (keyof TenantConfig)[] = [
@@ -30,6 +38,13 @@ const DEFAULTS: Partial<TenantConfig> = {
   daily_msg_limit: 20,
   office_address: '',
   website_domain: '',
+  admin_group_name: '',
+  block_duration_hours: 24,
+  mla_phone: '',
+  karyakarta_validation_enabled: false,
+  karyakarta_response_timeout_hours: 24,
+  karyakarta_reminder_hours: 12,
+  daily_summary_cron: '0 9 * * *',
 };
 
 let cachedConfig: TenantConfig | null = null;
@@ -48,9 +63,7 @@ export function loadTenantConfig(configPath?: string): TenantConfig {
 
   if (!fs.existsSync(resolvedPath)) {
     if (isExplicitPath) {
-      throw new Error(
-        `Tenant config file not found: ${resolvedPath}`,
-      );
+      throw new Error(`Tenant config file not found: ${resolvedPath}`);
     }
     logger.warn(
       { path: resolvedPath },
@@ -102,6 +115,7 @@ export function loadTenantConfig(configPath?: string): TenantConfig {
     constituency: String(merged.constituency),
     complaint_id_prefix: String(merged.complaint_id_prefix),
     wa_admin_group_jid: String(merged.wa_admin_group_jid ?? ''),
+    admin_group_name: String(merged.admin_group_name ?? ''),
     admin_phones: Array.isArray(merged.admin_phones)
       ? (merged.admin_phones as unknown[]).map(String)
       : [],
@@ -110,6 +124,16 @@ export function loadTenantConfig(configPath?: string): TenantConfig {
     office_phone: String(merged.office_phone ?? ''),
     office_address: String(merged.office_address ?? ''),
     website_domain: String(merged.website_domain ?? ''),
+    block_duration_hours: Number(merged.block_duration_hours),
+    mla_phone: String(merged.mla_phone ?? ''),
+    karyakarta_validation_enabled: Boolean(
+      merged.karyakarta_validation_enabled,
+    ),
+    karyakarta_response_timeout_hours: Number(
+      merged.karyakarta_response_timeout_hours,
+    ),
+    karyakarta_reminder_hours: Number(merged.karyakarta_reminder_hours),
+    daily_summary_cron: String(merged.daily_summary_cron),
   };
 
   cachedConfig = config;
@@ -134,12 +158,25 @@ export function cacheTenantConfigToDb(
     ['constituency', config.constituency],
     ['complaint_id_prefix', config.complaint_id_prefix],
     ['wa_admin_group_jid', config.wa_admin_group_jid],
+    ['admin_group_name', config.admin_group_name],
     ['admin_phones', (config.admin_phones ?? []).join(',')],
     ['languages', config.languages.join(',')],
     ['daily_msg_limit', String(config.daily_msg_limit)],
     ['office_phone', config.office_phone],
     ['office_address', config.office_address],
     ['website_domain', config.website_domain],
+    ['block_duration_hours', String(config.block_duration_hours)],
+    ['mla_phone', config.mla_phone],
+    [
+      'karyakarta_validation_enabled',
+      String(config.karyakarta_validation_enabled),
+    ],
+    [
+      'karyakarta_response_timeout_hours',
+      String(config.karyakarta_response_timeout_hours),
+    ],
+    ['karyakarta_reminder_hours', String(config.karyakarta_reminder_hours)],
+    ['daily_summary_cron', config.daily_summary_cron],
   ];
 
   const insertAll = db.transaction(() => {
@@ -169,6 +206,9 @@ export function injectTemplateVariables(
     office_address: config.office_address,
     website_domain: config.website_domain,
     daily_msg_limit: String(config.daily_msg_limit),
+    block_duration_hours: String(config.block_duration_hours),
+    mla_phone: config.mla_phone,
+    karyakarta_validation_enabled: String(config.karyakarta_validation_enabled),
   };
 
   let result = template;
@@ -184,12 +224,19 @@ function getDefaultConfig(): TenantConfig {
     constituency: 'Daund',
     complaint_id_prefix: 'RK',
     wa_admin_group_jid: '',
+    admin_group_name: '',
     admin_phones: [],
     languages: ['mr', 'hi', 'en'],
     daily_msg_limit: 20,
     office_phone: '',
     office_address: '',
     website_domain: '',
+    block_duration_hours: 24,
+    mla_phone: '',
+    karyakarta_validation_enabled: false,
+    karyakarta_response_timeout_hours: 24,
+    karyakarta_reminder_hours: 12,
+    daily_summary_cron: '0 9 * * *',
   };
 }
 

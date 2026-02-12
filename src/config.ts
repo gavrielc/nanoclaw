@@ -10,8 +10,10 @@ const HOME_DIR = process.env.HOME || '/Users/user';
 
 // Tenant configuration
 export const TENANT_CONFIG_PATH =
-  process.env.TENANT_CONFIG_PATH || path.resolve(PROJECT_ROOT, 'config', 'tenant.yaml');
-export const CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+  process.env.TENANT_CONFIG_PATH ||
+  path.resolve(PROJECT_ROOT, 'config', 'tenant.yaml');
+export const CLAUDE_CODE_OAUTH_TOKEN =
+  process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -36,10 +38,7 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   10,
 ); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
-export const IDLE_TIMEOUT = parseInt(
-  process.env.IDLE_TIMEOUT || '1800000',
-  10,
-); // 30min default — how long to keep container alive after last result
+export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
@@ -55,8 +54,12 @@ export const TRIGGER_PATTERN = new RegExp(
 );
 
 // Complaint handler (in-process Agent SDK, no container)
-export const COMPLAINT_MODEL = process.env.COMPLAINT_MODEL || 'claude-sonnet-4-5-20250929';
-export const COMPLAINT_MAX_TURNS = parseInt(process.env.COMPLAINT_MAX_TURNS || '10', 10);
+export const COMPLAINT_MODEL =
+  process.env.COMPLAINT_MODEL || 'claude-sonnet-4-5-20250929';
+export const COMPLAINT_MAX_TURNS = parseInt(
+  process.env.COMPLAINT_MAX_TURNS || '10',
+  10,
+);
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

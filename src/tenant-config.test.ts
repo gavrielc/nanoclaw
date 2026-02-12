@@ -15,6 +15,17 @@ import {
 
 let tmpDir: string;
 
+/** Default Phase 2 fields — spread into test TenantConfig objects. */
+const PHASE2_DEFAULTS = {
+  admin_group_name: '',
+  block_duration_hours: 24,
+  mla_phone: '',
+  karyakarta_validation_enabled: false,
+  karyakarta_response_timeout_hours: 24,
+  karyakarta_reminder_hours: 12,
+  daily_summary_cron: '0 9 * * *',
+} as const;
+
 function writeTenantYaml(config: Record<string, unknown>): string {
   const configDir = path.join(tmpDir, 'config');
   fs.mkdirSync(configDir, { recursive: true });
@@ -204,13 +215,14 @@ describe('cacheTenantConfigToDb', () => {
       office_phone: '+912112345678',
       office_address: '123 Main St',
       website_domain: 'rahulkul.udyami.ai',
+      ...PHASE2_DEFAULTS,
     };
 
     cacheTenantConfigToDb(db, config);
 
-    const row = db.prepare('SELECT value FROM tenant_config WHERE key = ?').get('mla_name') as
-      | { value: string }
-      | undefined;
+    const row = db
+      .prepare('SELECT value FROM tenant_config WHERE key = ?')
+      .get('mla_name') as { value: string } | undefined;
     expect(row?.value).toBe('Rahul Kul');
 
     const prefixRow = db
@@ -218,9 +230,9 @@ describe('cacheTenantConfigToDb', () => {
       .get('complaint_id_prefix') as { value: string } | undefined;
     expect(prefixRow?.value).toBe('RK');
 
-    const langRow = db.prepare('SELECT value FROM tenant_config WHERE key = ?').get('languages') as
-      | { value: string }
-      | undefined;
+    const langRow = db
+      .prepare('SELECT value FROM tenant_config WHERE key = ?')
+      .get('languages') as { value: string } | undefined;
     expect(langRow?.value).toBe('mr,hi,en');
 
     const limitRow = db
@@ -248,6 +260,7 @@ describe('cacheTenantConfigToDb', () => {
       office_phone: '',
       office_address: '',
       website_domain: '',
+      ...PHASE2_DEFAULTS,
     };
 
     cacheTenantConfigToDb(db, config1);
@@ -262,13 +275,14 @@ describe('cacheTenantConfigToDb', () => {
       office_phone: '',
       office_address: '',
       website_domain: '',
+      ...PHASE2_DEFAULTS,
     };
 
     cacheTenantConfigToDb(db, config2);
 
-    const row = db.prepare('SELECT value FROM tenant_config WHERE key = ?').get('mla_name') as
-      | { value: string }
-      | undefined;
+    const row = db
+      .prepare('SELECT value FROM tenant_config WHERE key = ?')
+      .get('mla_name') as { value: string } | undefined;
     expect(row?.value).toBe('New Name');
   });
 });
@@ -287,6 +301,7 @@ describe('injectTemplateVariables', () => {
       office_phone: '+912112345678',
       office_address: '123 Main St, Daund',
       website_domain: 'rahulkul.udyami.ai',
+      ...PHASE2_DEFAULTS,
     };
 
     const template = `You are a complaint assistant for {mla_name}'s office in {constituency}.
@@ -320,6 +335,7 @@ Visit {website_domain} for more info. Address: {office_address}.`;
       office_phone: '',
       office_address: '',
       website_domain: '',
+      ...PHASE2_DEFAULTS,
     };
 
     const template = '{mla_name} is great. {mla_name} is the MLA.';
@@ -338,6 +354,7 @@ Visit {website_domain} for more info. Address: {office_address}.`;
       office_phone: '',
       office_address: '',
       website_domain: '',
+      ...PHASE2_DEFAULTS,
     };
 
     const template = '{mla_name} and {unknown_var}';

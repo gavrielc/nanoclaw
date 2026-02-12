@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { _initTestDatabase, _getTestDatabase, runMigrations, getComplaintSession, setComplaintSession, isUserBlocked } from './db.js';
+import {
+  _initTestDatabase,
+  _getTestDatabase,
+  runMigrations,
+  getComplaintSession,
+  setComplaintSession,
+  isUserBlocked,
+} from './db.js';
 
 // Mock the Agent SDK before importing the handler
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -19,10 +26,20 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import { query as mockQuery } from '@anthropic-ai/claude-agent-sdk';
-import { handleComplaintMessage, _clearPromptCache } from './complaint-handler.js';
+import {
+  handleComplaintMessage,
+  _clearPromptCache,
+} from './complaint-handler.js';
 
 // Helper: create a mock async generator for SDK messages
-async function* createMockQueryIterator(messages: Array<{ type: string; subtype?: string; session_id: string; result?: string }>) {
+async function* createMockQueryIterator(
+  messages: Array<{
+    type: string;
+    subtype?: string;
+    session_id: string;
+    result?: string;
+  }>,
+) {
   yield* messages;
 }
 
@@ -42,7 +59,9 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   // Seed tenant config
-  db.prepare("INSERT OR REPLACE INTO tenant_config (key, value) VALUES ('complaint_id_prefix', 'RK')").run();
+  db.prepare(
+    "INSERT OR REPLACE INTO tenant_config (key, value) VALUES ('complaint_id_prefix', 'RK')",
+  ).run();
 });
 
 // ============================================================
@@ -111,11 +130,20 @@ describe('handleComplaintMessage', () => {
   it('calls Agent SDK query with correct options', async () => {
     const mockIter = createMockQueryIterator([
       { type: 'system', subtype: 'init', session_id: 'sess-123' },
-      { type: 'result', subtype: 'success', session_id: 'sess-123', result: 'Hello! How can I help?' },
+      {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-123',
+        result: 'Hello! How can I help?',
+      },
     ]);
     (mockQuery as ReturnType<typeof vi.fn>).mockReturnValue(mockIter);
 
-    const result = await handleComplaintMessage('919876543210', 'Rajesh', 'I have a water issue');
+    const result = await handleComplaintMessage(
+      '919876543210',
+      'Rajesh',
+      'I have a water issue',
+    );
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -149,7 +177,11 @@ describe('handleComplaintMessage', () => {
 
     mockQueryReturning('Resumed response', 'sess-resumed');
 
-    await handleComplaintMessage('919876543210', 'Rajesh', 'What is my complaint status?');
+    await handleComplaintMessage(
+      '919876543210',
+      'Rajesh',
+      'What is my complaint status?',
+    );
 
     const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(callArgs.options.resume).toBe('sess-previous');
@@ -181,8 +213,16 @@ describe('handleComplaintMessage', () => {
     });
 
     // Fire two concurrent messages from the same user
-    const p1 = handleComplaintMessage('919876543210', 'Rajesh', 'Message 1').then(() => callOrder.push(1));
-    const p2 = handleComplaintMessage('919876543210', 'Rajesh', 'Message 2').then(() => callOrder.push(2));
+    const p1 = handleComplaintMessage(
+      '919876543210',
+      'Rajesh',
+      'Message 1',
+    ).then(() => callOrder.push(1));
+    const p2 = handleComplaintMessage(
+      '919876543210',
+      'Rajesh',
+      'Message 2',
+    ).then(() => callOrder.push(2));
 
     await Promise.all([p1, p2]);
 
@@ -194,7 +234,12 @@ describe('handleComplaintMessage', () => {
   it('allows concurrent messages from different users', async () => {
     (mockQuery as ReturnType<typeof vi.fn>).mockImplementation(() => {
       return createMockQueryIterator([
-        { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'OK' },
+        {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          result: 'OK',
+        },
       ]);
     });
 
@@ -246,7 +291,11 @@ describe('handleComplaintMessage', () => {
   it('XML-escapes phone and userName in prompt', async () => {
     mockQueryReturning('OK');
 
-    await handleComplaintMessage('919876543210', 'Test "User" <script>', 'Hello');
+    await handleComplaintMessage(
+      '919876543210',
+      'Test "User" <script>',
+      'Hello',
+    );
 
     const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(callArgs.prompt).toContain('&quot;User&quot;');

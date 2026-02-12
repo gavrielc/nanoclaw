@@ -8,7 +8,10 @@ export function getPreferredLanguage(
 ): SupportedLanguage | null {
   try {
     const language = getLanguageByPhone(phone);
-    if (language && SUPPORTED_LANGUAGES.includes(language as SupportedLanguage)) {
+    if (
+      language &&
+      SUPPORTED_LANGUAGES.includes(language as SupportedLanguage)
+    ) {
       return language as SupportedLanguage;
     }
   } catch {

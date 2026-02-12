@@ -10,13 +10,14 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 
 import { STORE_DIR } from '../config.js';
-import {
-  getLastGroupSync,
-  setLastGroupSync,
-  updateChatName,
-} from '../db.js';
+import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import {
+  Channel,
+  OnInboundMessage,
+  OnChatMetadata,
+  RegisteredGroup,
+} from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -48,10 +49,24 @@ export function extractPhoneNumber(jid: string): string | null {
   return user.split(':')[0];
 }
 
+/** Metadata extracted from a Baileys audioMessage. */
+export interface AudioMetadata {
+  messageId: string;
+  senderJid: string;
+  senderName: string;
+  timestamp: string;
+  fileLength: number;
+  seconds: number;
+  mimetype: string;
+  ptt: boolean;
+}
+
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  /** Called when an audio message is received in a 1:1 chat. */
+  onAudioMessage?: (chatJid: string, msg: any, metadata: AudioMetadata) => void;
 }
 
 export class WhatsAppChannel implements Channel {
@@ -119,7 +134,14 @@ export class WhatsAppChannel implements Channel {
         this.connected = false;
         const reason = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
-        logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
+        logger.info(
+          {
+            reason,
+            shouldReconnect,
+            queuedMessages: this.outgoingQueue.length,
+          },
+          'Connection closed',
+        );
 
         if (shouldReconnect) {
           logger.info('Reconnecting...');
@@ -139,13 +161,17 @@ export class WhatsAppChannel implements Channel {
         this.connected = true;
         logger.info('Connected to WhatsApp');
 
-        // Build LID to phone mapping from auth state for self-chat translation
+        // Build LID to phone mappings from auth state files.
+        // Baileys stores lid-mapping-{lid}_reverse.json files containing the
+        // phone number for each LID. Load ALL of them to translate LID JIDs.
+        this.loadLidMappingsFromAuthState(authDir);
+
+        // Also set self-mapping from socket user info
         if (this.sock.user) {
           const phoneUser = this.sock.user.id.split(':')[0];
           const lidUser = this.sock.user.lid?.split(':')[0];
           if (lidUser && phoneUser) {
             this.lidToPhoneMap[lidUser] = `${phoneUser}@s.whatsapp.net`;
-            logger.debug({ lidUser, phoneUser }, 'LID to phone mapping set');
           }
         }
 
@@ -226,7 +252,11 @@ export class WhatsAppChannel implements Channel {
 
         // For 1:1 chats, store metadata with push name for user identification
         if (isIndividualChat(chatJid)) {
-          this.opts.onChatMetadata(chatJid, timestamp, msg.pushName || undefined);
+          this.opts.onChatMetadata(
+            chatJid,
+            timestamp,
+            msg.pushName || undefined,
+          );
         } else {
           // Group or other chat — notify without name (group names come from syncGroupMetadata)
           this.opts.onChatMetadata(chatJid, timestamp);
@@ -249,6 +279,26 @@ export class WhatsAppChannel implements Channel {
           );
         }
         if (groups[routeJid]) {
+          // Audio message detection: route to onAudioMessage for 1:1 chats
+          const audioMsg = msg.message?.audioMessage;
+          if (audioMsg && isIndividualChat(chatJid) && this.opts.onAudioMessage) {
+            const rawSender = msg.key.participant || msg.key.remoteJid || '';
+            const sender = this.translateJid(rawSender);
+            const senderName = msg.pushName || sender.split('@')[0];
+
+            this.opts.onAudioMessage(chatJid, msg, {
+              messageId: msg.key.id || '',
+              senderJid: sender,
+              senderName,
+              timestamp,
+              fileLength: Number(audioMsg.fileLength || 0),
+              seconds: audioMsg.seconds || 0,
+              mimetype: audioMsg.mimetype || 'audio/ogg; codecs=opus',
+              ptt: audioMsg.ptt || false,
+            });
+            continue; // Don't process as text message
+          }
+
           const content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
@@ -256,8 +306,9 @@ export class WhatsAppChannel implements Channel {
             msg.message?.videoMessage?.caption ||
             '';
           // For 1:1 chats: sender is the JID itself (no participant); name from pushName
-          // For groups: sender is the participant
-          const sender = msg.key.participant || msg.key.remoteJid || '';
+          // For groups: sender is the participant (may be LID — translate to phone JID)
+          const rawSender = msg.key.participant || msg.key.remoteJid || '';
+          const sender = this.translateJid(rawSender);
           const senderName = msg.pushName || sender.split('@')[0];
 
           this.opts.onMessage(chatJid, {
@@ -277,7 +328,10 @@ export class WhatsAppChannel implements Channel {
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text });
-      logger.info({ jid, length: text.length, queueSize: this.outgoingQueue.length }, 'WA disconnected, message queued');
+      logger.info(
+        { jid, length: text.length, queueSize: this.outgoingQueue.length },
+        'WA disconnected, message queued',
+      );
       return;
     }
     try {
@@ -286,7 +340,10 @@ export class WhatsAppChannel implements Channel {
     } catch (err) {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ jid, text });
-      logger.warn({ jid, err, queueSize: this.outgoingQueue.length }, 'Failed to send, message queued');
+      logger.warn(
+        { jid, err, queueSize: this.outgoingQueue.length },
+        'Failed to send, message queued',
+      );
     }
   }
 
@@ -305,7 +362,10 @@ export class WhatsAppChannel implements Channel {
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     try {
-      await this.sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
+      await this.sock.sendPresenceUpdate(
+        isTyping ? 'composing' : 'paused',
+        jid,
+      );
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to update typing status');
     }
@@ -348,6 +408,60 @@ export class WhatsAppChannel implements Channel {
   }
 
   /**
+   * Load all LID→phone mappings from Baileys auth state files.
+   * Baileys stores `lid-mapping-{lid}_reverse.json` files containing the
+   * phone number (as a JSON string) for each LID user.
+   */
+  private loadLidMappingsFromAuthState(authDir: string): void {
+    try {
+      const files = fs.readdirSync(authDir);
+      let count = 0;
+      for (const file of files) {
+        // Reverse mapping files: lid-mapping-{lidUser}_reverse.json → phone number
+        const reverseMatch = file.match(
+          /^lid-mapping-(\d+)_reverse\.json$/,
+        );
+        if (reverseMatch) {
+          const lidUser = reverseMatch[1];
+          const content = fs.readFileSync(
+            path.join(authDir, file),
+            'utf-8',
+          );
+          const phone = JSON.parse(content) as string;
+          if (phone && !this.lidToPhoneMap[lidUser]) {
+            this.lidToPhoneMap[lidUser] = `${phone}@s.whatsapp.net`;
+            count++;
+          }
+          continue;
+        }
+
+        // Forward mapping files: lid-mapping-{phone}.json → LID user
+        const forwardMatch = file.match(/^lid-mapping-(\d+)\.json$/);
+        if (forwardMatch) {
+          const phone = forwardMatch[1];
+          const content = fs.readFileSync(
+            path.join(authDir, file),
+            'utf-8',
+          );
+          const lidUser = JSON.parse(content) as string;
+          if (lidUser && !this.lidToPhoneMap[lidUser]) {
+            this.lidToPhoneMap[lidUser] = `${phone}@s.whatsapp.net`;
+            count++;
+          }
+        }
+      }
+      if (count > 0) {
+        logger.info(
+          { count, total: Object.keys(this.lidToPhoneMap).length },
+          'Loaded LID-to-phone mappings from auth state',
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to load LID mappings from auth state');
+    }
+  }
+
+  /**
    * Translate a @lid JID to a @s.whatsapp.net phone JID if possible.
    * LID (Linked Device ID) is WhatsApp's newer addressing scheme. Messages from
    * contacts not in the phone's address book often arrive with @lid JIDs.
@@ -380,7 +494,11 @@ export class WhatsAppChannel implements Channel {
             // by looking at the sender-key-memory or session files
             const prefix = file.split('-')[0]; // e.g., "session", "pre-key"
             const phoneSessions = files.filter(
-              (f) => f.startsWith(prefix) && f.endsWith('.json') && !f.includes(lidUser) && !f.includes('@lid')
+              (f) =>
+                f.startsWith(prefix) &&
+                f.endsWith('.json') &&
+                !f.includes(lidUser) &&
+                !f.includes('@lid'),
             );
             // This heuristic is imperfect; just log for now
             logger.debug(
@@ -406,7 +524,10 @@ export class WhatsAppChannel implements Channel {
     if (this.flushing || this.outgoingQueue.length === 0) return;
     this.flushing = true;
     try {
-      logger.info({ count: this.outgoingQueue.length }, 'Flushing outgoing message queue');
+      logger.info(
+        { count: this.outgoingQueue.length },
+        'Flushing outgoing message queue',
+      );
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
         await this.sendMessage(item.jid, item.text);

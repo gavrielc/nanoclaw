@@ -21,27 +21,33 @@ This index tracks all user stories across 10 phases of the constituency complain
 | P1-S7 | Create tenant configuration system | ✅ Complete | P1-S1 |
 | P1-S8 | Local development setup and end-to-end testing | ✅ Complete | P1-S5, P1-S6, P1-S7 |
 
-### Phase 2: Rate Limiting, Safety & Admin Notifications (Weeks 3–4)
+### Phase 2: Rate Limiting, Safety, Admin & Karyakarta Hierarchy (Weeks 3–4)
 
 | ID | Title | Status | Dependencies |
 |----|-------|--------|-------------|
-| P2-S1 | Implement rate limiter | ⬜ Not Started | P1-S8 |
-| P2-S2 | Harden content safety in system prompts | ⬜ Not Started | P1-S4 |
-| P2-S3 | Build admin group notification system | ⬜ Not Started | P1-S8 |
-| P2-S4 | User notification on status updates | ⬜ Not Started | P2-S3 |
-| P2-S5 | Daily summary scheduled task | ⬜ Not Started | P2-S3 |
-| P2-S6 | Usage volume monitoring | ⬜ Not Started | P2-S5 |
+| P2-S1 | Implement rate limiter | ✅ Complete | P1-S8 |
+| P2-S2 | Content safety + roles | ✅ Complete | P1-S4 |
+| P2-S3 | Admin group notifications | ✅ Complete | P1-S8 |
+| P2-S4 | User notification on status updates | ✅ Complete | P2-S3 |
+| P2-S5 | Daily summary scheduled task | ✅ Complete | P2-S3 |
+| P2-S6 | Usage volume monitoring | ✅ Complete | P2-S5 |
+| P2-S7 | Schema for areas/karyakartas | ✅ Complete | P2-S2 |
+| P2-S8 | Admin commands for karyakarta mgmt | ✅ Complete | P2-S3, P2-S7 |
+| P2-S9 | Area-based complaint routing | ✅ Complete | P2-S7 |
+| P2-S10 | Karyakarta validation flow | ✅ Complete | P2-S8, P2-S9 |
+| P2-S11 | Validation timeout/reminders | ✅ Complete | P2-S10 |
+| P2-S12 | MLA escalation | ✅ Complete | P2-S10, P2-S5 |
 
 ### Phase 3: Voice Notes & Static Website (Weeks 5–6)
 
 | ID | Title | Status | Dependencies |
 |----|-------|--------|-------------|
-| P3-S1 | Deploy Whisper pod on k8s cluster | ⬜ Not Started | P1-S8 |
-| P3-S2 | Voice note preprocessing and validation | ⬜ Not Started | P3-S1 |
-| P3-S3 | Modify WhatsApp channel for audio messages | ⬜ Not Started | P3-S2 |
-| P3-S4 | Build static website with Astro | ⬜ Not Started | P1-S7 |
-| P3-S5 | Website CI/CD pipeline | ⬜ Not Started | P3-S4 |
-| P3-S6 | Kubernetes deployment for website | ⬜ Not Started | P3-S5 |
+| P3-S1 | Deploy Whisper pod on k8s cluster | ✅ Complete | P1-S8 |
+| P3-S2 | Voice note preprocessing and validation | ✅ Complete | P3-S1 |
+| P3-S3 | Modify WhatsApp channel for audio messages | ✅ Complete | P3-S2 |
+| P3-S4 | Build static website with Astro | ✅ Complete | P1-S7 |
+| P3-S5 | Website CI/CD pipeline | ✅ Complete | P3-S4 |
+| P3-S6 | Kubernetes deployment for website | ✅ Complete | P3-S5 |
 
 ### Phase 4: Web Admin Dashboard (Weeks 7–8)
 
@@ -115,7 +121,7 @@ This index tracks all user stories across 10 phases of the constituency complain
 | Phase | Stories | Description |
 |-------|---------|-------------|
 | Phase 1 | 8 | Core complaint bot — WhatsApp, SQLite, Agent SDK, CLAUDE.md |
-| Phase 2 | 6 | Rate limiting, safety guardrails, admin group integration |
+| Phase 2 | 12 | Rate limiting, safety, admin notifications, karyakarta validation, MLA escalation |
 | Phase 3 | 6 | Voice notes (Whisper), static website (Astro) |
 | Phase 4 | 4 | Web admin dashboard (Hono API + React SPA) |
 | Phase 5 | 4 | Analytics, Opus reports, CSV export |
@@ -124,7 +130,7 @@ This index tracks all user stories across 10 phases of the constituency complain
 | Phase 8 | 4 | WhatsApp CMS for website updates |
 | Phase 9 | 4 | Auto-routing, escalation, satisfaction surveys |
 | Phase 10 | 5 | Performance, observability, security, documentation |
-| **Total** | **50** | |
+| **Total** | **56** | |
 
 ---
 
@@ -147,12 +153,21 @@ graph TD
     P1S7 --> P1S8
 
     P1S8 --> P2S1[P2-S1: Rate limiter]
-    P1S4 --> P2S2[P2-S2: Content safety]
+    P1S4 --> P2S2[P2-S2: Content safety + roles]
     P1S8 --> P2S3[P2-S3: Admin notifications]
 
     P2S3 --> P2S4[P2-S4: User notifications]
     P2S3 --> P2S5[P2-S5: Daily summary]
     P2S5 --> P2S6[P2-S6: Usage monitoring]
+    P2S2 --> P2S7[P2-S7: Areas/karyakartas schema]
+    P2S3 --> P2S8[P2-S8: Karyakarta mgmt commands]
+    P2S7 --> P2S8
+    P2S7 --> P2S9[P2-S9: Area-based routing]
+    P2S8 --> P2S10[P2-S10: Karyakarta validation]
+    P2S9 --> P2S10
+    P2S10 --> P2S11[P2-S11: Validation timeouts]
+    P2S10 --> P2S12[P2-S12: MLA escalation]
+    P2S5 --> P2S12
 
     P1S8 --> P3S1[P3-S1: Whisper pod]
     P3S1 --> P3S2[P3-S2: Voice preprocessing]

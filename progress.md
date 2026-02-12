@@ -1,10 +1,10 @@
 # Implementation Progress — Constituency Complaint Chatbot
 
-## Current Status: Phase 1 Complete
+## Current Status: Phase 3 Complete
 
-Phase 1 (Core Complaint Bot) fully implemented. 270 tests passing, build clean. Ready for Phase 2.
+Phase 3 (Voice Notes & Static Website) fully implemented. Voice track (P3-S1, P3-S2, P3-S3): 658 tests passing, build clean. Website track (P3-S4, P3-S5, P3-S6) also complete.
 
-Post-review fixes applied: SQL injection in shell scripts, transaction wrapping, XML escaping, error fallback, code simplifications (wrapToolHandler, nowISO, ON CONFLICT upserts, consolidated imports, phoneFromJid helper).
+Phase 1 post-review fixes applied previously: SQL injection in shell scripts, transaction wrapping, XML escaping, error fallback, code simplifications.
 
 ---
 
@@ -12,9 +12,9 @@ Post-review fixes applied: SQL injection in shell scripts, transaction wrapping,
 
 | Phase | Status | Stories | Completed | Notes |
 |-------|--------|---------|-----------|-------|
-| Phase 1: Core Complaint Bot | ✅ Complete | 8 | 8/8 | All stories done, 270 tests |
-| Phase 2: Rate Limiting, Safety & Admin | ⬜ Not Started | 6 | 0/6 | Unblocked — depends on Phase 1 |
-| Phase 3: Voice Notes & Website | ⬜ Not Started | 6 | 0/6 | Unblocked — depends on Phase 1 |
+| Phase 1: Core Complaint Bot | ✅ Complete | 8 | 8/8 | All stories done, 269 tests |
+| Phase 2: Rate Limiting, Safety, Admin & Karyakarta | ✅ Complete | 12 | 12/12 | 593 total tests, 5 waves completed |
+| Phase 3: Voice Notes & Website | ✅ Complete | 6 | 6/6 | Voice track (P3-S1–S3) + website track (P3-S4–S6) done, 658+ tests |
 | Phase 4: Web Admin Dashboard | ⬜ Not Started | 4 | 0/4 | Depends on Phase 2 |
 | Phase 5: Analytics & Reporting | ⬜ Not Started | 4 | 0/4 | Depends on Phase 2, 4 |
 | Phase 6: Production Deployment | ⬜ Not Started | 5 | 0/5 | Depends on Phase 4 |
@@ -22,7 +22,7 @@ Post-review fixes applied: SQL injection in shell scripts, transaction wrapping,
 | Phase 8: WhatsApp CMS | ⬜ Not Started | 4 | 0/4 | Depends on Phase 3, 5 |
 | Phase 9: Advanced Features | ⬜ Not Started | 4 | 0/4 | Depends on Phase 7 |
 | Phase 10: Polish & Scale | ⬜ Not Started | 5 | 0/5 | Depends on Phase 9 |
-| **Total** | | **50** | **8/50** | |
+| **Total** | | **56** | **26/56** | |
 
 ---
 
@@ -38,26 +38,38 @@ Post-review fixes applied: SQL injection in shell scripts, transaction wrapping,
 | 2026-02-11 | P1-S6 | Implement message routing in orchestrator | whatsapp-dev: resolveRouteJid, formatMessagesWithUserContext |
 | 2026-02-11 | P1-S7 | Create tenant configuration system | config-dev: YAML loader, validator, DB cache, template injection |
 | 2026-02-11 | P1-S8 | Local development setup and end-to-end testing | config-dev: docker-compose, .env, startup integration, complaint group registration |
+| 2026-02-12 | P2-S1 | Implement rate limiter | safety-dev: daily + burst limits, multilingual denial messages |
+| 2026-02-12 | P2-S2 | Content safety + roles | safety-dev: role mgmt, temp blocking, migration 003 |
+| 2026-02-12 | P2-S3 | Admin group notifications | admin-dev: event bus, AdminService, #commands |
+| 2026-02-12 | P2-S4 | User notification on status updates | admin-dev: localized status notifications (mr/hi/en) |
+| 2026-02-12 | P2-S5 | Daily summary scheduled task | admin-dev: summary data + formatting, aging stats |
+| 2026-02-12 | P2-S6 | Usage volume monitoring | safety-dev: usage logging + stats |
+| 2026-02-12 | P2-S7 | Schema for areas/karyakartas | safety-dev: migration 004, area-db CRUD, test-helpers |
+| 2026-02-12 | P2-S8 | Admin commands for karyakarta mgmt | admin-dev: 10 management commands |
+| 2026-02-12 | P2-S9 | Area-based complaint routing | karyakarta-dev: fuzzy area matching (Levenshtein), resolve_area MCP tool |
+| 2026-02-12 | P2-S10 | Karyakarta validation flow | karyakarta-dev: #approve, #reject, #my-complaints, DM notifications |
+| 2026-02-12 | P2-S11 | Validation timeout/reminders | karyakarta-dev: hourly check, 12h reminder, 24h auto-escalate |
+| 2026-02-12 | P2-S12 | MLA escalation | karyakarta-dev: #escalate-to-mla, MLA reply forwarding |
+| 2026-02-12 | P3-S1 | Deploy Whisper pod on k8s cluster | voice-dev: k8s/whisper/deployment.yaml + service.yaml, 19 structural tests |
+| 2026-02-12 | P3-S2 | Voice note preprocessing and validation | voice-dev: src/voice.ts, OGG parsing, Whisper HTTP, 25 tests, complaint source field |
+| 2026-02-12 | P3-S3 | Modify WhatsApp channel for audio messages | voice-dev: AudioMetadata, onAudioMessage, handleVoiceDirect, 15 tests |
+| 2026-02-12 | P3-S4 | Build static website with Astro | Pre-existing: Astro v5 + Tailwind v4, 7 pages, bilingual (EN/MR) at /Users/riyaz/rahulkulwebsite |
+| 2026-02-12 | P3-S5 | Website CI/CD pipeline | Pre-existing: .github/workflows/deploy.yml, self-hosted GitHub runner |
+| 2026-02-12 | P3-S6 | Kubernetes deployment for website | Pre-existing: k8s manifests, Traefik ingress, live at rahulkul.udyami.ai |
 
 ---
 
 ## Current Sprint
 
-**Active stories**: None — Phase 1 complete
-**Next up**: Phase 2 stories (P2-S1 rate limiter, P2-S2 content safety, P2-S3 admin notifications)
+**Phase 3 complete** — all 6 stories implemented. Voice track: Whisper K8s manifests, voice.ts preprocessing, WhatsApp audio routing. Website track: Astro site, CI/CD, k8s deployment.
 
-### Unblocked Stories (Ready to Start)
+### Next: Phase 4 + Phase 5 (can work in parallel)
 
-- P2-S1: Implement rate limiter (depends on P1-S8 ✅)
-- P2-S2: Harden content safety in system prompts (depends on P1-S4 ✅)
-- P2-S3: Build admin group notification system (depends on P1-S8 ✅)
+**Phase 4 unblocked stories:**
+- P4-S1: Dashboard API (depends on P2-S3 ✅)
 
-### Blocked Stories (Waiting on Dependencies)
-
-- P2-S4: User notification on status updates (blocked by P2-S3)
-- P2-S5: Daily summary scheduled task (blocked by P2-S3)
-- P2-S6: Usage volume monitoring (blocked by P2-S5)
-- All Phase 3+ stories
+**Phase 5 unblocked stories:**
+- P5-S1: Weekly constituency report (depends on P2-S5 ✅)
 
 ---
 

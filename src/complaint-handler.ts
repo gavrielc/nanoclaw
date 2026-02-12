@@ -16,11 +16,7 @@ import {
 import { z } from 'zod';
 
 import { COMPLAINT_MAX_TURNS, COMPLAINT_MODEL, DATA_DIR } from './config.js';
-import {
-  getComplaintSession,
-  getDb,
-  setComplaintSession,
-} from './db.js';
+import { getComplaintSession, getDb, setComplaintSession } from './db.js';
 import { logger } from './logger.js';
 import { escapeXml } from './router.js';
 import {
@@ -31,6 +27,7 @@ import {
   getUser,
   updateUser,
   blockUser,
+  resolveArea,
 } from './complaint-mcp-server.js';
 
 // Cached system prompt (loaded once from runtime CLAUDE.md)
@@ -40,17 +37,28 @@ let cachedSystemPrompt: string | null = null;
 const userLocks: Map<string, Promise<void>> = new Map();
 
 /** MCP tool content result type. */
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
+type ToolResult = {
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+};
 
 /** Wrap a sync tool function into an async MCP handler with standard error handling. */
-function wrapToolHandler<P>(fn: (params: P) => unknown): (params: P) => Promise<ToolResult> {
+function wrapToolHandler<P>(
+  fn: (params: P) => unknown,
+): (params: P) => Promise<ToolResult> {
   return async (params: P) => {
     try {
       const result = fn(params);
-      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      const text =
+        typeof result === 'string' ? result : JSON.stringify(result, null, 2);
       return { content: [{ type: 'text' as const, text }] };
     } catch (err) {
-      return { content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }], isError: true };
+      return {
+        content: [
+          { type: 'text' as const, text: `Error: ${(err as Error).message}` },
+        ],
+        isError: true,
+      };
     }
   };
 }
@@ -60,7 +68,12 @@ function loadSystemPrompt(): string {
 
   // Load the runtime-injected CLAUDE.md (tenant variables already replaced)
   const runtimePath = path.join(DATA_DIR, 'runtime', 'complaint', 'CLAUDE.md');
-  const fallbackPath = path.join(process.cwd(), 'groups', 'complaint', 'CLAUDE.md');
+  const fallbackPath = path.join(
+    process.cwd(),
+    'groups',
+    'complaint',
+    'CLAUDE.md',
+  );
 
   const promptPath = fs.existsSync(runtimePath) ? runtimePath : fallbackPath;
   cachedSystemPrompt = fs.readFileSync(promptPath, 'utf-8');
@@ -101,6 +114,10 @@ Parameters: phone, name (optional), date_of_birth (optional, YYYY-MM-DD), langua
 Block a user for repeated off-topic, abusive, or nonsensical messages. Once blocked, the system will silently reject all future messages from this number — no LLM call will be made.
 Parameters: phone, reason
 
+### resolve_area
+Fuzzy-match a location text against known areas. Returns ranked matches with confidence scores.
+Parameters: location_text
+
 <!-- TOOL_USAGE_END -->`,
   );
 
@@ -119,10 +136,24 @@ function buildMcpServer() {
         'Create a new complaint and return tracking ID',
         {
           phone: z.string().describe('Phone number of the complainant'),
-          category: z.string().optional().describe('Complaint category (e.g. water_supply, roads)'),
+          category: z
+            .string()
+            .optional()
+            .describe('Complaint category (e.g. water_supply, roads)'),
           description: z.string().describe('Full description of the complaint'),
-          location: z.string().optional().describe('Location details (ward, area, landmark)'),
+          location: z
+            .string()
+            .optional()
+            .describe('Location details (ward, area, landmark)'),
           language: z.string().describe('Language code: mr, hi, or en'),
+          source: z
+            .enum(['text', 'voice'])
+            .optional()
+            .describe('Message source: text or voice'),
+          voice_message_id: z
+            .string()
+            .optional()
+            .describe('WhatsApp voice message ID (when source is voice)'),
         },
         wrapToolHandler((params) => createComplaint(db, params)),
       ),
@@ -130,7 +161,10 @@ function buildMcpServer() {
         'query_complaints',
         'Look up complaints by phone number or complaint ID',
         {
-          phone: z.string().optional().describe('Phone number to look up complaints for'),
+          phone: z
+            .string()
+            .optional()
+            .describe('Phone number to look up complaints for'),
           id: z.string().optional().describe('Specific complaint tracking ID'),
         },
         wrapToolHandler((params) => queryComplaints(db, params)),
@@ -140,8 +174,15 @@ function buildMcpServer() {
         'Update the status of an existing complaint',
         {
           id: z.string().describe('Complaint tracking ID'),
-          status: z.string().describe('New status: registered, acknowledged, in_progress, action_taken, resolved, on_hold, escalated'),
-          note: z.string().optional().describe('Optional note about the status change'),
+          status: z
+            .string()
+            .describe(
+              'New status: registered, acknowledged, in_progress, action_taken, resolved, on_hold, escalated',
+            ),
+          note: z
+            .string()
+            .optional()
+            .describe('Optional note about the status change'),
         },
         wrapToolHandler((params) => updateComplaint(db, params)),
       ),
@@ -164,9 +205,18 @@ function buildMcpServer() {
         'Save or update user details (name, date of birth, language preference)',
         {
           phone: z.string().describe('Phone number of the user'),
-          name: z.string().optional().describe('Full name of the user (e.g. "Riyaz Shaikh")'),
-          date_of_birth: z.string().optional().describe('Date of birth in YYYY-MM-DD format'),
-          language: z.string().optional().describe('Preferred language code: mr, hi, or en'),
+          name: z
+            .string()
+            .optional()
+            .describe('Full name of the user (e.g. "Riyaz Shaikh")'),
+          date_of_birth: z
+            .string()
+            .optional()
+            .describe('Date of birth in YYYY-MM-DD format'),
+          language: z
+            .string()
+            .optional()
+            .describe('Preferred language code: mr, hi, or en'),
         },
         wrapToolHandler((params) => updateUser(db, params)),
       ),
@@ -178,6 +228,16 @@ function buildMcpServer() {
           reason: z.string().describe('Reason for blocking (logged for audit)'),
         },
         wrapToolHandler((params) => blockUser(db, params)),
+      ),
+      tool(
+        'resolve_area',
+        'Fuzzy-match a location text against known areas. Returns ranked matches.',
+        {
+          location_text: z
+            .string()
+            .describe('Location text to match against areas'),
+        },
+        wrapToolHandler((params) => resolveArea(db, params)),
       ),
     ],
   });
@@ -240,7 +300,16 @@ async function _executeQuery(
       model: COMPLAINT_MODEL,
       mcpServers: { complaint: mcpServer },
       allowedTools: ['mcp__complaint__*'],
-      disallowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit', 'Task'],
+      disallowedTools: [
+        'Bash',
+        'Read',
+        'Write',
+        'Edit',
+        'Glob',
+        'Grep',
+        'NotebookEdit',
+        'Task',
+      ],
       maxTurns: COMPLAINT_MAX_TURNS,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -260,12 +329,15 @@ async function _executeQuery(
           resultText = (message as { result: string }).result;
         } else {
           // Error result — log and throw so caller can send fallback message
-          const errors = 'errors' in message ? (message as { errors: string[] }).errors : [];
+          const errors =
+            'errors' in message ? (message as { errors: string[] }).errors : [];
           logger.error(
             { phone, subtype: message.subtype, errors },
             'Agent SDK query returned error result',
           );
-          throw new Error(`Agent query failed: ${message.subtype} — ${errors.join('; ') || 'no details'}`);
+          throw new Error(
+            `Agent query failed: ${message.subtype} — ${errors.join('; ') || 'no details'}`,
+          );
         }
       }
     }
@@ -284,11 +356,18 @@ async function _executeQuery(
   }
 
   if (!resultText) {
-    logger.warn({ phone, sessionId: newSessionId?.slice(0, 8) }, 'Agent query completed with empty result');
+    logger.warn(
+      { phone, sessionId: newSessionId?.slice(0, 8) },
+      'Agent query completed with empty result',
+    );
   }
 
   logger.info(
-    { phone, resultLength: resultText.length, sessionId: newSessionId?.slice(0, 8) },
+    {
+      phone,
+      resultLength: resultText.length,
+      sessionId: newSessionId?.slice(0, 8),
+    },
     'Complaint query complete',
   );
 
