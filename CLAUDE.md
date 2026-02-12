@@ -72,3 +72,12 @@ When the user asks to "make a PR":
 Always confirm which target the user intends if it's ambiguous.
 
 **Common mistake:** `gh pr create` without `--repo omniaura/nanoclaw` defaults to the **upstream** (`qwibitai/nanoclaw`) because GitHub's fork metadata makes `gh` treat upstream as the default base. Always pass `--repo omniaura/nanoclaw --base main` explicitly when creating PRs for our fork.
+
+## Public Repo Awareness
+
+This is an **open-source public repository** that others clone to run their own assistants on completely different projects. When making changes for Peyton's personal setup:
+
+- **NEVER edit templates or checked-in files** (e.g. `groups/main/CLAUDE.md.template`, `groups/global/CLAUDE.md.template`, source code, skills) with user-specific content like project names, directory paths, personal preferences, or org-specific details.
+- **Personal config goes in runtime files** that are gitignored: `groups/main/CLAUDE.md`, `groups/global/CLAUDE.md`, `.env`, `data/`, `store/`, `~/.config/nanoclaw/`.
+- **Templates are starting points** for all users. They should remain generic and project-agnostic.
+- When in doubt, check `.gitignore` — if a file is tracked by git, treat it as public.

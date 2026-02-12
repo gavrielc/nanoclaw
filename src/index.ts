@@ -4,11 +4,13 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CONTAINER_IMAGE,
   DATA_DIR,
   DISCORD_BOT_TOKEN,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  SESSION_MAX_AGE,
   TRIGGER_PATTERN,
 } from './config.js';
 import { DiscordChannel } from './channels/discord.js';
@@ -20,6 +22,7 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  expireStaleSessions,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -354,6 +357,16 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
+
+  // Expire stale sessions before each run to prevent unbounded context growth
+  const expired = expireStaleSessions(SESSION_MAX_AGE);
+  if (expired.length > 0) {
+    for (const folder of expired) {
+      delete sessions[folder];
+    }
+    logger.info({ expired, trigger: group.folder }, 'Expired stale sessions before agent run');
+  }
+
   const sessionId = sessions[group.folder];
 
   // Update tasks snapshot for container to read (filtered by group)
@@ -532,44 +545,73 @@ function recoverPendingMessages(): void {
 }
 
 async function ensureContainerSystemRunning(): Promise<void> {
-  const status = await $`container system status`.quiet().nothrow();
-  if (status.exitCode !== 0) {
-    logger.info('Starting Apple Container system...');
-    const start = await $`container system start`.quiet().nothrow();
-    if (start.exitCode !== 0) {
-      logger.error({ stderr: start.stderr.toString() }, 'Failed to start Apple Container system');
-      console.error(
-        '\n╔════════════════════════════════════════════════════════════════╗',
-      );
-      console.error(
-        '║  FATAL: Apple Container system failed to start                 ║',
-      );
-      console.error(
-        '║                                                                ║',
-      );
-      console.error(
-        '║  Agents cannot run without Apple Container. To fix:           ║',
-      );
-      console.error(
-        '║  1. Install from: https://github.com/apple/container/releases ║',
-      );
-      console.error(
-        '║  2. Run: container system start                               ║',
-      );
-      console.error(
-        '║  3. Restart NanoClaw                                          ║',
-      );
-      console.error(
-        '╚════════════════════════════════════════════════════════════════╝\n',
-      );
-      throw new Error('Apple Container system is required but failed to start');
+  // Always cycle the Apple Container system on startup to flush stale state.
+  // After a Mac restart, the system reports OK but stale containers prevent
+  // new ones from starting. Cycling is safe since NanoClaw owns all nanoclaw-* containers.
+  logger.info('Restarting Apple Container system (flushing stale state)...');
+
+  // Kill any lingering nanoclaw container processes from a previous run
+  await $`pkill -f 'container run.*nanoclaw-'`.quiet().nothrow();
+
+  // Stop the container system to flush all stale state
+  await $`container system stop`.quiet().nothrow();
+
+  // Wait for launchd services to fully tear down before restarting
+  await Bun.sleep(3000);
+
+  // Start fresh
+  const start = await $`container system start`.quiet().nothrow();
+  if (start.exitCode !== 0) {
+    logger.error({ stderr: start.stderr.toString() }, 'Failed to start Apple Container system');
+    console.error(
+      '\n╔════════════════════════════════════════════════════════════════╗',
+    );
+    console.error(
+      '║  FATAL: Apple Container system failed to start                 ║',
+    );
+    console.error(
+      '║                                                                ║',
+    );
+    console.error(
+      '║  Agents cannot run without Apple Container. To fix:           ║',
+    );
+    console.error(
+      '║  1. Install from: https://github.com/apple/container/releases ║',
+    );
+    console.error(
+      '║  2. Run: container system start                               ║',
+    );
+    console.error(
+      '║  3. Restart NanoClaw                                          ║',
+    );
+    console.error(
+      '╚════════════════════════════════════════════════════════════════╝\n',
+    );
+    throw new Error('Apple Container system is required but failed to start');
+  }
+  logger.info('Apple Container system started');
+
+  // Verify containers actually work (system can report OK but be broken)
+  const probe = await $`container run --rm --entrypoint /bin/echo ${CONTAINER_IMAGE} ok`.quiet().nothrow();
+  if (probe.exitCode !== 0 || probe.text().trim() !== 'ok') {
+    logger.warn({ exitCode: probe.exitCode, output: probe.text().trim() }, 'Container probe failed after system start, retrying cycle...');
+    await $`container system stop`.quiet().nothrow();
+    await Bun.sleep(5000);
+    const retry = await $`container system start`.quiet().nothrow();
+    if (retry.exitCode !== 0) {
+      throw new Error('Apple Container system failed to start on retry');
     }
-    logger.info('Apple Container system started');
+    const probe2 = await $`container run --rm --entrypoint /bin/echo ${CONTAINER_IMAGE} ok`.quiet().nothrow();
+    if (probe2.exitCode !== 0 || probe2.text().trim() !== 'ok') {
+      logger.error('Container probe still failing after retry — containers may not work');
+    } else {
+      logger.info('Container probe succeeded on retry');
+    }
   } else {
-    logger.debug('Apple Container system already running');
+    logger.info('Container probe passed');
   }
 
-  // Kill and clean up orphaned NanoClaw containers from previous runs
+  // Safety net: stop any orphaned containers that survived the system cycle
   try {
     const lsResult = await $`container ls --format json`.quiet();
     const containers: { status: string; configuration: { id: string } }[] = JSON.parse(lsResult.text() || '[]');
@@ -592,6 +634,15 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Expire stale sessions on startup to prevent unbounded context growth
+  const expired = expireStaleSessions(SESSION_MAX_AGE);
+  if (expired.length > 0) {
+    for (const folder of expired) {
+      delete sessions[folder];
+    }
+    logger.info({ expired }, 'Expired stale sessions on startup');
+  }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {

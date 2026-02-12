@@ -480,7 +480,38 @@ async function runQuery(
   })) {
     messageCount++;
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
+    // Log tool calls from assistant messages for observability
+    if (message.type === 'assistant' && 'message' in message) {
+      const content = (message as any).message?.content;
+      if (Array.isArray(content)) {
+        const tools = content.filter((c: any) => c.type === 'tool_use');
+        const texts = content.filter((c: any) => c.type === 'text');
+        if (tools.length > 0) {
+          for (const tool of tools) {
+            const input = tool.input || {};
+            const summary = tool.name === 'Bash' ? (input.command || '').slice(0, 120)
+              : tool.name === 'Read' ? input.file_path
+              : tool.name === 'Write' ? input.file_path
+              : tool.name === 'Edit' ? input.file_path
+              : tool.name === 'Grep' ? `${input.pattern} ${input.path || ''}`
+              : tool.name === 'Glob' ? input.pattern
+              : tool.name === 'Task' ? input.description
+              : tool.name === 'WebFetch' ? input.url
+              : tool.name === 'WebSearch' ? input.query
+              : JSON.stringify(input).slice(0, 80);
+            log(`[msg #${messageCount}] tool=${tool.name} ${summary}`);
+          }
+        }
+        if (texts.length > 0) {
+          const textPreview = texts.map((t: any) => t.text).join('').slice(0, 120);
+          if (textPreview.trim()) {
+            log(`[msg #${messageCount}] text="${textPreview}"`);
+          }
+        }
+      }
+    } else {
+      log(`[msg #${messageCount}] type=${msgType}`);
+    }
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
@@ -499,7 +530,8 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const rm = message as any;
+      log(`Result #${resultCount}: subtype=${message.subtype} turns=${rm.num_turns || '?'} duration=${rm.duration_ms || '?'}ms cost=$${rm.total_cost_usd?.toFixed(4) || '?'}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,

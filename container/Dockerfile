@@ -3,8 +3,11 @@
 
 FROM oven/bun:slim
 
-# Install system dependencies for Chromium (libs needed by agent-browser's bundled Chromium)
+# Install Node.js (agents expect node/npm/npx to be available alongside bun)
+# and system dependencies for Chromium (libs needed by agent-browser's bundled Chromium)
 RUN apt-get update && apt-get install -y \
+    nodejs \
+    npm \
     fonts-liberation \
     fonts-noto-color-emoji \
     libgbm1 \
@@ -53,18 +56,21 @@ COPY agent-runner/ ./
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/server /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
-# Create entrypoint script
-# Sources env from mounted /workspace/env-dir/env if it exists (workaround for Apple Container -i bug)
-# Stdin is buffered to /tmp then piped (Apple Container requires EOF to flush stdin pipe)
-# Follow-up messages arrive via IPC files in /workspace/ipc/input/
-# No build step needed — Bun runs TypeScript directly
-RUN printf '#!/bin/bash\nset -e\n[ -f /workspace/env-dir/env ] && export $(cat /workspace/env-dir/env | xargs)\nif [ -n "$GITHUB_TOKEN" ]; then\n  gh auth setup-git 2>/dev/null || true\n  git config --global user.name "${GIT_AUTHOR_NAME:-NanoClaw Agent}"\n  git config --global user.email "${GIT_AUTHOR_EMAIL:-nanoclaw@users.noreply.github.com}"\nfi\ncat > /tmp/input.json\nbun /app/src/index.ts < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Copy entrypoint script
+# Sources env, configures git, pre-installs cross-platform deps for host mounts,
+# buffers stdin, then runs agent-runner
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R bun:bun /workspace
 
+# Pre-warm tsgo (native TypeScript checker) so `npx tsgo` / `bunx tsgo` works.
+# Host-mounted projects have darwin-arm64 binaries; npm global install puts the
+# linux-arm64 binary in /usr/local/bin where all users can access it.
+RUN npm install -g @typescript/native-preview @typescript/native-preview-linux-arm64
+
 # Switch to non-root user (required for --dangerously-skip-permissions)
-USER bun
 
 # Set working directory to group workspace
 WORKDIR /workspace/group

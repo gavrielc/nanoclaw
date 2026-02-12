@@ -61,7 +61,8 @@ function createSchema(database: Database): void {
     );
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL
+      session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
@@ -103,6 +104,13 @@ function createSchema(database: Database): void {
   // Add discord_guild_id column to chats table
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN discord_guild_id TEXT`);
+  } catch { /* column already exists */ }
+
+  // Add created_at column to sessions table
+  // Note: SQLite ALTER TABLE requires constant defaults, so we use a fixed epoch.
+  // New sessions get datetime('now') via INSERT in setSession().
+  try {
+    database.exec(`ALTER TABLE sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '1970-01-01 00:00:00'`);
   } catch { /* column already exists */ }
 }
 
@@ -469,8 +477,17 @@ export function getSession(groupFolder: string): string | undefined {
 }
 
 export function setSession(groupFolder: string, sessionId: string): void {
+  // Only update created_at when the session ID actually changes (new session)
+  const existing = db
+    .prepare('SELECT session_id FROM sessions WHERE group_folder = ?')
+    .get(groupFolder) as { session_id: string } | undefined;
+
+  if (existing && existing.session_id === sessionId) {
+    return; // Same session, no update needed
+  }
+
   db.query(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
+    'INSERT OR REPLACE INTO sessions (group_folder, session_id, created_at) VALUES (?, ?, datetime(\'now\'))',
   ).run(groupFolder, sessionId);
 }
 
@@ -483,6 +500,20 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+/**
+ * Expire sessions older than maxAgeMs. Returns the folders that were expired.
+ */
+export function expireStaleSessions(maxAgeMs: number): string[] {
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const stale = db
+    .prepare('SELECT group_folder FROM sessions WHERE created_at < ?')
+    .all(cutoff) as Array<{ group_folder: string }>;
+  if (stale.length > 0) {
+    db.query('DELETE FROM sessions WHERE created_at < ?').run(cutoff);
+  }
+  return stale.map((r) => r.group_folder);
 }
 
 // --- Registered group accessors ---

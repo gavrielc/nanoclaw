@@ -9,6 +9,7 @@ import path from 'path';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_STARTUP_TIMEOUT,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
@@ -220,11 +221,12 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string, memoryMb?: number): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName: string, _memoryMb?: number): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  const memory = memoryMb || 4096;
-  args.push('--memory', `${memory}`);
+  // NOTE: --memory flag disabled — causes containers to hang indefinitely
+  // on Apple Container v0.9.0 (all values, even --memory 512).
+  // Containers work fine without it using the default VM memory.
 
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
@@ -331,7 +333,15 @@ export async function runContainerAgent(
     logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
     const stopProc = Bun.spawn(['container', 'stop', containerName]);
     const killTimer = setTimeout(() => container.kill(9), 15000);
-    stopProc.exited.then(() => clearTimeout(killTimer)).catch(() => {
+    stopProc.exited.then((code) => {
+      if (code === 0) {
+        clearTimeout(killTimer);
+      } else {
+        // container stop failed — kill immediately instead of waiting for timer
+        clearTimeout(killTimer);
+        container.kill(9);
+      }
+    }).catch(() => {
       clearTimeout(killTimer);
       container.kill(9);
     });
@@ -345,6 +355,17 @@ export async function runContainerAgent(
     timeout = setTimeout(killOnTimeout, timeoutMs);
   };
 
+  // Startup silence detection: if the container produces zero stderr output
+  // within CONTAINER_STARTUP_TIMEOUT, it's stuck (e.g. stale state after reboot).
+  // The agent-runner always logs to stderr on startup, so no stderr = never started.
+  let startupTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    logger.error(
+      { group: group.name, containerName, timeoutMs: CONTAINER_STARTUP_TIMEOUT },
+      'Container produced no stderr output during startup — likely stuck, killing',
+    );
+    killOnTimeout();
+  }, CONTAINER_STARTUP_TIMEOUT);
+
   // Read stderr concurrently in background
   if (typeof container.stderr === 'number' || !container.stderr) {
     throw new Error('Container stderr is not a readable stream');
@@ -357,9 +378,14 @@ export async function runContainerAgent(
         const { done, value } = await stderrReader.read();
         if (done) break;
         const chunk = stderrDecoder.decode(value, { stream: true });
+        // First stderr chunk: container is alive, clear startup timer
+        if (startupTimer) {
+          clearTimeout(startupTimer);
+          startupTimer = null;
+        }
         const lines = chunk.trim().split('\n');
         for (const line of lines) {
-          if (line) logger.debug({ container: group.folder }, line);
+          if (line) logger.info({ container: group.folder }, line);
         }
         // Don't reset timeout on stderr — SDK writes debug logs continuously.
         if (stderrTruncated) continue;
@@ -448,6 +474,10 @@ export async function runContainerAgent(
   const exitCode = await container.exited;
   await stderrPromise;
   clearTimeout(timeout);
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    startupTimer = null;
+  }
 
   const duration = Date.now() - startTime;
 

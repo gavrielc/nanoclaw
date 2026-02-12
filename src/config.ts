@@ -42,6 +42,14 @@ export const IDLE_TIMEOUT = parseInt(
   process.env.IDLE_TIMEOUT || '1800000',
   10,
 ); // 30min default — how long to keep container alive after last result
+export const CONTAINER_STARTUP_TIMEOUT = parseInt(
+  process.env.CONTAINER_STARTUP_TIMEOUT || '120000',
+  10,
+); // 2min — kill container if zero stderr output (stuck initialization)
+export const SESSION_MAX_AGE = parseInt(
+  process.env.SESSION_MAX_AGE || '14400000',
+  10,
+); // 4 hours — rotate sessions to prevent unbounded context growth
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

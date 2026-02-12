@@ -57,6 +57,7 @@ When you learn something important:
   - Use `bun install` instead of `npm install`
   - Use `bun run` instead of `npm run`
   - Bun is installed globally via npm
+  - **Cross-platform deps**: When working with repos mounted from the host (`/workspace/extra/`), always run `bun install --force` instead of `bun install`. The host `node_modules` may contain platform-specific binaries (e.g. darwin-arm64) that don't work inside this Linux container. `--force` ensures the correct linux-arm64 binaries are installed.
 
 ## Message Formatting
 

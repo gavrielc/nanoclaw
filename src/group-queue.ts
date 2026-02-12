@@ -245,16 +245,16 @@ export class GroupQueue {
 
     const state = this.getGroup(groupJid);
 
-    // Tasks first (they won't be re-discovered from SQLite like messages)
-    if (state.pendingTasks.length > 0) {
-      const task = state.pendingTasks.shift()!;
-      this.runTask(groupJid, task);
+    // Messages first — user messages should never wait behind scheduled tasks
+    if (state.pendingMessages) {
+      this.runForGroup(groupJid, 'drain');
       return;
     }
 
-    // Then pending messages
-    if (state.pendingMessages) {
-      this.runForGroup(groupJid, 'drain');
+    // Then scheduled tasks
+    if (state.pendingTasks.length > 0) {
+      const task = state.pendingTasks.shift()!;
+      this.runTask(groupJid, task);
       return;
     }
 
@@ -270,12 +270,12 @@ export class GroupQueue {
       const nextJid = this.waitingGroups.shift()!;
       const state = this.getGroup(nextJid);
 
-      // Prioritize tasks over messages
-      if (state.pendingTasks.length > 0) {
+      // Messages first — user messages should never wait behind scheduled tasks
+      if (state.pendingMessages) {
+        this.runForGroup(nextJid, 'drain');
+      } else if (state.pendingTasks.length > 0) {
         const task = state.pendingTasks.shift()!;
         this.runTask(nextJid, task);
-      } else if (state.pendingMessages) {
-        this.runForGroup(nextJid, 'drain');
       }
       // If neither pending, skip this group
     }
