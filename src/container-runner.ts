@@ -220,8 +220,11 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName: string, memoryMb?: number): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  const memory = memoryMb || 2048;
+  args.push('--memory', `${memory}`);
 
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
@@ -254,7 +257,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group.containerConfig?.memory);
 
   logger.debug(
     {
