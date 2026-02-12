@@ -71,6 +71,7 @@ RUN chown -R bun:bun /workspace
 RUN npm install -g @typescript/native-preview @typescript/native-preview-linux-arm64
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
+USER bun
 
 # Set working directory to group workspace
 WORKDIR /workspace/group
