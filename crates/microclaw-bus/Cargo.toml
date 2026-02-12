@@ -1,0 +1,7 @@
+[package]
+name = "microclaw-bus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+microclaw-protocol = { path = "../microclaw-protocol" }

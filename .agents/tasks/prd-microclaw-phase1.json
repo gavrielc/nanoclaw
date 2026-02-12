@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:33:30Z",
+    "updatedAt": "2026-02-12T23:34:52Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -112,9 +112,9 @@
       "intent": "Add microclaw-bus with idempotent publish",
       "acceptance": ["cargo test -p microclaw-bus passes"],
       "gates": ["cargo test -p microclaw-bus"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-12T23:34:01Z",
+      "completedAt": "2026-02-12T23:34:52Z",
       "dependencies": ["S6"],
       "risks": ["Keying strategy may change"],
       "notes": "In-memory only"

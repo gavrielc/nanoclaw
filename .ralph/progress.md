@@ -59,3 +59,15 @@
   - crates/microclaw-scheduler added
 - Notes:
   - Minimal due() implementation; id field unused
+
+## 2026-02-12T23:34:52Z S7 Bus idempotency
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-bus -> fail (package not found)
+  - cargo test -p microclaw-bus -> fail (Bus missing)
+  - cargo test -p microclaw-bus -> pass (warning: MessageId field unused)
+- Key diffs:
+  - Cargo.toml updated (workspace members)
+  - crates/microclaw-bus added
+- Notes:
+  - Idempotency key uses device_id + Debug(message_id)
