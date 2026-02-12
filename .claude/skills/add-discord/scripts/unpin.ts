@@ -1,5 +1,5 @@
 import { fetchTextChannel, getReadyDiscordClient } from '../lib/discord.js';
-import type { SkillResult } from '../lib/types.js';
+import { formatDiscordError, type SkillResult } from '../lib/types.js';
 
 export interface UnpinInput {
   channelId: string;
@@ -28,7 +28,6 @@ export async function unpinDiscordMessage(
     await message.unpin();
     return { success: true, message: `Message ${input.messageId} unpinned` };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return { success: false, message: `Failed to unpin message: ${errorMsg}` };
+    return formatDiscordError(err, 'Failed to unpin message');
   }
 }

@@ -3,7 +3,7 @@
  */
 
 import { fetchTextChannel, getReadyDiscordClient } from '../lib/discord.js';
-import type { SkillResult } from '../lib/types.js';
+import { formatDiscordError, type SkillResult } from '../lib/types.js';
 
 export interface PinInput {
   channelId: string;
@@ -30,7 +30,6 @@ export async function pinDiscordMessage(input: PinInput): Promise<SkillResult> {
     await message.pin();
     return { success: true, message: `Message ${input.messageId} pinned` };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return { success: false, message: `Failed to pin message: ${errorMsg}` };
+    return formatDiscordError(err, 'Failed to pin message');
   }
 }
