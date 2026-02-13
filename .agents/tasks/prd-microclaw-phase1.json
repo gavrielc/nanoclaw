@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:07:49Z",
+    "updatedAt": "2026-02-13T00:08:46Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -329,9 +329,9 @@
       "intent": "Implement Discord connector using official API",
       "acceptance": ["cargo test -p microclaw-connectors passes"],
       "gates": ["cargo test -p microclaw-connectors"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:08:20Z",
+      "completedAt": "2026-02-13T00:08:46Z",
       "dependencies": ["S22"],
       "risks": ["Rate limit handling"],
       "notes": "Add retry and idempotency"

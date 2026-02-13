@@ -244,3 +244,14 @@
   - crates/microclaw-connectors/tests/imessage.rs added
 - Notes:
   - Added AppleScript send + chat.db query builder
+
+## 2026-02-13T00:08:46Z S23 Discord connector
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-connectors -> fail (DiscordConnector missing)
+  - cargo test -p microclaw-connectors -> pass
+- Key diffs:
+  - crates/microclaw-connectors/src/lib.rs updated (DiscordConnector helpers)
+  - crates/microclaw-connectors/tests/discord.rs added
+- Notes:
+  - Added Discord API URL + auth header helpers

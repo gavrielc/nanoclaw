@@ -29,3 +29,28 @@ impl Connector for IMessageConnector {
         ConnectorId("imessage".to_string())
     }
 }
+
+pub struct DiscordConnector;
+
+impl DiscordConnector {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn message_url(channel_id: &str) -> String {
+        format!(
+            "https://discord.com/api/v10/channels/{}/messages",
+            channel_id
+        )
+    }
+
+    pub fn auth_header(token: &str) -> (String, String) {
+        ("Authorization".to_string(), format!("Bot {}", token))
+    }
+}
+
+impl Connector for DiscordConnector {
+    fn id(&self) -> ConnectorId {
+        ConnectorId("discord".to_string())
+    }
+}
