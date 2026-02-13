@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:28:13Z",
+    "updatedAt": "2026-02-13T03:15:21Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -478,6 +478,32 @@
       "dependencies": ["S33"],
       "risks": ["Idle timeout behavior varies by server"],
       "notes": "Use imap::extensions::idle handle"
+    },
+    {
+      "id": "S35",
+      "title": "Scheduler warning cleanup",
+      "intent": "Remove unused TaskSpec.id warning via accessor and test",
+      "acceptance": ["cargo test -p microclaw-scheduler passes"],
+      "gates": ["cargo test -p microclaw-scheduler"],
+      "status": "done",
+      "startedAt": "2026-02-13T03:03:16Z",
+      "completedAt": "2026-02-13T03:15:21Z",
+      "dependencies": ["S34"],
+      "risks": ["None"],
+      "notes": "Expose TaskSpec id for read access"
+    },
+    {
+      "id": "S36",
+      "title": "ESP-IDF toolchain check",
+      "intent": "Install ESP-IDF toolchain and run esp feature check",
+      "acceptance": ["cargo check -p microclaw-device --features esp passes"],
+      "gates": ["cargo check -p microclaw-device --features esp"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S35"],
+      "risks": ["Toolchain install may fail in this environment"],
+      "notes": "Use espup to install if missing"
     }
   ]
 }

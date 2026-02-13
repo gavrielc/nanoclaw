@@ -381,3 +381,14 @@
   - crates/microclaw-connectors/tests/email_idle.rs added
 - Notes:
   - Switched IMAP idle to real handle with bounded timeout
+
+## 2026-02-13T03:15:21Z S35 Scheduler warning cleanup
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-scheduler -> fail (TaskSpec::id missing)
+  - cargo test -p microclaw-scheduler -> pass
+- Key diffs:
+  - crates/microclaw-scheduler/src/lib.rs updated (TaskSpec::id)
+  - crates/microclaw-scheduler/tests/task_spec.rs added
+- Notes:
+  - Removed unused id warning by adding accessor

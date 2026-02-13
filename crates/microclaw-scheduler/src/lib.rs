@@ -16,6 +16,10 @@ impl TaskSpec {
             at,
         }
     }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 pub struct Scheduler {
