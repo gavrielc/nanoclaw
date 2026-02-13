@@ -1,4 +1,4 @@
-use microclaw_sandbox::{AppleContainerRunner, Mount, RunSpec};
+use microclaw_sandbox::{AppleContainerRunner, Mount, ProcessExecutor, RunSpec};
 
 #[test]
 fn builds_apple_container_command() {
@@ -6,7 +6,7 @@ fn builds_apple_container_command() {
     spec.add_mount(Mount::read_only("/host/data", "/workspace/data"));
     spec.add_env("TOKEN", "redacted");
 
-    let args = AppleContainerRunner::build_command(&spec);
+    let args = AppleContainerRunner::<ProcessExecutor>::build_command(&spec);
     assert_eq!(args[0], "container");
     assert!(args.contains(&"--rm".to_string()));
     assert!(args.contains(&"--mount".to_string()));

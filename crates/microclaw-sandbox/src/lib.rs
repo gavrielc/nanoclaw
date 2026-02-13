@@ -3,6 +3,7 @@ pub trait ContainerBackend {
 }
 
 use std::collections::{HashMap, HashSet};
+use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct Mount {
@@ -163,25 +164,6 @@ impl RunSpec {
     }
 }
 
-pub struct AppleContainerRunner;
-
-impl AppleContainerRunner {
-    pub fn build_command(spec: &RunSpec) -> Vec<String> {
-        let mut args = vec!["container".to_string(), "run".to_string(), "--rm".to_string()];
-        for mount in &spec.mounts {
-            args.push("--mount".to_string());
-            args.push(mount.to_apple_arg());
-        }
-        for (key, value) in &spec.env {
-            args.push("--env".to_string());
-            args.push(format!("{}={}", key, value));
-        }
-        args.push(spec.image.clone());
-        args.extend(spec.command.iter().cloned());
-        args
-    }
-}
-
 pub struct DockerRunner;
 
 impl DockerRunner {
@@ -198,6 +180,81 @@ impl DockerRunner {
         args.push(spec.image.clone());
         args.extend(spec.command.iter().cloned());
         args
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandResult {
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub trait Executor {
+    fn run(&self, args: &[String]) -> Result<CommandResult, String>;
+}
+
+pub struct ProcessExecutor;
+
+impl Executor for ProcessExecutor {
+    fn run(&self, args: &[String]) -> Result<CommandResult, String> {
+        let (program, rest) = args
+            .split_first()
+            .ok_or_else(|| "empty command".to_string())?;
+        let output = Command::new(program)
+            .args(rest)
+            .output()
+            .map_err(|err| format!("failed to execute {}: {}", program, err))?;
+        Ok(CommandResult {
+            status: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+}
+
+pub struct AppleContainerRunner<E> {
+    executor: E,
+}
+
+impl<E: Executor> AppleContainerRunner<E> {
+    pub fn new(executor: E) -> Self {
+        Self { executor }
+    }
+
+    pub fn build_command(spec: &RunSpec) -> Vec<String> {
+        let mut args = vec!["container".to_string(), "run".to_string(), "--rm".to_string()];
+        for mount in &spec.mounts {
+            args.push("--mount".to_string());
+            args.push(mount.to_apple_arg());
+        }
+        for (key, value) in &spec.env {
+            args.push("--env".to_string());
+            args.push(format!("{}={}", key, value));
+        }
+        args.push(spec.image.clone());
+        args.extend(spec.command.iter().cloned());
+        args
+    }
+
+    pub fn run(&self, spec: &RunSpec) -> Result<CommandResult, String> {
+        let args = Self::build_command(spec);
+        self.executor.run(&args)
+    }
+}
+
+pub struct DockerRunnerExec<E> {
+    executor: E,
+}
+
+impl<E: Executor> DockerRunnerExec<E> {
+    pub fn new(executor: E) -> Self {
+        Self { executor }
+    }
+
+    pub fn run(&self, spec: &RunSpec) -> Result<CommandResult, String> {
+        let args = DockerRunner::build_command(spec);
+        self.executor.run(&args)
     }
 }
 

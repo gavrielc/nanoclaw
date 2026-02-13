@@ -288,3 +288,15 @@
   - apps/microclaw-device/tests/ws.rs added
 - Notes:
   - Added host-compile WS URL + backoff helpers for ESP-IDF runtime
+
+## 2026-02-13T00:16:01Z S27 Sandbox execution runtime
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-sandbox -> fail (Executor/CommandResult missing)
+  - cargo test -p microclaw-sandbox -> pass
+- Key diffs:
+  - crates/microclaw-sandbox/src/lib.rs updated (Executor, ProcessExecutor, AppleContainerRunner::run)
+  - crates/microclaw-sandbox/tests/execution.rs added
+  - crates/microclaw-sandbox/tests/apple_runner.rs updated
+- Notes:
+  - Added executor abstraction for real process execution

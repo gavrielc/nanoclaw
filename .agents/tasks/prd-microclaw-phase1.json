@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:11:37Z",
+    "updatedAt": "2026-02-13T00:16:01Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -374,6 +374,97 @@
       "dependencies": ["S25"],
       "risks": ["ESP-IDF integration complexity"],
       "notes": "Host-compile where possible, stub hardware"
+    },
+    {
+      "id": "S27",
+      "title": "Sandbox execution runtime",
+      "intent": "Execute Apple/Docker runners via std::process and capture output",
+      "acceptance": ["cargo test -p microclaw-sandbox passes"],
+      "gates": ["cargo test -p microclaw-sandbox"],
+      "status": "done",
+      "startedAt": "2026-02-13T00:12:30Z",
+      "completedAt": "2026-02-13T00:16:01Z",
+      "dependencies": ["S26"],
+      "risks": ["Local CLI availability"],
+      "notes": "Introduce executor trait for testable process spawning"
+    },
+    {
+      "id": "S28",
+      "title": "Sandbox policy enforcement",
+      "intent": "Enforce MountPolicy/EgressPolicy in runner execution",
+      "acceptance": ["cargo test -p microclaw-sandbox passes"],
+      "gates": ["cargo test -p microclaw-sandbox"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S27"],
+      "risks": ["Policy errors could block workflows"],
+      "notes": "Deny-by-default unless allowlisted"
+    },
+    {
+      "id": "S29",
+      "title": "iMessage runtime integration",
+      "intent": "Implement send via osascript and receive via chat.db polling",
+      "acceptance": ["cargo test -p microclaw-connectors passes"],
+      "gates": ["cargo test -p microclaw-connectors"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S28"],
+      "risks": ["chat.db schema drift"],
+      "notes": "Use rusqlite and rowid cursor"
+    },
+    {
+      "id": "S30",
+      "title": "Discord runtime integration",
+      "intent": "Implement REST send + fetch with retry hooks",
+      "acceptance": ["cargo test -p microclaw-connectors passes"],
+      "gates": ["cargo test -p microclaw-connectors"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S29"],
+      "risks": ["Rate limit handling"],
+      "notes": "Use blocking HTTP client with mocked tests"
+    },
+    {
+      "id": "S31",
+      "title": "Telegram runtime integration",
+      "intent": "Implement sendMessage + getUpdates",
+      "acceptance": ["cargo test -p microclaw-connectors passes"],
+      "gates": ["cargo test -p microclaw-connectors"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S30"],
+      "risks": ["Long polling"],
+      "notes": "Use blocking HTTP client with mocked tests"
+    },
+    {
+      "id": "S32",
+      "title": "Email runtime integration",
+      "intent": "Implement SMTP send + IMAP idle/poll wrappers",
+      "acceptance": ["cargo test -p microclaw-connectors passes"],
+      "gates": ["cargo test -p microclaw-connectors"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S31"],
+      "risks": ["Provider quirks"],
+      "notes": "Abstract transport for tests"
+    },
+    {
+      "id": "S33",
+      "title": "ESP-IDF runtime wiring",
+      "intent": "Add ESP-IDF feature wiring and stubs for Wi-Fi + WS in device runtime",
+      "acceptance": ["cargo test -p microclaw-device --features host passes"],
+      "gates": ["cargo test -p microclaw-device --features host"],
+      "status": "open",
+      "startedAt": null,
+      "completedAt": null,
+      "dependencies": ["S32"],
+      "risks": ["ESP-IDF toolchain availability"],
+      "notes": "Gate ESP-IDF code under feature flag"
     }
   ]
 }
