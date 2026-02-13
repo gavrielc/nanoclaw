@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T04:09:58Z",
+    "updatedAt": "2026-02-13T04:11:37Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -563,9 +563,9 @@
       "intent": "Enforce network isolation and policy defaults at execution time",
       "acceptance": ["cargo test -p microclaw-sandbox passes"],
       "gates": ["cargo test -p microclaw-sandbox"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T04:11:37Z",
+      "completedAt": "2026-02-13T04:11:37Z",
       "dependencies": ["S40"],
       "risks": ["Platform differences"],
       "notes": "Deny network by default and allow explicit network opt-in"

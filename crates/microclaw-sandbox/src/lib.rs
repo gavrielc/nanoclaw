@@ -170,6 +170,10 @@ impl RunSpec {
         self.egress_hosts.push(host.to_string());
     }
 
+    pub fn network_disabled(&self) -> bool {
+        self.egress_hosts.is_empty()
+    }
+
     pub fn validate(
         &self,
         mount_policy: &MountPolicy,
@@ -190,6 +194,9 @@ pub struct DockerRunner;
 impl DockerRunner {
     pub fn build_command(spec: &RunSpec) -> Vec<String> {
         let mut args = vec!["docker".to_string(), "run".to_string(), "--rm".to_string()];
+        if spec.network_disabled() {
+            args.push("--network=none".to_string());
+        }
         for mount in &spec.mounts {
             args.push("-v".to_string());
             args.push(mount.to_docker_arg());
@@ -245,6 +252,9 @@ impl<E: Executor> AppleContainerRunner<E> {
 
     pub fn build_command(spec: &RunSpec) -> Vec<String> {
         let mut args = vec!["container".to_string(), "run".to_string(), "--rm".to_string()];
+        if spec.network_disabled() {
+            args.push("--network=none".to_string());
+        }
         for mount in &spec.mounts {
             args.push("--mount".to_string());
             args.push(mount.to_apple_arg());

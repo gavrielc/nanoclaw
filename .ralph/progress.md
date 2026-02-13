@@ -454,3 +454,12 @@
   - .agents/tasks/prd-microclaw-phase1.json updated (S36 notes)
 - Notes:
   - IDF v4.4 dependencies installed; build still fails in cmake/ninja step
+## 2026-02-13T04:11:37Z S41 Sandbox runtime enforcement - Outcome: pass
+- Commands:
+  - cargo test -p microclaw-sandbox -> fail (generic param inference)
+  - cargo test -p microclaw-sandbox -> pass
+- Key diffs:
+  - crates/microclaw-sandbox/src/lib.rs updated (network isolation default)
+  - crates/microclaw-sandbox/tests/network.rs added
+- Notes:
+  - Docker/Apple runners now add --network=none when no egress hosts
