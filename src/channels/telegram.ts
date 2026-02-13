@@ -139,6 +139,38 @@ export class TelegramChannel implements Channel {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
+    this.bot.command("createtopic", async (ctx) => {
+      // Only works in supergroups with forum/topics enabled
+      if (ctx.chat.type !== "supergroup") {
+        await ctx.reply("Topics can only be created in supergroups with forum topics enabled.");
+        return;
+      }
+
+      // Parse topic name from command args
+      const args = ctx.message?.text.split(" ").slice(1).join(" ");
+      if (!args || args.trim().length === 0) {
+        await ctx.reply("Usage: /createtopic <topic name>\nExample: /createtopic LoadX Logistics");
+        return;
+      }
+
+      const topicName = args.trim();
+
+      try {
+        const topic = await ctx.api.createForumTopic(ctx.chat.id, topicName);
+        await ctx.reply(
+          `Topic created: *${topicName}*\n\nThread ID: \`tg:${ctx.chat.id}:${topic.message_thread_id}\`\n\nYou can now use this topic for organized discussions!`,
+          { parse_mode: "Markdown" }
+        );
+        logger.info(
+          { chatId: ctx.chat.id, topicName, threadId: topic.message_thread_id },
+          "Forum topic created"
+        );
+      } catch (err: any) {
+        logger.error({ chatId: ctx.chat.id, topicName, err }, "Failed to create forum topic");
+        await ctx.reply(`Failed to create topic: ${err.message || "Unknown error"}`);
+      }
+    });
+
     this.bot.on("message:text", async (ctx) => {
       if (ctx.message.text.startsWith("/")) return;
 

@@ -5,6 +5,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  GMAIL_ENABLED,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -13,6 +14,7 @@ import {
   TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
+import { GmailChannel } from './channels/gmail.js';
 import { TelegramChannel, initBotPool } from './channels/telegram.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import {
@@ -104,7 +106,7 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:')))
+    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:') || c.jid.startsWith('gmail:')))
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -133,6 +135,14 @@ export function resolveGroup(chatJid: string): RegisteredGroup | undefined {
       return registeredGroups[`${parts[0]}:${parts[1]}`];
     }
   }
+
+  // Gmail maps to the main group (single context)
+  if (chatJid.startsWith('gmail:')) {
+    const mainEntry = Object.entries(registeredGroups)
+      .find(([_, g]) => g.folder === MAIN_GROUP_FOLDER);
+    if (mainEntry) return mainEntry[1];
+  }
+
   return undefined;
 }
 
@@ -148,6 +158,8 @@ function getSessionKey(chatJid: string, groupFolder: string): string {
       return `${groupFolder}:t${parts[2]}`;
     }
   }
+  // Gmail shares the main group's session (single context)
+  if (chatJid.startsWith('gmail:')) return groupFolder;
   return groupFolder;
 }
 
@@ -341,6 +353,7 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
+      if (GMAIL_ENABLED && !jids.includes('gmail:inbox')) jids.push('gmail:inbox');
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,
@@ -393,7 +406,11 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // For Telegram JIDs, don't pipe: multiple forum topic containers
+          // share the same IPC input directory, so the wrong container could
+          // grab the message. Close stale containers and enqueue fresh ones.
+          const canPipe = !chatJid.startsWith('tg:') && !chatJid.startsWith('gmail:');
+          if (canPipe && queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -402,7 +419,9 @@ async function startMessageLoop(): Promise<void> {
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
           } else {
-            // No active container — enqueue for a new one
+            if (chatJid.startsWith('tg:') || chatJid.startsWith('gmail:')) {
+              queue.closeContainersForFolder(group.folder);
+            }
             queue.enqueueMessageCheck(chatJid);
           }
         }
@@ -428,6 +447,19 @@ function recoverPendingMessages(): void {
         'Recovery: found unprocessed messages',
       );
       queue.enqueueMessageCheck(chatJid);
+    }
+  }
+
+  // Gmail virtual JID recovery
+  if (GMAIL_ENABLED) {
+    const sinceTimestamp = lastAgentTimestamp['gmail:inbox'] || '';
+    const pending = getMessagesSince('gmail:inbox', sinceTimestamp, ASSISTANT_NAME);
+    if (pending.length > 0) {
+      logger.info(
+        { pendingCount: pending.length },
+        'Recovery: found unprocessed Gmail messages',
+      );
+      queue.enqueueMessageCheck('gmail:inbox');
     }
   }
 }
@@ -509,6 +541,12 @@ async function main(): Promise<void> {
 
   if (TELEGRAM_BOT_POOL.length > 0) {
     await initBotPool(TELEGRAM_BOT_POOL);
+  }
+
+  if (GMAIL_ENABLED) {
+    const gmail = new GmailChannel(channelOpts);
+    channels.push(gmail);
+    await gmail.connect();
   }
 
   // Start subsystems
