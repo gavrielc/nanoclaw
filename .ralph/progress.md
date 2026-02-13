@@ -335,3 +335,14 @@
   - crates/microclaw-connectors/tests/discord_runtime.rs added
 - Notes:
   - Added REST calls with mocked tests via httpmock
+
+## 2026-02-13T00:21:02Z S31 Telegram runtime integration
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-connectors -> fail (Telegram runtime APIs missing)
+  - cargo test -p microclaw-connectors -> pass
+- Key diffs:
+  - crates/microclaw-connectors/src/lib.rs updated (Telegram send/getUpdates)
+  - crates/microclaw-connectors/tests/telegram_runtime.rs added
+- Notes:
+  - Added Telegram HTTP calls with mocked tests

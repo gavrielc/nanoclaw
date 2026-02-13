@@ -181,12 +181,76 @@ impl TelegramConnector {
     pub fn send_message_url(token: &str) -> String {
         format!("https://api.telegram.org/bot{}/sendMessage", token)
     }
+
+    pub fn send_message(
+        base_url: &str,
+        token: &str,
+        chat_id: &str,
+        text: &str,
+    ) -> Result<TelegramMessage, String> {
+        let url = join_url(base_url, &format!("bot{}/sendMessage", token));
+        let response = ureq::post(&url)
+            .send_json(serde_json::json!({"chat_id": chat_id, "text": text}))
+            .map_err(ureq_error)?;
+        let body: TelegramSendResponse = response
+            .into_json()
+            .map_err(|err| format!("parse error: {}", err))?;
+        if body.ok {
+            Ok(body.result)
+        } else {
+            Err("telegram send failed".to_string())
+        }
+    }
+
+    pub fn get_updates(
+        base_url: &str,
+        token: &str,
+        offset: Option<i64>,
+    ) -> Result<Vec<TelegramUpdate>, String> {
+        let url = join_url(base_url, &format!("bot{}/getUpdates", token));
+        let mut request = ureq::get(&url);
+        if let Some(offset) = offset {
+            request = request.query("offset", &offset.to_string());
+        }
+        let response = request.call().map_err(ureq_error)?;
+        let body: TelegramUpdatesResponse = response
+            .into_json()
+            .map_err(|err| format!("parse error: {}", err))?;
+        if body.ok {
+            Ok(body.result)
+        } else {
+            Err("telegram getUpdates failed".to_string())
+        }
+    }
 }
 
 impl Connector for TelegramConnector {
     fn id(&self) -> ConnectorId {
         ConnectorId("telegram".to_string())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TelegramMessage {
+    pub message_id: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TelegramUpdate {
+    pub update_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TelegramSendResponse {
+    ok: bool,
+    result: TelegramMessage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TelegramUpdatesResponse {
+    ok: bool,
+    result: Vec<TelegramUpdate>,
 }
 
 pub struct EmailConnector;

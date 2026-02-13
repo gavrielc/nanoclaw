@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:19:57Z",
+    "updatedAt": "2026-02-13T00:21:02Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -433,9 +433,9 @@
       "intent": "Implement sendMessage + getUpdates",
       "acceptance": ["cargo test -p microclaw-connectors passes"],
       "gates": ["cargo test -p microclaw-connectors"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:20:10Z",
+      "completedAt": "2026-02-13T00:21:02Z",
       "dependencies": ["S30"],
       "risks": ["Long polling"],
       "notes": "Use blocking HTTP client with mocked tests"
