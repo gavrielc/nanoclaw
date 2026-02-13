@@ -695,6 +695,14 @@ vi.mock('./admin-instruction.js', () => ({
   HELP_MESSAGE: 'Supported instructions:\n• Add area: ...',
 }));
 
+// Mock admin-query-agent module
+vi.mock('./admin-query-agent.js', () => ({
+  handleAdminQuery: vi.fn(),
+}));
+
+import { handleAdminQuery } from './admin-query-agent.js';
+const mockedHandleAdminQuery = vi.mocked(handleAdminQuery);
+
 import { extractComplaintId, interpretReply } from './admin-reply.js';
 import type { ReplyResult } from './admin-reply.js';
 
@@ -942,19 +950,24 @@ describe('handleInstruction', () => {
     expect(mockedInterpretInstruction).not.toHaveBeenCalled();
   });
 
-  it('returns help when instruction is unrecognized', async () => {
+  it('routes unrecognized instruction to query agent', async () => {
     mockedInterpretInstruction.mockResolvedValue({
       action: 'unrecognized',
       confidence: 0.95,
     });
+    mockedHandleAdminQuery.mockResolvedValue('There are 3 complaints today.');
 
     const service = createTestService();
     const result = await service.handleInstruction(
       ADMIN_PHONES[0],
-      '@ComplaintBot good morning everyone',
+      '@ComplaintBot how many complaints today?',
     );
 
-    expect(result).toBe(INSTRUCTION_HELP);
+    expect(mockedHandleAdminQuery).toHaveBeenCalledWith(
+      db,
+      'how many complaints today?',
+    );
+    expect(result).toBe('There are 3 complaints today.');
     expect(mockedExecuteInstruction).not.toHaveBeenCalled();
   });
 

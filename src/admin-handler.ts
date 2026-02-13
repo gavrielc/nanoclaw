@@ -13,6 +13,7 @@ import {
   HELP_MESSAGE as INSTRUCTION_HELP,
   interpretInstruction,
 } from './admin-instruction.js';
+import { handleAdminQuery } from './admin-query-agent.js';
 import { extractComplaintId, interpretReply } from './admin-reply.js';
 import {
   addComplaintNote,
@@ -325,7 +326,7 @@ export class AdminService {
     const result = await interpretInstruction(stripped);
 
     if (result.action === 'unrecognized') {
-      return INSTRUCTION_HELP;
+      return handleAdminQuery(this.deps.db, stripped);
     }
 
     return executeInstruction(this.deps.db, result, senderPhone);

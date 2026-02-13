@@ -11,6 +11,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 
 import {
+  ASSISTANT_NAME,
   MAX_OUTGOING_QUEUE_SIZE,
   RECONNECT_INITIAL_DELAY_MS,
   RECONNECT_MAX_ATTEMPTS,
@@ -282,11 +283,10 @@ export class WhatsAppChannel implements Channel {
         }
         if (groups[routeJid]) {
           // Audio message detection: route to onAudioMessage for 1:1 chats
-          // and for group audio replies (audio messages that quote another message)
+          // and all group audio (replies + standalone admin instructions)
           const audioMsg = msg.message?.audioMessage;
           if (audioMsg && this.opts.onAudioMessage) {
-            const isReply = !!audioMsg.contextInfo?.quotedMessage;
-            if (isIndividualChat(chatJid) || isReply) {
+            if (isIndividualChat(chatJid) || isGroupChat(chatJid)) {
               const rawSender = msg.key.participant || msg.key.remoteJid || '';
               const sender = this.translateJid(rawSender);
               const senderName = msg.pushName || sender.split('@')[0];
@@ -305,7 +305,7 @@ export class WhatsAppChannel implements Channel {
             }
           }
 
-          const content =
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
@@ -323,6 +323,27 @@ export class WhatsAppChannel implements Channel {
             quotedMsg?.conversation ||
             quotedMsg?.extendedTextMessage?.text ||
             undefined;
+
+          // Normalize @mentions: WhatsApp encodes @mentions as @identifier
+          // in raw text (phone number OR LID). If the bot is mentioned,
+          // replace @identifier with @ASSISTANT_NAME so TRIGGER_PATTERN matches.
+          if (contextInfo?.mentionedJid && this.sock.user) {
+            const botPhone = this.sock.user.id.split(':')[0];
+            const botLid = this.sock.user.lid?.split(':')[0];
+            const botIds = [botPhone, botLid].filter(Boolean) as string[];
+            const isBotMentioned = (contextInfo.mentionedJid as string[]).some(
+              (jid) => botIds.some((id) => jid.startsWith(`${id}@`) || jid === id),
+            );
+            if (isBotMentioned) {
+              // Replace @phone or @lid at start of text with @ASSISTANT_NAME
+              for (const id of botIds) {
+                content = content.replace(
+                  new RegExp(`@${id}\\b`),
+                  `@${ASSISTANT_NAME}`,
+                );
+              }
+            }
+          }
 
           // For 1:1 chats: sender is the JID itself (no participant); name from pushName
           // For groups: sender is the participant (may be LID — translate to phone JID)

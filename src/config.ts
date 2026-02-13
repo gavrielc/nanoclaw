@@ -59,6 +59,12 @@ export const TRIGGER_PATTERN = new RegExp(
   'i',
 );
 
+// Matches @ComplaintBot anywhere in text (for admin group where tag may be at end)
+export const TRIGGER_PATTERN_ANYWHERE = new RegExp(
+  `@${escapeRegex(ASSISTANT_NAME)}\\b`,
+  'i',
+);
+
 // Concurrency limiter for fire-and-forget direct handlers (complaint + voice)
 export const MAX_CONCURRENT_DIRECT_HANDLERS = Math.max(
   1,
@@ -95,6 +101,16 @@ export const REPLY_INTERPRETER_MODEL =
 export const COMPLAINT_MAX_TURNS = safeParseInt(
   process.env.COMPLAINT_MAX_TURNS,
   10,
+);
+
+// Admin query agent (read-only SQL via Agent SDK)
+export const ADMIN_QUERY_MAX_TURNS = safeParseInt(
+  process.env.ADMIN_QUERY_MAX_TURNS,
+  4,
+);
+export const ADMIN_QUERY_ROW_LIMIT = safeParseInt(
+  process.env.ADMIN_QUERY_ROW_LIMIT,
+  50,
 );
 
 // Timezone for scheduled tasks (cron expressions, etc.)

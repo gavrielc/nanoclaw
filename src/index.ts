@@ -10,6 +10,7 @@ import {
   MAX_CONCURRENT_DIRECT_HANDLERS,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
+  TRIGGER_PATTERN_ANYWHERE,
 } from './config.js';
 import {
   WhatsAppChannel,
@@ -998,6 +999,8 @@ function handleInboundMessage(
   ) {
     const trimmed = msg.content.trim();
     if (trimmed.startsWith('#')) {
+      // Advance cursor so message loop doesn't re-process via container agent
+      advanceCursor(chatJid, msg.timestamp);
       (async () => {
         try {
           const response = await adminService.handleCommand(
@@ -1016,6 +1019,7 @@ function handleInboundMessage(
       })();
     } else if (msg.quotedText && extractComplaintId(msg.quotedText)) {
       // Natural language reply to a bot notification that contains a complaint ID
+      advanceCursor(chatJid, msg.timestamp);
       (async () => {
         try {
           const response = await adminService.handleReply(
@@ -1033,10 +1037,13 @@ function handleInboundMessage(
           } catch { /* best-effort */ }
         }
       })();
-    } else if (TRIGGER_PATTERN.test(trimmed)) {
-      // @ComplaintBot tagged text — natural language admin instruction
+    } else if (TRIGGER_PATTERN_ANYWHERE.test(trimmed)) {
+      // @ComplaintBot tagged text (anywhere in message) — natural language admin instruction
+      advanceCursor(chatJid, msg.timestamp);
       (async () => {
         try {
+          await whatsapp.setTyping(chatJid, true);
+          await whatsapp.sendMessage(chatJid, 'डेटाबेस तपासत आहे, कृपया थांबा... 🔍');
           const response = await adminService.handleInstruction(
             phoneFromJid(msg.sender),
             trimmed,
@@ -1049,6 +1056,8 @@ function handleInboundMessage(
           try {
             await whatsapp.sendMessage(chatJid, 'Internal error processing instruction.');
           } catch { /* best-effort */ }
+        } finally {
+          await whatsapp.setTyping(chatJid, false);
         }
       })();
     }
