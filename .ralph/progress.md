@@ -222,3 +222,14 @@
   - crates/microclaw-sandbox/tests/policy.rs added
 - Notes:
   - Added deny-by-default egress and mount allowlist validation
+
+## 2026-02-13T00:06:35Z S21 Secrets broker + audit logs
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-sandbox -> fail (SecretBroker/AuditEvent missing)
+  - cargo test -p microclaw-sandbox -> pass
+- Key diffs:
+  - crates/microclaw-sandbox/src/lib.rs updated (AuditLog, SecretBroker)
+  - crates/microclaw-sandbox/tests/secrets.rs added
+- Notes:
+  - Added allowlist-based secret broker with audit events

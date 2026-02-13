@@ -2,6 +2,8 @@ pub trait ContainerBackend {
     fn name(&self) -> &'static str;
 }
 
+use std::collections::{HashMap, HashSet};
+
 #[derive(Debug, Clone)]
 pub struct Mount {
     pub source: String,
@@ -71,6 +73,66 @@ impl EgressPolicy {
 
     pub fn allows(&self, host: &str) -> bool {
         self.allowlist.iter().any(|entry| entry == host)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditEvent {
+    pub action: String,
+    pub target: String,
+    pub allowed: bool,
+}
+
+pub struct AuditLog {
+    events: Vec<AuditEvent>,
+}
+
+impl AuditLog {
+    pub fn new() -> Self {
+        Self { events: Vec::new() }
+    }
+
+    pub fn record(&mut self, event: AuditEvent) {
+        self.events.push(event);
+    }
+
+    pub fn entries(&self) -> &[AuditEvent] {
+        &self.events
+    }
+}
+
+pub struct SecretBroker {
+    allowlist: HashSet<String>,
+    secrets: HashMap<String, String>,
+    audit: AuditLog,
+}
+
+impl SecretBroker {
+    pub fn new(allowlist: Vec<String>, secrets: HashMap<String, String>) -> Self {
+        Self {
+            allowlist: allowlist.into_iter().collect(),
+            secrets,
+            audit: AuditLog::new(),
+        }
+    }
+
+    pub fn request(&mut self, key: &str) -> Option<String> {
+        let allowed = self.allowlist.contains(key) && self.secrets.contains_key(key);
+        let value = if allowed {
+            self.secrets.get(key).cloned()
+        } else {
+            None
+        };
+        self.audit.record(AuditEvent {
+            action: "secret.request".to_string(),
+            target: key.to_string(),
+            allowed,
+        });
+        value
+    }
+
+    pub fn audit(&self) -> &AuditLog {
+        &self.audit
     }
 }
 
