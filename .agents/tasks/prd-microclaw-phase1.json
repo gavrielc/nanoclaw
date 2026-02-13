@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:10:39Z",
+    "updatedAt": "2026-02-13T00:11:37Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -368,9 +368,9 @@
       "intent": "Implement ESP-IDF WS client, reconnect, and UI shell",
       "acceptance": ["cargo test -p microclaw-device --features host passes"],
       "gates": ["cargo test -p microclaw-device --features host"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:11:05Z",
+      "completedAt": "2026-02-13T00:11:37Z",
       "dependencies": ["S25"],
       "risks": ["ESP-IDF integration complexity"],
       "notes": "Host-compile where possible, stub hardware"

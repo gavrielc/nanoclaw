@@ -277,3 +277,14 @@
   - crates/microclaw-connectors/tests/email.rs added
 - Notes:
   - Added SMTP MAIL FROM + IMAP IDLE command helpers
+
+## 2026-02-13T00:11:37Z S26 Device runtime WS + UI shell
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-device --features host -> fail (WS helpers missing)
+  - cargo test -p microclaw-device --features host -> pass
+- Key diffs:
+  - apps/microclaw-device/src/lib.rs updated (ws url, backoff, ui title)
+  - apps/microclaw-device/tests/ws.rs added
+- Notes:
+  - Added host-compile WS URL + backoff helpers for ESP-IDF runtime
