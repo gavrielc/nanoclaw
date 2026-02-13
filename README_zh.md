@@ -1,14 +1,17 @@
 <p align="center">
-  <a href="README.md">English</a> | <b>中文</b>
-</p>
-
-<p align="center">
   <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
 </p>
 
 <p align="center">
   我的个人 Claude 助手，安全地运行在容器中。它轻巧、易于理解，并可根据你自己的需求进行定制。
 </p>
+
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="https://discord.gg/VGWXrf8x"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord"></a>
+</p>
+
+**新功能:** 首个支持 [Agent Swarms（智能体集群）](https://code.claude.com/docs/en/agent-teams) 的 AI 助手。在你的聊天中启动多个协作智能体团队。
 
 ## 我为什么创建这个项目
 
@@ -50,6 +53,7 @@ claude
 - **计划任务** - 运行 Claude 的周期性作业，并可以给你回发消息
 - **网络访问** - 搜索和抓取网页内容
 - **容器隔离** - 智能体在 Apple Container (macOS) 或 Docker (macOS/Linux) 的沙箱中运行
+- **智能体集群（Agent Swarms）** - 启动多个专业智能体团队，协作完成复杂任务（首个支持此功能的个人 AI 助手）
 - **可选集成** - 通过技能添加 Gmail (`/add-gmail`) 等更多功能
 
 ## 使用方法
@@ -66,7 +70,7 @@ claude
 ```
 @Andy 列出所有群组的计划任务
 @Andy 暂停周一简报任务
-@Andy 加入“家庭聊天”群组
+@Andy 加入"家庭聊天"群组
 ```
 
 ## 定制
@@ -118,13 +122,17 @@ claude
 WhatsApp (baileys) --> SQLite --> 轮询循环 --> 容器 (Claude Agent SDK) --> 响应
 ```
 
-单一 Node.js 进程。智能体在具有挂载目录的隔离 Linux 容器中执行。通过文件系统进行进程间通信（IPC）。无守护进程，无消息队列，没有复杂性。
+单一 Node.js 进程。智能体在具有挂载目录的隔离 Linux 容器中执行。每个群组独立的消息队列，带全局并发控制。通过文件系统进行进程间通信（IPC）。
 
 关键文件：
-- `src/index.ts` - 主应用：WhatsApp 连接、路由、IPC
-- `src/container-runner.ts` - 生成智能体容器
+- `src/index.ts` - 编排器：状态管理、消息循环、智能体调用
+- `src/channels/whatsapp.ts` - WhatsApp 连接、认证、收发消息
+- `src/ipc.ts` - IPC 监听与任务处理
+- `src/router.ts` - 消息格式化与出站路由
+- `src/group-queue.ts` - 每群组队列，带全局并发限制
+- `src/container-runner.ts` - 生成流式智能体容器
 - `src/task-scheduler.ts` - 运行计划任务
-- `src/db.ts` - SQLite 操作
+- `src/db.ts` - SQLite 操作（消息、群组、会话、状态）
 - `groups/*/CLAUDE.md` - 各群组的记忆
 
 ## FAQ
@@ -164,6 +172,10 @@ WhatsApp (baileys) --> SQLite --> 轮询循环 --> 容器 (Claude Agent SDK) -->
 其他一切（新功能、操作系统兼容性、硬件支持、增强功能）都应该作为技能来贡献。
 
 这使得基础系统保持最小化，并让每个用户可以定制他们的安装，而无需继承他们不想要的功能。
+
+## 社区
+
+有问题？有想法？[加入 Discord](https://discord.gg/VGWXrf8x)。
 
 ## 许可证
 

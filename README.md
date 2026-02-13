@@ -1,8 +1,4 @@
 <p align="center">
-  <b>English</b> | <a href="README_zh.md">中文</a>
-</p>
-
-<p align="center">
   <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
 </p>
 
@@ -11,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="README_zh.md">中文</a> ·
   <a href="https://discord.gg/VGWXrf8x"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord"></a>
 </p>
 
