@@ -15,3 +15,22 @@ pub fn reconnect_backoff_ms(attempt: u32) -> u64 {
 pub fn ui_shell_title() -> &'static str {
     "microclaw"
 }
+
+#[cfg(feature = "esp")]
+pub fn esp_feature_hint() -> &'static str {
+    "esp-idf enabled"
+}
+
+#[cfg(not(feature = "esp"))]
+pub fn esp_feature_hint() -> &'static str {
+    "esp-idf disabled"
+}
+
+#[cfg(feature = "esp")]
+pub mod esp_runtime {
+    use esp_idf_svc::sys::EspError;
+
+    pub fn init_wifi() -> Result<(), EspError> {
+        Ok(())
+    }
+}

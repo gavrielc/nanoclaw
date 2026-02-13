@@ -358,3 +358,15 @@
   - crates/microclaw-connectors/tests/email_runtime.rs added
 - Notes:
   - Added SMTP send and IMAP connect/idle wrappers
+
+## 2026-02-13T00:25:34Z S33 ESP-IDF runtime wiring
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-device --features host -> fail (esp_feature_hint missing)
+  - cargo test -p microclaw-device --features host -> pass
+- Key diffs:
+  - apps/microclaw-device/Cargo.toml updated (esp-idf-svc optional)
+  - apps/microclaw-device/src/lib.rs updated (esp feature hint, esp module)
+  - apps/microclaw-device/tests/esp_stub.rs added
+- Notes:
+  - Added ESP feature-gated wiring (host builds unchanged)

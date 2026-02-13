@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:24:31Z",
+    "updatedAt": "2026-02-13T00:25:34Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -459,9 +459,9 @@
       "intent": "Add ESP-IDF feature wiring and stubs for Wi-Fi + WS in device runtime",
       "acceptance": ["cargo test -p microclaw-device --features host passes"],
       "gates": ["cargo test -p microclaw-device --features host"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:24:55Z",
+      "completedAt": "2026-02-13T00:25:34Z",
       "dependencies": ["S32"],
       "risks": ["ESP-IDF toolchain availability"],
       "notes": "Gate ESP-IDF code under feature flag"

@@ -5,5 +5,7 @@ edition = "2021"
 
 [features]
 host = []
+esp = ["esp-idf-svc"]
 
 [dependencies]
+esp-idf-svc = { version = "0.48", optional = true }
