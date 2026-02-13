@@ -1,0 +1,13 @@
+[target.xtensa-esp32s3-espidf]
+linker = "ldproxy"
+# runner for `cargo run` (optional, requires espflash)
+# runner = "espflash flash --monitor"
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[build]
+target = "xtensa-esp32s3-espidf"
+
+[env]
+ESP_IDF_VERSION = "release/v5.1"

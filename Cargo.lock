@@ -1857,6 +1857,7 @@ dependencies = [
 name = "microclaw-device"
 version = "0.1.0"
 dependencies = [
+ "embuild",
  "esp-idf-svc",
 ]
 

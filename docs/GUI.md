@@ -7,12 +7,39 @@ This doc covers GUI options and constraints for the NanoClaw Rust port targeting
 Hardware characteristics (high-level):
 - MCU-class target (ESP32-S3), no desktop windowing system.
 - 360x360 LCD + touch, driven over QSPI/I2C.
+- Waveshare board exposes CST816 touch on I2C (shared pins) and ST77916 RGB LCD at QSPI speed.
 - Practical "GPU" is not available; expect software rendering.
 - Tight RAM/flash constraints relative to desktop.
 
 Framebuffer budget (RGB565):
 - 360 * 360 * 2 bytes = 259,200 bytes ~= 253 KiB for one full-screen buffer.
 - Double-buffer ~= 506 KiB (plus allocator overhead/caches/fonts).
+
+## Board-native Demo App References
+
+The Waveshare 1.85C documentation references existing demo apps that are useful for immediate flashing validation:
+
+- `LVGL_Arduino` demo (LVGL + audio stack, includes status and music pages)
+- `ESP32-S3-Touch-LCD-1.85C-Test` demo (page 1 system parameters, page 2 music interface, with speech recognition path)
+- Touch behavior references include 5-point touch validation and driver loops in the ESP-IDF demo flow.
+
+If you need an immediate first-pass on-device visual check before custom UI, these are the quickest “known-good” targets because they exercise:
+- display init,
+- touch input path,
+- I2C peripheral access,
+- backlight and audio I/O.
+
+## Waveshare-aligned Component Stack
+
+For this board’s display/touch path, the practical component stack is:
+
+- `espressif/esp_lcd_st77916` (SPI/QSPI panel driver, supports QSPI mode for this board)
+- `espressif/esp_lcd_touch_cst816s` (CST816 touch via I2C, touch-event driven behavior)
+
+Important touch caveats from component docs:
+- touch reads are event-driven (touch should be polled after interrupt/notification),
+- for some chips disable touch-ID reads in config if it causes init failures,
+- expect single-finger event behavior in the current CST816S component.
 
 ## Framework Fit Matrix (On-Device)
 
@@ -63,6 +90,11 @@ What that means for ESP32-S3:
 Reality check:
 - Iced's native renderer stack is built on `wgpu` (Vulkan/Metal/DX, etc.) and expects a desktop-class graphics stack/windowing model.
 
+## Implementation Artifacts
+
+- Plan: `docs/plans/2026-02-13-microclaw-device-display-touch-plan.md`
+- Mockups: `docs/plans/2026-02-13-microclaw-device-ui-mockups.md`
+
 ## Recommendation
 
 For the ESP32-S3 board UI:
@@ -99,3 +131,7 @@ For Rust firmware, a typical workflow is:
 - Kolibri: https://github.com/ryankurte/kolibri
 - egui: https://github.com/emilk/egui
 - Iced: https://github.com/iced-rs/iced
+- Waveshare demo page: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85C
+- ESP LCD component stack:
+  - https://components.espressif.com/components/espressif/esp_lcd_st77916
+  - https://components.espressif.com/components/espressif/esp_lcd_touch_cst816s

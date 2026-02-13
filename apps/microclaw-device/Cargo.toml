@@ -9,3 +9,6 @@ esp = ["esp-idf-svc"]
 
 [dependencies]
 esp-idf-svc = { version = "0.51", optional = true }
+
+[build-dependencies]
+embuild = "0.33"
