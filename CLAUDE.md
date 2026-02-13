@@ -17,6 +17,7 @@ Single Node.js process that connects to WhatsApp. Group chats use containerized 
 | `src/admin-commands.ts` | Karyakarta/area management command execution |
 | `src/admin-reply.ts` | AI reply interpreter for complaint notification replies |
 | `src/admin-instruction.ts` | AI instruction interpreter for @ComplaintBot NL management |
+| `src/admin-query-agent.ts` | AI-powered admin query agent for IT automation |
 | `src/karyakarta-handler.ts` | Karyakarta DM commands, validation flow, notifications |
 | `src/area-db.ts` | CRUD for areas, karyakartas, assignments, validations |
 | `src/area-matcher.ts` | Fuzzy area matching (Levenshtein) for complaint routing |
@@ -39,6 +40,9 @@ Single Node.js process that connects to WhatsApp. Group chats use containerized 
 | `src/db.ts` | SQLite operations |
 | `src/error-fallback.ts` | Graceful error responses when agent fails |
 | `src/group-queue.ts` | Per-group message queuing and concurrency |
+| `src/logger.ts` | Structured logging (pino) |
+| `src/types.ts` | Shared TypeScript types (Message, Complaint, etc.) |
+| `src/usage-monitor.ts` | Claude Code token/usage monitoring |
 | `config/tenant.yaml` | Tenant config (MLA name, constituency, limits) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `groups/complaint/CLAUDE.md` | Complaint agent system prompt (template with {variables}) |
@@ -96,6 +100,11 @@ container builder stop && container builder rm && container builder start
 ```
 
 Always verify after rebuild: `container run -i --rm --entrypoint wc constituency-bot-agent:latest -l /app/src/index.ts`
+
+## Gotchas
+
+- **Don't edit `data/runtime/complaint/CLAUDE.md`** — it's auto-generated from the template at `groups/complaint/CLAUDE.md` via tenant config variable substitution. Edit the template instead.
+- **Template variables** in `groups/complaint/CLAUDE.md` use `{variable_name}` syntax (e.g., `{mla_name}`, `{constituency}`). These are replaced at runtime by `src/tenant-config.ts`.
 
 ## Testing
 
