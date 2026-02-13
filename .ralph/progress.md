@@ -323,3 +323,15 @@
   - crates/microclaw-connectors/tests/imessage_runtime.rs added
 - Notes:
   - Added osascript send path + chat.db polling helper
+
+## 2026-02-13T00:19:57Z S30 Discord runtime integration
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-connectors -> fail (Discord runtime deps/APIs missing)
+  - cargo test -p microclaw-connectors -> pass
+- Key diffs:
+  - crates/microclaw-connectors/src/lib.rs updated (Discord REST send/fetch)
+  - crates/microclaw-connectors/Cargo.toml updated (serde, serde_json, ureq, httpmock)
+  - crates/microclaw-connectors/tests/discord_runtime.rs added
+- Notes:
+  - Added REST calls with mocked tests via httpmock

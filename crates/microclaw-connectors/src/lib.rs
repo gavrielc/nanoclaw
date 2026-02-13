@@ -8,6 +8,8 @@ pub trait Connector {
 use std::path::Path;
 use std::process::Command;
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandResult {
     pub status: i32,
@@ -122,12 +124,51 @@ impl DiscordConnector {
     pub fn auth_header(token: &str) -> (String, String) {
         ("Authorization".to_string(), format!("Bot {}", token))
     }
+
+    pub fn send_message(
+        base_url: &str,
+        token: &str,
+        channel_id: &str,
+        content: &str,
+    ) -> Result<DiscordMessage, String> {
+        let url = join_url(base_url, &format!("channels/{}/messages", channel_id));
+        let response = ureq::post(&url)
+            .set("Authorization", &format!("Bot {}", token))
+            .send_json(serde_json::json!({ "content": content }))
+            .map_err(ureq_error)?;
+        response
+            .into_json::<DiscordMessage>()
+            .map_err(|err| format!("parse error: {}", err))
+    }
+
+    pub fn fetch_messages(
+        base_url: &str,
+        token: &str,
+        channel_id: &str,
+        after: Option<&str>,
+    ) -> Result<Vec<DiscordMessage>, String> {
+        let url = join_url(base_url, &format!("channels/{}/messages", channel_id));
+        let mut request = ureq::get(&url).set("Authorization", &format!("Bot {}", token));
+        if let Some(after) = after {
+            request = request.query("after", after);
+        }
+        let response = request.call().map_err(ureq_error)?;
+        response
+            .into_json::<Vec<DiscordMessage>>()
+            .map_err(|err| format!("parse error: {}", err))
+    }
 }
 
 impl Connector for DiscordConnector {
     fn id(&self) -> ConnectorId {
         ConnectorId("discord".to_string())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscordMessage {
+    pub id: String,
+    pub content: String,
 }
 
 pub struct TelegramConnector;
@@ -167,5 +208,21 @@ impl EmailConnector {
 impl Connector for EmailConnector {
     fn id(&self) -> ConnectorId {
         ConnectorId("email".to_string())
+    }
+}
+
+fn join_url(base: &str, path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let path = path.trim_start_matches('/');
+    format!("{}/{}", base, path)
+}
+
+fn ureq_error(err: ureq::Error) -> String {
+    match err {
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            format!("http {}: {}", code, body)
+        }
+        ureq::Error::Transport(err) => format!("transport error: {}", err),
     }
 }

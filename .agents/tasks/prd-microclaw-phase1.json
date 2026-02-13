@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:18:21Z",
+    "updatedAt": "2026-02-13T00:19:57Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -420,9 +420,9 @@
       "intent": "Implement REST send + fetch with retry hooks",
       "acceptance": ["cargo test -p microclaw-connectors passes"],
       "gates": ["cargo test -p microclaw-connectors"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:18:35Z",
+      "completedAt": "2026-02-13T00:19:57Z",
       "dependencies": ["S29"],
       "risks": ["Rate limit handling"],
       "notes": "Use blocking HTTP client with mocked tests"
