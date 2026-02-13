@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:54:19Z",
+    "updatedAt": "2026-02-12T23:59:37Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -238,9 +238,9 @@
       "intent": "Implement cron/interval scheduling with persistence",
       "acceptance": ["cargo test -p microclaw-scheduler passes"],
       "gates": ["cargo test -p microclaw-scheduler"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-12T23:54:49Z",
+      "completedAt": "2026-02-12T23:59:37Z",
       "dependencies": ["S15"],
       "risks": ["Cron parsing complexity"],
       "notes": "Mirror NanoClaw scheduled_tasks semantics"

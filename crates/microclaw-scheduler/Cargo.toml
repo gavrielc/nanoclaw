@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+chrono = "0.4"
+cron = "0.12"
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[dev-dependencies]
+microclaw-store = { path = "../microclaw-store" }

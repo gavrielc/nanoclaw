@@ -166,3 +166,15 @@
   - crates/microclaw-bus/tests/idempotent.rs updated
 - Notes:
   - Added SQLite-backed bus_events table and replay
+
+## 2026-02-12T23:59:37Z S16 Scheduler recurrence + persistence
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-scheduler -> fail (missing recurrence APIs/deps)
+  - cargo test -p microclaw-scheduler -> pass
+- Key diffs:
+  - crates/microclaw-scheduler/src/lib.rs updated (ScheduleType, compute_next_run, due_tasks, update_task_after_run)
+  - crates/microclaw-scheduler/Cargo.toml updated (chrono, cron, rusqlite, microclaw-store dev-dep)
+  - crates/microclaw-scheduler/tests/recurrence.rs added
+- Notes:
+  - Added cron/interval scheduling with SQLite-backed due/replay helpers
