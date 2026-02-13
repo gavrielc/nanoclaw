@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T03:15:21Z",
+    "updatedAt": "2026-02-13T03:30:16Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -498,12 +498,12 @@
       "intent": "Install ESP-IDF toolchain and run esp feature check",
       "acceptance": ["cargo check -p microclaw-device --features esp passes"],
       "gates": ["cargo check -p microclaw-device --features esp"],
-      "status": "open",
-      "startedAt": null,
+      "status": "in_progress",
+      "startedAt": "2026-02-13T03:16:28Z",
       "completedAt": null,
       "dependencies": ["S35"],
       "risks": ["Toolchain install may fail in this environment"],
-      "notes": "Use espup to install if missing"
+      "notes": "cargo check fails without esp toolchain; espup install attempted (hang). Requires xtensa target (xtensa-esp32s3-espidf) with ESP-IDF env."
     }
   ]
 }

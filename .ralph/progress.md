@@ -392,3 +392,12 @@
   - crates/microclaw-scheduler/tests/task_spec.rs added
 - Notes:
   - Removed unused id warning by adding accessor
+## 2026-02-13T03:30:16Z S36 ESP-IDF toolchain check - Outcome: blocked
+- Commands:
+  - cargo check -p microclaw-device --features esp -> fail (esp-idf-sys unsupported target aarch64-apple-darwin; ESP-IDF env missing)
+  - cargo install espup -> pass
+  - espup install --targets esp32s3 --std --log-level info -> hung (terminated)
+- Key diffs:
+  - .agents/tasks/prd-microclaw-phase1.json updated (S36 notes, meta.updatedAt)
+- Notes:
+  - Need xtensa-esp32s3-espidf target + ESP-IDF env; rerun espup install with sufficient time
