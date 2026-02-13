@@ -360,11 +360,18 @@ pub struct ImapSession {
 
 impl ImapClient for ImapSession {
     fn idle(&mut self) -> Result<(), String> {
-        self.session
-            .noop()
+        let timeout = std::time::Duration::from_secs(imap_idle_timeout_secs());
+        let mut handle = self.session.idle();
+        handle
+            .timeout(timeout)
+            .wait_while(imap::extensions::idle::stop_on_any)
             .map(|_| ())
-            .map_err(|err| format!("imap noop error: {}", err))
+            .map_err(|err| format!("imap idle error: {}", err))
     }
+}
+
+pub fn imap_idle_timeout_secs() -> u64 {
+    30
 }
 
 fn join_url(base: &str, path: &str) -> String {

@@ -370,3 +370,14 @@
   - apps/microclaw-device/tests/esp_stub.rs added
 - Notes:
   - Added ESP feature-gated wiring (host builds unchanged)
+
+## 2026-02-13T00:28:13Z S34 IMAP idle integration
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-connectors -> fail (imap_idle_timeout_secs missing)
+  - cargo test -p microclaw-connectors -> pass
+- Key diffs:
+  - crates/microclaw-connectors/src/lib.rs updated (imap idle handle + timeout)
+  - crates/microclaw-connectors/tests/email_idle.rs added
+- Notes:
+  - Switched IMAP idle to real handle with bounded timeout

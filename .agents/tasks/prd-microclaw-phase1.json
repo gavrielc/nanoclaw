@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:25:34Z",
+    "updatedAt": "2026-02-13T00:28:13Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -465,6 +465,19 @@
       "dependencies": ["S32"],
       "risks": ["ESP-IDF toolchain availability"],
       "notes": "Gate ESP-IDF code under feature flag"
+    },
+    {
+      "id": "S34",
+      "title": "IMAP idle integration",
+      "intent": "Use IMAP IDLE handle with bounded timeout for live polling",
+      "acceptance": ["cargo test -p microclaw-connectors passes"],
+      "gates": ["cargo test -p microclaw-connectors"],
+      "status": "done",
+      "startedAt": "2026-02-13T00:26:30Z",
+      "completedAt": "2026-02-13T00:28:13Z",
+      "dependencies": ["S33"],
+      "risks": ["Idle timeout behavior varies by server"],
+      "notes": "Use imap::extensions::idle handle"
     }
   ]
 }
