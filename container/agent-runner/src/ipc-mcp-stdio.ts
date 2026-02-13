@@ -566,6 +566,107 @@ server.tool(
   },
 );
 
+server.tool(
+  'list_agents',
+  `List all registered agents in the NanoClaw system. Use this to discover available agents for communication.
+
+Returns information about each agent including their ID, name, description, backend type, and JID (for messaging).
+This is useful when you need to send messages to specific agents or request context from them.`,
+  {
+    filter_backend: z.enum(['apple-container', 'docker', 'sprites', 'daytona', 'railway']).optional()
+      .describe('Optional: filter agents by backend type'),
+    include_self: z.boolean().default(true)
+      .describe('Include the current agent in results (default: true)'),
+  },
+  async (args) => {
+    const registryPath = path.join(IPC_DIR, 'agent_registry.json');
+
+    try {
+      if (!fs.existsSync(registryPath)) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Agent registry not found. No agents registered yet.'
+          }]
+        };
+      }
+
+      const registry = JSON.parse(fs.readFileSync(registryPath, 'utf-8'));
+
+      if (!Array.isArray(registry) || registry.length === 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'No agents found in registry.'
+          }]
+        };
+      }
+
+      // Filter agents
+      let agents = registry;
+
+      if (args.filter_backend) {
+        agents = agents.filter((a: any) => a.backend === args.filter_backend);
+      }
+
+      if (!args.include_self) {
+        agents = agents.filter((a: any) => a.id !== groupFolder);
+      }
+
+      if (agents.length === 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'No agents match your filter criteria.'
+          }]
+        };
+      }
+
+      // Format output as a table-like structure
+      const lines = ['Available Agents:', ''];
+
+      for (const agent of agents) {
+        const isCurrent = agent.id === groupFolder ? ' (current)' : '';
+        const mainBadge = agent.isMain ? ' [MAIN]' : '';
+        const localBadge = agent.isLocal ? ' [LOCAL]' : ' [CLOUD]';
+
+        lines.push(`*${agent.name}*${isCurrent}${mainBadge}${localBadge}`);
+        lines.push(`  • ID: \`${agent.id}\``);
+        lines.push(`  • JID: \`${agent.jid}\``);
+        if (agent.jids && agent.jids.length > 1) {
+          lines.push(`  • All JIDs: ${agent.jids.map((j: string) => `\`${j}\``).join(', ')}`);
+        }
+        lines.push(`  • Backend: ${agent.backend}`);
+        lines.push(`  • Trigger: ${agent.trigger}`);
+
+        if (agent.description) {
+          lines.push(`  • Description: ${agent.description}`);
+        }
+
+        lines.push('');
+      }
+
+      const summary = `Found ${agents.length} agent${agents.length !== 1 ? 's' : ''}`;
+      const text = `${summary}\n\n${lines.join('\n')}`;
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text
+        }]
+      };
+    } catch (err) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Error reading agent registry: ${err instanceof Error ? err.message : String(err)}`
+        }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
