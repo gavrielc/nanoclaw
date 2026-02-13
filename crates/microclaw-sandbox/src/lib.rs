@@ -25,6 +25,11 @@ impl Mount {
         }
         arg
     }
+
+    fn to_docker_arg(&self) -> String {
+        let suffix = if self.read_only { ":ro" } else { "" };
+        format!("{}:{}{}", self.source, self.target, suffix)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +70,25 @@ impl AppleContainerRunner {
         }
         for (key, value) in &spec.env {
             args.push("--env".to_string());
+            args.push(format!("{}={}", key, value));
+        }
+        args.push(spec.image.clone());
+        args.extend(spec.command.iter().cloned());
+        args
+    }
+}
+
+pub struct DockerRunner;
+
+impl DockerRunner {
+    pub fn build_command(spec: &RunSpec) -> Vec<String> {
+        let mut args = vec!["docker".to_string(), "run".to_string(), "--rm".to_string()];
+        for mount in &spec.mounts {
+            args.push("-v".to_string());
+            args.push(mount.to_docker_arg());
+        }
+        for (key, value) in &spec.env {
+            args.push("-e".to_string());
             args.push(format!("{}={}", key, value));
         }
         args.push(spec.image.clone());

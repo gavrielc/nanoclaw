@@ -200,3 +200,14 @@
   - crates/microclaw-sandbox/tests/apple_runner.rs added
 - Notes:
   - Added Apple container CLI command builder with mounts + env
+
+## 2026-02-13T00:04:03Z S19 Docker runner parity
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-sandbox -> fail (DockerRunner missing)
+  - cargo test -p microclaw-sandbox -> pass
+- Key diffs:
+  - crates/microclaw-sandbox/src/lib.rs updated (DockerRunner + docker mount args)
+  - crates/microclaw-sandbox/tests/docker_runner.rs added
+- Notes:
+  - Added Docker CLI command builder with mounts + env
