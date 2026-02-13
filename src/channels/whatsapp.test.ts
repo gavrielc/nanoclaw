@@ -820,14 +820,14 @@ describe('WhatsAppChannel', () => {
       expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('composing', 'test@g.us');
     });
 
-    it('sends paused presence when stopping', async () => {
+    it('sends available presence when stopping', async () => {
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
 
       await connectChannel(channel);
 
       await channel.setTyping('test@g.us', false);
-      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('paused', 'test@g.us');
+      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('available', 'test@g.us');
     });
 
     it('handles typing indicator failure gracefully', async () => {
