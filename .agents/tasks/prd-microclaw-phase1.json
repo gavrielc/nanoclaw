@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-12T23:59:37Z",
+    "updatedAt": "2026-02-13T00:02:02Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -251,9 +251,9 @@
       "intent": "Add global concurrency limits and retry/backoff",
       "acceptance": ["cargo test -p microclaw-queue passes"],
       "gates": ["cargo test -p microclaw-queue"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:00:15Z",
+      "completedAt": "2026-02-13T00:02:02Z",
       "dependencies": ["S16"],
       "risks": ["Ordering vs throughput tradeoffs"],
       "notes": "Per-group serialization with global cap"

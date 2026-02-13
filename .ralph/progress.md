@@ -178,3 +178,14 @@
   - crates/microclaw-scheduler/tests/recurrence.rs added
 - Notes:
   - Added cron/interval scheduling with SQLite-backed due/replay helpers
+
+## 2026-02-13T00:02:02Z S17 Queue concurrency + retry
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-queue -> fail (ExecutionQueue/RetryPolicy missing)
+  - cargo test -p microclaw-queue -> pass
+- Key diffs:
+  - crates/microclaw-queue/src/lib.rs updated (ExecutionQueue, RetryPolicy)
+  - crates/microclaw-queue/tests/concurrency.rs added
+- Notes:
+  - Added inflight limit, per-group serialization, retry with backoff
