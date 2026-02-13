@@ -510,3 +510,12 @@
   - scripts/esp-check.sh added (encapsulates ESP_IDF_VERSION + build-std)
 - Notes:
   - Uses $HOME/export-esp.sh if available for toolchain setup
+## 2026-02-13T05:08:00Z S47 ESP build reproducibility doc
+- Outcome: pass
+- Commands:
+  - test -f docs/ESP_TOOLCHAIN.md -> fail
+  - test -f docs/ESP_TOOLCHAIN.md -> pass
+- Key diffs:
+  - docs/ESP_TOOLCHAIN.md added (ESP v5.1 + build-std instructions)
+- Notes:
+  - Points to scripts/esp-check.sh for canonical flow

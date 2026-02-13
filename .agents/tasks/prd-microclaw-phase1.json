@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T05:07:09Z",
+    "updatedAt": "2026-02-13T05:08:00Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -645,9 +645,9 @@
       "intent": "Document the exact esp build prerequisites and command",
       "acceptance": ["docs/ESP_TOOLCHAIN.md exists"],
       "gates": ["test -f docs/ESP_TOOLCHAIN.md"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T05:07:32Z",
+      "completedAt": "2026-02-13T05:08:00Z",
       "dependencies": ["S46"],
       "risks": ["None"],
       "notes": "Captures IDF v5.1 + build-std requirements"
