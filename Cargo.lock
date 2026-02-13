@@ -1824,6 +1824,7 @@ dependencies = [
  "microclaw-protocol",
  "rusqlite",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

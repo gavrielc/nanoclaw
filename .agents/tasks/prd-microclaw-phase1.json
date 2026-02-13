@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T03:42:53Z",
+    "updatedAt": "2026-02-13T03:44:05Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -599,6 +599,19 @@
       "dependencies": ["S42"],
       "risks": ["Toolchain availability"],
       "notes": "Requires espup toolchain + IDF setup"
+    },
+    {
+      "id": "S44",
+      "title": "Lockfile update",
+      "intent": "Commit Cargo.lock updates for new crate dependencies",
+      "acceptance": ["Cargo.lock includes latest workspace dependencies"],
+      "gates": ["git diff --exit-code Cargo.lock"],
+      "status": "done",
+      "startedAt": "2026-02-13T03:44:05Z",
+      "completedAt": "2026-02-13T03:44:05Z",
+      "dependencies": ["S40"],
+      "risks": ["None"],
+      "notes": "Keep lockfile in sync after crate updates"
     }
   ]
 }
