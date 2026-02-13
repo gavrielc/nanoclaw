@@ -417,3 +417,13 @@
   - crates/microclaw-core/tests/router.rs added
 - Notes:
   - Added escape_xml, format_messages, strip_internal_tags, format_outbound, route_outbound, find_channel
+## 2026-02-13T03:40:59Z S39 Bus persistence path - Outcome: pass
+- Commands:
+  - cargo test -p microclaw-bus -> fail (MAX(seq) NULL handling)
+  - cargo test -p microclaw-bus -> pass
+- Key diffs:
+  - crates/microclaw-bus/src/lib.rs updated (open(path), seq assignment)
+  - crates/microclaw-bus/Cargo.toml updated (rusqlite/serde_json/tempfile)
+  - crates/microclaw-bus/tests/persistence.rs added
+- Notes:
+  - Bus now persists to file and assigns sequences when missing

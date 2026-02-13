@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T03:34:30Z",
+    "updatedAt": "2026-02-13T03:40:59Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -537,9 +537,9 @@
       "intent": "Persist bus events to a durable SQLite file and support replay on reopen",
       "acceptance": ["cargo test -p microclaw-bus passes"],
       "gates": ["cargo test -p microclaw-bus"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T03:40:59Z",
+      "completedAt": "2026-02-13T03:40:59Z",
       "dependencies": ["S38"],
       "risks": ["Replay semantics"],
       "notes": "Add open(path) and sequence assignment"

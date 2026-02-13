@@ -5,5 +5,10 @@ edition = "2021"
 
 [dependencies]
 microclaw-protocol = { path = "../microclaw-protocol" }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde_json = "1"
