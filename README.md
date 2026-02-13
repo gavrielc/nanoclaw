@@ -128,6 +128,17 @@ NanoClaw can run agent containers via either Apple Container or Docker.
 docker build -t nanoclaw-agent:latest container
 ```
 
+### Runner Mode (prebuilt vs dev)
+
+By default, the agent runner uses the prebuilt `dist/` inside the container for faster cold starts.
+To enable dev mode (mount source + compile on each run), set:
+
+```bash
+export NANOCLAW_RUNNER_MODE=dev
+```
+
+Dev mode is convenient for local iteration but significantly slower on constrained hardware.
+
 ## Architecture
 
 ```

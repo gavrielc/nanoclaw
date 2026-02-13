@@ -14,6 +14,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  RUNNER_MODE,
 } from './config.js';
 import {
   buildContainerRunInvocation,
@@ -171,12 +172,24 @@ function buildVolumeMounts(
   const envFile = path.join(projectRoot, '.env');
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
-    const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+    const allowedVars = [
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_API_KEY',
+      'NANOCLAW_RUNNER_MODE',
+    ];
     const filteredLines = envContent.split('\n').filter((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) return false;
       return allowedVars.some((v) => trimmed.startsWith(`${v}=`));
     });
+    if (
+      process.env.NANOCLAW_RUNNER_MODE &&
+      !filteredLines.some((line) => line.startsWith('NANOCLAW_RUNNER_MODE='))
+    ) {
+      filteredLines.push(
+        `NANOCLAW_RUNNER_MODE=${process.env.NANOCLAW_RUNNER_MODE}`,
+      );
+    }
 
     if (filteredLines.length > 0) {
       fs.writeFileSync(
@@ -193,17 +206,20 @@ function buildVolumeMounts(
 
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Apple Container's sticky build cache for code changes.
-  const agentRunnerSrc = path.join(
-    projectRoot,
-    'container',
-    'agent-runner',
-    'src',
-  );
-  mounts.push({
-    hostPath: agentRunnerSrc,
-    containerPath: '/app/src',
-    readonly: true,
-  });
+  const runnerMode = RUNNER_MODE.trim().toLowerCase();
+  if (runnerMode === 'dev' || runnerMode === 'source') {
+    const agentRunnerSrc = path.join(
+      projectRoot,
+      'container',
+      'agent-runner',
+      'src',
+    );
+    mounts.push({
+      hostPath: agentRunnerSrc,
+      containerPath: '/app/src',
+      readonly: true,
+    });
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {

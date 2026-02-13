@@ -80,9 +80,36 @@ Main embedded blockers:
 - per-run TypeScript compilation inside container
 - polling-heavy loops with generous default timeouts (30 min)
 
+## Embedded Target Device (Rust Port Baseline)
+
+Primary target hardware for the Rust port is:
+- Waveshare ESP32-S3 Touch LCD 1.85C (1.85" round 360x360) with the Smart Speaker Box variant.
+
+See `docs/TARGET_DEVICE.md` for the verified hardware spec and constraints (no Linux containers, tight RAM/flash budgets, flash wear considerations, intermittent Wi-Fi, and different security/isolation primitives).
+
+## Voice on Embedded Target
+
+If voice is required on the ESP32-S3 target (wake word, commands, speech I/O), see:
+- `docs/VOICE.md`
+
+## GUI on Embedded Target
+
+If a local on-device GUI is required on the ESP32-S3 target (display + touch), see:
+- `docs/GUI.md`
+
+## Hosting + Transport (microClaw)
+
+For how the ESP32-S3 device should connect to off-device services (remote sandbox, voice gateway, LLM) with low latency, see:
+- `docs/MICROCLAW_HOSTING.md`
+
+## Agent Evaluation (HAL Harness)
+
+For a concrete plan to evaluate and tune agents using the Princeton PLI HAL harness, see:
+- `docs/HAL_EVAL_PLAN.md`
+
 ## Rust Port Strategy (pragmatic, security/perf first)
 Reference considered: [IronClaw](https://github.com/nearai/ironclaw).
-Use it as pattern input, not as a drop-in architecture (it is broader and heavier than NanoClaw’s target).
+Use it as pattern input, not as a drop-in architecture (it is broader and heavier than NanoClaw's target).
 
 ### Target principles
 - Keep NanoClaw small: avoid framework-scale expansion.
@@ -138,7 +165,7 @@ Borrow:
 - Sandbox manager abstraction
 - Security-first posture around tools and outbound calls
 
-Avoid (for this repo’s goals):
+Avoid (for this repo's goals):
 - Multi-channel platform sprawl
 - Large feature matrix before core parity
 - Heavy database/service footprint unless required by actual usage
@@ -154,5 +181,5 @@ Avoid (for this repo’s goals):
 - Single Rust host binary with equivalent core behavior.
 - End-to-end tests for message flow, IPC auth, and scheduler pass.
 - Cold start and task latency measurably lower than current TS host.
-- Memory and CPU profile documented on target embedded hardware.
+- Memory and CPU profile documented on the target device (`docs/TARGET_DEVICE.md`).
 - Credential handling and egress policy audited and enforced by default.
