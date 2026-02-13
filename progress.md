@@ -1,10 +1,8 @@
 # Implementation Progress — Constituency Complaint Chatbot
 
-## Current Status: Phase 3 Complete
+## Current Status: Phase 4 In Progress (1/4)
 
-Phase 3 (Voice Notes & Static Website) fully implemented. Voice track (P3-S1, P3-S2, P3-S3): 658 tests passing, build clean. Website track (P3-S4, P3-S5, P3-S6) also complete.
-
-Phase 1 post-review fixes applied previously: SQL injection in shell scripts, transaction wrapping, XML escaping, error fallback, code simplifications.
+P4-S1 (Dashboard API) complete — Hono REST API running in same process. Phase 3 (Voice Notes & Static Website) fully done. 831 tests passing, build clean.
 
 ---
 
@@ -15,14 +13,14 @@ Phase 1 post-review fixes applied previously: SQL injection in shell scripts, tr
 | Phase 1: Core Complaint Bot | ✅ Complete | 8 | 8/8 | All stories done, 269 tests |
 | Phase 2: Rate Limiting, Safety, Admin & Karyakarta | ✅ Complete | 12 | 12/12 | 593 total tests, 5 waves completed |
 | Phase 3: Voice Notes & Website | ✅ Complete | 6 | 6/6 | Voice track (P3-S1–S3) + website track (P3-S4–S6) done, 658+ tests |
-| Phase 4: Web Admin Dashboard | ⬜ Not Started | 4 | 0/4 | Depends on Phase 2 |
+| Phase 4: Web Admin Dashboard | 🔄 In Progress | 4 | 1/4 | P4-S1 done, 831 tests |
 | Phase 5: Analytics & Reporting | ⬜ Not Started | 4 | 0/4 | Depends on Phase 2, 4 |
 | Phase 6: Production Deployment | ⬜ Not Started | 5 | 0/5 | Depends on Phase 4 |
 | Phase 7: Multi-Tenant | ⬜ Not Started | 4 | 0/4 | Depends on Phase 6 |
 | Phase 8: WhatsApp CMS | ⬜ Not Started | 4 | 0/4 | Depends on Phase 3, 5 |
 | Phase 9: Advanced Features | ⬜ Not Started | 4 | 0/4 | Depends on Phase 7 |
 | Phase 10: Polish & Scale | ⬜ Not Started | 5 | 0/5 | Depends on Phase 9 |
-| **Total** | | **56** | **26/56** | |
+| **Total** | | **56** | **27/56** | |
 
 ---
 
@@ -56,19 +54,20 @@ Phase 1 post-review fixes applied previously: SQL injection in shell scripts, tr
 | 2026-02-12 | P3-S4 | Build static website with Astro | Pre-existing: Astro v5 + Tailwind v4, 7 pages, bilingual (EN/MR) at /Users/riyaz/rahulkulwebsite |
 | 2026-02-12 | P3-S5 | Website CI/CD pipeline | Pre-existing: .github/workflows/deploy.yml, self-hosted GitHub runner |
 | 2026-02-12 | P3-S6 | Kubernetes deployment for website | Pre-existing: k8s manifests, Traefik ingress, live at rahulkul.udyami.ai |
+| 2026-02-13 | P4-S1 | Dashboard API | Hono REST API: 6 endpoints, API key auth, 29 tests, reuses existing business logic |
 
 ---
 
 ## Current Sprint
 
-**Phase 3 complete** — all 6 stories implemented. Voice track: Whisper K8s manifests, voice.ts preprocessing, WhatsApp audio routing. Website track: Astro site, CI/CD, k8s deployment.
+**P4-S1 complete** — Dashboard API with Hono REST endpoints.
 
-### Next: Phase 4 + Phase 5 (can work in parallel)
+### Newly Unblocked Stories:
+- P4-S2: Dashboard frontend (depends on P4-S1 ✅)
+- P4-S3: Authentication for dashboard (depends on P4-S1 ✅)
+- P5-S4: Export functionality (depends on P4-S1 ✅)
 
-**Phase 4 unblocked stories:**
-- P4-S1: Dashboard API (depends on P2-S3 ✅)
-
-**Phase 5 unblocked stories:**
+### Still Unblocked (from previous phases):
 - P5-S1: Weekly constituency report (depends on P2-S5 ✅)
 
 ---

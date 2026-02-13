@@ -53,7 +53,7 @@ This index tracks all user stories across 10 phases of the constituency complain
 
 | ID | Title | Status | Dependencies |
 |----|-------|--------|-------------|
-| P4-S1 | Dashboard API | ⬜ Not Started | P2-S3 |
+| P4-S1 | Dashboard API | ✅ Complete | P2-S3 |
 | P4-S2 | Dashboard frontend | ⬜ Not Started | P4-S1 |
 | P4-S3 | Authentication for dashboard | ⬜ Not Started | P4-S1 |
 | P4-S4 | Kubernetes ingress for dashboard | ⬜ Not Started | P4-S2, P4-S3 |
