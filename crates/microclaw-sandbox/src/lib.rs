@@ -251,7 +251,11 @@ impl<E: Executor> AppleContainerRunner<E> {
     }
 
     pub fn build_command(spec: &RunSpec) -> Vec<String> {
-        let mut args = vec!["container".to_string(), "run".to_string(), "--rm".to_string()];
+        let mut args = vec![
+            "container".to_string(),
+            "run".to_string(),
+            "--rm".to_string(),
+        ];
         if spec.network_disabled() {
             args.push("--network=none".to_string());
         }

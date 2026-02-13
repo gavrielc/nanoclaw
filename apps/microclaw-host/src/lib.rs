@@ -1,9 +1,9 @@
-use microclaw_config::HostConfig;
-use microclaw_store::Store;
 use microclaw_bus::Bus;
-use microclaw_scheduler::Scheduler;
+use microclaw_config::HostConfig;
 use microclaw_queue::GroupQueue;
 use microclaw_sandbox::AppleContainer;
+use microclaw_scheduler::Scheduler;
+use microclaw_store::Store;
 
 pub struct Host {
     _config: HostConfig,

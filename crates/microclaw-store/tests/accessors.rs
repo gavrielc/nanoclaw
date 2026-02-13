@@ -1,4 +1,4 @@
-use microclaw_store::{RegisteredGroup, StoredMessage, Store};
+use microclaw_store::{RegisteredGroup, Store, StoredMessage};
 
 #[test]
 fn upserts_and_loads_registered_groups() {

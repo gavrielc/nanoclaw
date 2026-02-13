@@ -122,10 +122,7 @@ pub fn compute_next_run(
     }
 }
 
-pub fn due_tasks(
-    conn: &Connection,
-    now: DateTime<Utc>,
-) -> rusqlite::Result<Vec<ScheduledTask>> {
+pub fn due_tasks(conn: &Connection, now: DateTime<Utc>) -> rusqlite::Result<Vec<ScheduledTask>> {
     let mut stmt = conn.prepare(
         "SELECT id, group_folder, chat_jid, prompt, schedule_type, schedule_value, next_run, status, context_mode
          FROM scheduled_tasks
@@ -144,8 +141,7 @@ pub fn due_tasks(
             group_folder: row.get(1)?,
             chat_jid: row.get(2)?,
             prompt: row.get(3)?,
-            schedule_type: ScheduleType::from_str(&schedule_type_raw)
-                .unwrap_or(ScheduleType::Once),
+            schedule_type: ScheduleType::from_str(&schedule_type_raw).unwrap_or(ScheduleType::Once),
             schedule_value: row.get(5)?,
             next_run,
             status: row.get(7)?,

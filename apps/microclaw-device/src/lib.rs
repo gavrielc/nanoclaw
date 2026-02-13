@@ -1,3 +1,13 @@
+pub mod display;
+pub mod drivers;
+pub mod event_loop;
+pub mod pipeline;
+pub mod renderer;
+mod runtime;
+pub mod ui;
+
+pub use runtime::{now_ms, InFlightCommand, RuntimeAction, RuntimeMode, RuntimeState};
+
 pub fn boot_message() -> &'static str {
     "microclaw-device ready"
 }
@@ -33,4 +43,8 @@ pub mod esp_runtime {
     pub fn init_wifi() -> Result<(), EspError> {
         Ok(())
     }
+}
+
+pub mod protocol {
+    pub use microclaw_protocol::*;
 }

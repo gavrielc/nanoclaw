@@ -8,6 +8,9 @@ host = []
 esp = ["esp-idf-svc"]
 
 [dependencies]
+microclaw-protocol = { path = "../../crates/microclaw-protocol" }
+serde_json = "1"
+
 esp-idf-svc = { version = "0.51", optional = true }
 
 [build-dependencies]

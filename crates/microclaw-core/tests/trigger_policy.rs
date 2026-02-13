@@ -43,5 +43,10 @@ fn should_process_respects_requires_trigger_and_custom_trigger() {
 
     let trigger_msgs = vec![Message::new("@Helper do something")];
     assert!(should_process(false, Some(true), "@Helper", &trigger_msgs));
-    assert!(!should_process(false, Some(true), "@Helper", &[Message::new("@Andy do something")]));
+    assert!(!should_process(
+        false,
+        Some(true),
+        "@Helper",
+        &[Message::new("@Andy do something")]
+    ));
 }

@@ -57,9 +57,9 @@ impl Bus {
     }
 
     pub fn replay_from_seq(&self, after_seq: u64) -> rusqlite::Result<Vec<Envelope>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT payload FROM bus_events WHERE seq > ? ORDER BY seq ASC, id ASC",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT payload FROM bus_events WHERE seq > ? ORDER BY seq ASC, id ASC")?;
         let rows = stmt.query_map(params![after_seq as i64], |row| row.get::<_, String>(0))?;
         let mut events = Vec::new();
         for row in rows {
@@ -72,10 +72,8 @@ impl Bus {
 }
 
 fn fetch_last_seq(conn: &Connection) -> rusqlite::Result<u64> {
-    let max: Option<i64> = conn.query_row(
-        "SELECT MAX(seq) FROM bus_events",
-        [],
-        |row| row.get::<_, Option<i64>>(0),
-    )?;
+    let max: Option<i64> = conn.query_row("SELECT MAX(seq) FROM bus_events", [], |row| {
+        row.get::<_, Option<i64>>(0)
+    })?;
     Ok(max.unwrap_or(0).max(0) as u64)
 }

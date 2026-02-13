@@ -43,10 +43,7 @@ fn telegram_get_updates_uses_offset() {
 
     let base = server.url("");
     let updates = TelegramConnector::get_updates(&base, "TOKEN", Some(10)).unwrap();
-    assert_eq!(
-        updates,
-        vec![TelegramUpdate { update_id: 11 }]
-    );
+    assert_eq!(updates, vec![TelegramUpdate { update_id: 11 }]);
     mock.assert();
 }
 
@@ -72,8 +69,8 @@ fn telegram_send_message_with_retry_retries() {
 
     let base = server.url("");
     let policy = RetryPolicy::new(3, 1);
-    let message = TelegramConnector::send_message_with_retry(&base, "TOKEN", "123", "hi", policy)
-        .unwrap();
+    let message =
+        TelegramConnector::send_message_with_retry(&base, "TOKEN", "123", "hi", policy).unwrap();
     assert_eq!(message.message_id, 2);
     first.assert();
     second.assert();

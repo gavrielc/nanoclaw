@@ -94,8 +94,8 @@ where
 use std::path::Path;
 use std::process::Command;
 
-use serde::{Deserialize, Serialize};
 use lettre::Transport;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandResult {
@@ -458,12 +458,7 @@ impl EmailConnector {
         "IDLE"
     }
 
-    pub fn build_message(
-        from: &str,
-        to: &str,
-        subject: &str,
-        body: &str,
-    ) -> EmailMessage {
+    pub fn build_message(from: &str, to: &str, subject: &str, body: &str) -> EmailMessage {
         EmailMessage {
             from: from.to_string(),
             to: to.to_string(),

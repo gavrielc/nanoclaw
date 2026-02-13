@@ -1,5 +1,5 @@
-use microclaw_connectors::{CommandExecutor, CommandResult, IMessageConnector, IMessageMessage};
 use microclaw_connectors::RetryPolicy;
+use microclaw_connectors::{CommandExecutor, CommandResult, IMessageConnector, IMessageMessage};
 use rusqlite::Connection;
 
 struct StubExecutor {
@@ -71,11 +71,8 @@ fn fetch_since_reads_new_messages() {
          CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, date TEXT, handle_id INTEGER);",
     )
     .unwrap();
-    conn.execute(
-        "INSERT INTO handle (id) VALUES (?)",
-        ["sender@example.com"],
-    )
-    .unwrap();
+    conn.execute("INSERT INTO handle (id) VALUES (?)", ["sender@example.com"])
+        .unwrap();
     conn.execute(
         "INSERT INTO message (text, date, handle_id) VALUES (?, ?, ?)",
         ("hi", "2026-02-12T00:00:00Z", 1),

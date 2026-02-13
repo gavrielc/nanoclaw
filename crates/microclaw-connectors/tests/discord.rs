@@ -9,5 +9,8 @@ fn builds_discord_message_url() {
 #[test]
 fn builds_discord_auth_header() {
     let header = DiscordConnector::auth_header("token");
-    assert_eq!(header, ("Authorization".to_string(), "Bot token".to_string()));
+    assert_eq!(
+        header,
+        ("Authorization".to_string(), "Bot token".to_string())
+    );
 }

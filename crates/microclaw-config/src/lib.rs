@@ -5,6 +5,8 @@ pub struct HostConfig {
 
 impl Default for HostConfig {
     fn default() -> Self {
-        Self { container_backend: "apple".to_string() }
+        Self {
+            container_backend: "apple".to_string(),
+        }
     }
 }

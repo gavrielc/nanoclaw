@@ -12,7 +12,11 @@ pub struct NewMessage {
 }
 
 impl NewMessage {
-    pub fn new(sender_name: impl Into<String>, timestamp: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn new(
+        sender_name: impl Into<String>,
+        timestamp: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             sender_name: sender_name.into(),
             timestamp: timestamp.into(),
@@ -59,9 +63,7 @@ pub fn should_process(
         return true;
     }
     let pattern = create_trigger_pattern(trigger);
-    messages
-        .iter()
-        .any(|m| pattern.is_match(m.content.trim()))
+    messages.iter().any(|m| pattern.is_match(m.content.trim()))
 }
 
 pub fn escape_xml(input: &str) -> String {
@@ -93,7 +95,11 @@ pub fn strip_internal_tags(text: &str) -> String {
     pattern.replace_all(text, "").trim().to_string()
 }
 
-pub fn format_outbound(prefix_assistant_name: bool, assistant_name: &str, raw_text: &str) -> String {
+pub fn format_outbound(
+    prefix_assistant_name: bool,
+    assistant_name: &str,
+    raw_text: &str,
+) -> String {
     let text = strip_internal_tags(raw_text);
     if text.is_empty() {
         return String::new();

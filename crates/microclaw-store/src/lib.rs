@@ -77,12 +77,11 @@ CREATE TABLE IF NOT EXISTS registered_groups (
 
 fn create_schema(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_SQL)?;
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)", [])?;
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM schema_version",
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)",
         [],
-        |row| row.get(0),
     )?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))?;
     if count == 0 {
         conn.execute("INSERT INTO schema_version (version) VALUES (1)", [])?;
     }
@@ -102,7 +101,9 @@ impl Store {
 
     pub fn schema_version(&self) -> rusqlite::Result<i64> {
         self.conn
-            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| row.get(0))
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                row.get(0)
+            })
     }
 
     pub fn upsert_registered_group(&self, group: &RegisteredGroup) -> SqlResult<()> {
@@ -199,20 +200,17 @@ impl Store {
         params_vec.extend(jids.iter().cloned());
         params_vec.push(format!("{}:%", bot_prefix));
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(
-            rusqlite::params_from_iter(params_vec.iter()),
-            |row| {
-                Ok(StoredMessage {
-                    id: row.get(0)?,
-                    chat_jid: row.get(1)?,
-                    sender: row.get(2)?,
-                    sender_name: row.get(3)?,
-                    content: row.get(4)?,
-                    timestamp: row.get(5)?,
-                    is_from_me: row.get::<_, i64>(6)? != 0,
-                })
-            },
-        )?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
+            Ok(StoredMessage {
+                id: row.get(0)?,
+                chat_jid: row.get(1)?,
+                sender: row.get(2)?,
+                sender_name: row.get(3)?,
+                content: row.get(4)?,
+                timestamp: row.get(5)?,
+                is_from_me: row.get::<_, i64>(6)? != 0,
+            })
+        })?;
         let mut messages = Vec::new();
         for row in rows {
             messages.push(row?);

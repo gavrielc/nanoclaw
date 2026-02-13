@@ -10,7 +10,9 @@ fn builds_docker_command() {
     assert_eq!(args[0], "docker");
     assert!(args.contains(&"run".to_string()));
     assert!(args.contains(&"--rm".to_string()));
-    assert!(args.iter().any(|arg| arg.contains("/host/data:/workspace/data:ro")));
+    assert!(args
+        .iter()
+        .any(|arg| arg.contains("/host/data:/workspace/data:ro")));
     assert!(args.iter().any(|arg| arg == "TOKEN=redacted"));
     assert!(args.iter().any(|arg| arg == "microclaw-agent:latest"));
 }

@@ -7,7 +7,10 @@ pub struct GroupQueue<T> {
 
 impl<T> GroupQueue<T> {
     pub fn new(capacity: usize) -> Self {
-        Self { per_group: HashMap::new(), capacity }
+        Self {
+            per_group: HashMap::new(),
+            capacity,
+        }
     }
 
     pub fn push(&mut self, group: &str, item: T) {

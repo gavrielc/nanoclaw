@@ -1,6 +1,4 @@
-use microclaw_connectors::{
-    EmailConnector, EmailMessage, EmailTransport, ImapClient, RetryPolicy,
-};
+use microclaw_connectors::{EmailConnector, EmailMessage, EmailTransport, ImapClient, RetryPolicy};
 
 struct StubTransport {
     sent: std::sync::Mutex<Vec<EmailMessage>>,

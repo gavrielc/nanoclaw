@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Host Parity Phase 1",
     "createdAt": "2026-02-13T22:05:00Z",
-    "updatedAt": "2026-02-13T21:05:53Z",
+    "updatedAt": "2026-02-13T21:07:21Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -26,9 +26,9 @@
       "intent": "Expand microclaw-store schema to match NanoClaw core tables and add minimal query helpers",
       "acceptance": ["cargo test -p microclaw-store passes"],
       "gates": ["cargo test -p microclaw-store"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T21:06:29Z",
+      "completedAt": "2026-02-13T21:07:21Z",
       "dependencies": ["S1"],
       "risks": ["Schema may evolve"],
       "notes": "Mirror src/db.ts tables in Rust"

@@ -20,8 +20,10 @@ fn format_messages_wraps_xml() {
     ];
     let formatted = format_messages(&messages);
     assert!(formatted.starts_with("<messages>\n"));
-    assert!(formatted.contains("<message sender=\"Alice\" time=\"2024-01-01T00:00:00Z\">hello</message>"));
-    assert!(formatted.contains("<message sender=\"Bob\" time=\"2024-01-01T00:00:01Z\">&lt;tag&gt;</message>"));
+    assert!(formatted
+        .contains("<message sender=\"Alice\" time=\"2024-01-01T00:00:00Z\">hello</message>"));
+    assert!(formatted
+        .contains("<message sender=\"Bob\" time=\"2024-01-01T00:00:01Z\">&lt;tag&gt;</message>"));
     assert!(formatted.ends_with("\n</messages>"));
 }
 

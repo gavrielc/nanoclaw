@@ -1,7 +1,5 @@
 use chrono::{TimeZone, Utc};
-use microclaw_scheduler::{
-    compute_next_run, due_tasks, update_task_after_run, ScheduleType,
-};
+use microclaw_scheduler::{compute_next_run, due_tasks, update_task_after_run, ScheduleType};
 use microclaw_store::Store;
 
 #[test]

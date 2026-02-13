@@ -539,3 +539,12 @@
   - .agents/tasks/prd-microclaw-host-parity.json updated
 - Notes:
   - Host initializes in-memory store and bus
+## 2026-02-13T21:07:21Z S2 Store schema parity
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-store -> fail (workspace manifest path error)
+  - cargo test -p microclaw-store -> pass
+- Key diffs:
+  - .agents/tasks/prd-microclaw-host-parity.json updated
+- Notes:
+  - Schema parity already implemented; tests confirm core tables and context_mode

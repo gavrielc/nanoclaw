@@ -69,8 +69,8 @@ fn discord_send_message_with_retry_retries() {
 
     let base = server.url("/api/v10");
     let policy = RetryPolicy::new(3, 1);
-    let message = DiscordConnector::send_message_with_retry(&base, "token", "123", "hi", policy)
-        .unwrap();
+    let message =
+        DiscordConnector::send_message_with_retry(&base, "token", "123", "hi", policy).unwrap();
     assert_eq!(message.id, "2");
     first.assert();
     second.assert();
