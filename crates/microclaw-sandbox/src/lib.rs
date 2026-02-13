@@ -38,6 +38,7 @@ impl Mount {
 #[derive(Debug, Clone)]
 pub enum PolicyError {
     MountNotAllowed(String),
+    EgressNotAllowed(String),
 }
 
 pub struct MountPolicy {
@@ -143,6 +144,7 @@ pub struct RunSpec {
     pub command: Vec<String>,
     pub mounts: Vec<Mount>,
     pub env: Vec<(String, String)>,
+    pub egress_hosts: Vec<String>,
 }
 
 impl RunSpec {
@@ -152,6 +154,7 @@ impl RunSpec {
             command,
             mounts: Vec::new(),
             env: Vec::new(),
+            egress_hosts: Vec::new(),
         }
     }
 
@@ -161,6 +164,24 @@ impl RunSpec {
 
     pub fn add_env(&mut self, key: &str, value: &str) {
         self.env.push((key.to_string(), value.to_string()));
+    }
+
+    pub fn add_egress_host(&mut self, host: &str) {
+        self.egress_hosts.push(host.to_string());
+    }
+
+    pub fn validate(
+        &self,
+        mount_policy: &MountPolicy,
+        egress_policy: &EgressPolicy,
+    ) -> Result<(), PolicyError> {
+        mount_policy.validate(&self.mounts)?;
+        for host in &self.egress_hosts {
+            if !egress_policy.allows(host) {
+                return Err(PolicyError::EgressNotAllowed(host.clone()));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -241,6 +262,17 @@ impl<E: Executor> AppleContainerRunner<E> {
         let args = Self::build_command(spec);
         self.executor.run(&args)
     }
+
+    pub fn run_with_policy(
+        &self,
+        spec: &RunSpec,
+        mount_policy: &MountPolicy,
+        egress_policy: &EgressPolicy,
+    ) -> Result<CommandResult, String> {
+        spec.validate(mount_policy, egress_policy)
+            .map_err(|err| format!("policy violation: {:?}", err))?;
+        self.run(spec)
+    }
 }
 
 pub struct DockerRunnerExec<E> {
@@ -255,6 +287,17 @@ impl<E: Executor> DockerRunnerExec<E> {
     pub fn run(&self, spec: &RunSpec) -> Result<CommandResult, String> {
         let args = DockerRunner::build_command(spec);
         self.executor.run(&args)
+    }
+
+    pub fn run_with_policy(
+        &self,
+        spec: &RunSpec,
+        mount_policy: &MountPolicy,
+        egress_policy: &EgressPolicy,
+    ) -> Result<CommandResult, String> {
+        spec.validate(mount_policy, egress_policy)
+            .map_err(|err| format!("policy violation: {:?}", err))?;
+        self.run(spec)
     }
 }
 

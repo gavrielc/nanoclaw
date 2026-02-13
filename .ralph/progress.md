@@ -300,3 +300,14 @@
   - crates/microclaw-sandbox/tests/apple_runner.rs updated
 - Notes:
   - Added executor abstraction for real process execution
+
+## 2026-02-13T00:16:59Z S28 Sandbox policy enforcement
+- Outcome: pass
+- Commands:
+  - cargo test -p microclaw-sandbox -> fail (run_with_policy/egress missing)
+  - cargo test -p microclaw-sandbox -> pass
+- Key diffs:
+  - crates/microclaw-sandbox/src/lib.rs updated (RunSpec egress hosts, run_with_policy)
+  - crates/microclaw-sandbox/tests/policy_exec.rs added
+- Notes:
+  - Enforced mount allowlist + egress allowlist at runtime

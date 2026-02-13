@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T00:16:01Z",
+    "updatedAt": "2026-02-13T00:16:59Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -394,9 +394,9 @@
       "intent": "Enforce MountPolicy/EgressPolicy in runner execution",
       "acceptance": ["cargo test -p microclaw-sandbox passes"],
       "gates": ["cargo test -p microclaw-sandbox"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T00:16:12Z",
+      "completedAt": "2026-02-13T00:16:59Z",
       "dependencies": ["S27"],
       "risks": ["Policy errors could block workflows"],
       "notes": "Deny-by-default unless allowlisted"
