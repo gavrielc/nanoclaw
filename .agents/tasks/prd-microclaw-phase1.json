@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T04:49:05Z",
+    "updatedAt": "2026-02-13T05:02:24Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -593,9 +593,9 @@
       "gates": [
         "cargo check -p microclaw-device --features esp --target xtensa-esp32s3-espidf"
       ],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T04:50:31Z",
+      "completedAt": "2026-02-13T05:02:24Z",
       "dependencies": ["S42"],
       "risks": ["Toolchain availability"],
       "notes": "Requires espup toolchain + IDF setup"

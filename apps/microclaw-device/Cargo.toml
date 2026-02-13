@@ -8,4 +8,4 @@ host = []
 esp = ["esp-idf-svc"]
 
 [dependencies]
-esp-idf-svc = { version = "0.48", optional = true }
+esp-idf-svc = { version = "0.51", optional = true }

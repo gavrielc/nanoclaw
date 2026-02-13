@@ -472,3 +472,14 @@
   - tests added/updated: retry.rs, discord_runtime.rs, telegram_runtime.rs, email_runtime.rs, imessage_runtime.rs
 - Notes:
   - Retry behavior is now deterministic via backoff metadata
+## 2026-02-13T05:02:24Z S43 Device runtime ESP integration
+- Outcome: pass
+- Commands:
+  - cargo +esp check -p microclaw-device --features esp -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf -> fail (time64 mismatch under IDF v4.4)
+  - cargo +esp check -p microclaw-device --features esp -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf (ESP_IDF_VERSION=release/v5.1) -> fail (bootloader CMake cache mismatch)
+  - cargo +esp check -p microclaw-device --features esp -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf (ESP_IDF_VERSION=release/v5.1, esp-idf-svc 0.51) -> pass
+- Key diffs:
+  - apps/microclaw-device/Cargo.toml updated (esp-idf-svc 0.51)
+  - Cargo.lock updated (esp-idf-sys/hal/svc/bindgen/embuild)
+- Notes:
+  - IDF v4.4 build required Python 3.11 env for construct==2.10.54; v5.1 build needed bootloader CMakeCache cleanup
