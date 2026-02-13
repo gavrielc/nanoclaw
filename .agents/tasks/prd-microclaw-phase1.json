@@ -2,7 +2,7 @@
   "meta": {
     "title": "MicroClaw Phase 1 (Parity + Hardening)",
     "createdAt": "2026-02-12T23:27:08Z",
-    "updatedAt": "2026-02-13T04:11:37Z",
+    "updatedAt": "2026-02-13T04:49:05Z",
     "minCycles": 5,
     "staleSeconds": 14400
   },
@@ -576,9 +576,9 @@
       "intent": "Add live send/receive loops with retry/backoff for iMessage, Discord, Telegram, Email",
       "acceptance": ["cargo test -p microclaw-connectors passes"],
       "gates": ["cargo test -p microclaw-connectors"],
-      "status": "open",
-      "startedAt": null,
-      "completedAt": null,
+      "status": "done",
+      "startedAt": "2026-02-13T04:49:05Z",
+      "completedAt": "2026-02-13T04:49:05Z",
       "dependencies": ["S41"],
       "risks": ["Rate limits, polling load"],
       "notes": "Include reconnection logic and idempotent delivery"

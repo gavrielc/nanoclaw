@@ -1,5 +1,5 @@
 use httpmock::prelude::*;
-use microclaw_connectors::{DiscordConnector, DiscordMessage};
+use microclaw_connectors::{DiscordConnector, DiscordMessage, IdempotencyStore, RetryPolicy};
 
 #[test]
 fn discord_send_message_posts_json() {
@@ -47,4 +47,48 @@ fn discord_fetch_messages_uses_after_param() {
         }]
     );
     mock.assert();
+}
+
+#[test]
+fn discord_send_message_with_retry_retries() {
+    let server = MockServer::start();
+    let first = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/v10/channels/123/messages")
+            .header("X-Retry-Stage", "first");
+        then.status(500).body("oops");
+    });
+    let second = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/v10/channels/123/messages")
+            .header("Authorization", "Bot token")
+            .header("X-Retry-Stage", "second");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"id": "2", "content": "ok"}));
+    });
+
+    let base = server.url("/api/v10");
+    let policy = RetryPolicy::new(3, 1);
+    let message = DiscordConnector::send_message_with_retry(&base, "token", "123", "hi", policy)
+        .unwrap();
+    assert_eq!(message.id, "2");
+    first.assert();
+    second.assert();
+}
+
+#[test]
+fn discord_dedupe_messages_filters_seen() {
+    let mut store = IdempotencyStore::new();
+    let messages = vec![
+        DiscordMessage {
+            id: "1".to_string(),
+            content: "a".to_string(),
+        },
+        DiscordMessage {
+            id: "1".to_string(),
+            content: "a".to_string(),
+        },
+    ];
+    let deduped = DiscordConnector::dedupe_messages(&mut store, messages);
+    assert_eq!(deduped.len(), 1);
 }

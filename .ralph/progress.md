@@ -463,3 +463,12 @@
   - crates/microclaw-sandbox/tests/network.rs added
 - Notes:
   - Docker/Apple runners now add --network=none when no egress hosts
+## 2026-02-13T04:49:05Z S42 Connector runtime parity - Outcome: pass
+- Commands:
+  - cargo test -p microclaw-connectors -> fail (retry tests)
+  - cargo test -p microclaw-connectors -> pass
+- Key diffs:
+  - crates/microclaw-connectors/src/lib.rs updated (retry/backoff + dedupe + retry wrappers)
+  - tests added/updated: retry.rs, discord_runtime.rs, telegram_runtime.rs, email_runtime.rs, imessage_runtime.rs
+- Notes:
+  - Retry behavior is now deterministic via backoff metadata

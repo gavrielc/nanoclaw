@@ -5,6 +5,92 @@ pub trait Connector {
     fn id(&self) -> ConnectorId;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    pub max_attempts: usize,
+    pub backoff_ms: u64,
+}
+
+impl RetryPolicy {
+    pub fn new(max_attempts: usize, backoff_ms: u64) -> Self {
+        Self {
+            max_attempts: max_attempts.max(1),
+            backoff_ms,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryError {
+    pub attempts: usize,
+    pub delays: Vec<u64>,
+    pub last_error: String,
+}
+
+pub fn retry_with_backoff<T, F>(policy: RetryPolicy, mut op: F) -> Result<T, RetryError>
+where
+    F: FnMut(usize) -> Result<T, String>,
+{
+    let mut delays = Vec::new();
+    for attempt in 1..=policy.max_attempts {
+        match op(attempt) {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                if attempt == policy.max_attempts {
+                    return Err(RetryError {
+                        attempts: attempt,
+                        delays,
+                        last_error: err,
+                    });
+                }
+                delays.push(policy.backoff_ms.saturating_mul(attempt as u64));
+            }
+        }
+    }
+    Err(RetryError {
+        attempts: policy.max_attempts,
+        delays,
+        last_error: "retry attempts exhausted".to_string(),
+    })
+}
+
+#[derive(Default)]
+pub struct IdempotencyStore {
+    seen: std::collections::HashSet<String>,
+}
+
+impl IdempotencyStore {
+    pub fn new() -> Self {
+        Self {
+            seen: std::collections::HashSet::new(),
+        }
+    }
+
+    pub fn seen(&self, key: &str) -> bool {
+        self.seen.contains(key)
+    }
+
+    pub fn record(&mut self, key: &str) {
+        self.seen.insert(key.to_string());
+    }
+}
+
+pub fn dedupe_by_id<T, F>(store: &mut IdempotencyStore, items: Vec<T>, id_fn: F) -> Vec<T>
+where
+    F: Fn(&T) -> String,
+{
+    let mut output = Vec::new();
+    for item in items {
+        let key = id_fn(&item);
+        if store.seen(&key) {
+            continue;
+        }
+        store.record(&key);
+        output.push(item);
+    }
+    output
+}
+
 use std::path::Path;
 use std::process::Command;
 
@@ -74,6 +160,15 @@ impl IMessageConnector {
         Self::send_with_executor(&executor, to, message)
     }
 
+    pub fn send_with_retry<E: CommandExecutor>(
+        executor: &E,
+        to: &str,
+        message: &str,
+        policy: RetryPolicy,
+    ) -> Result<CommandResult, RetryError> {
+        retry_with_backoff(policy, |_| Self::send_with_executor(executor, to, message))
+    }
+
     pub fn fetch_since(
         path: impl AsRef<Path>,
         last_rowid: i64,
@@ -92,6 +187,16 @@ impl IMessageConnector {
             messages.push(row?);
         }
         Ok(messages)
+    }
+
+    pub fn fetch_since_with_retry(
+        path: impl AsRef<Path>,
+        last_rowid: i64,
+        policy: RetryPolicy,
+    ) -> Result<Vec<IMessageMessage>, RetryError> {
+        retry_with_backoff(policy, |_| {
+            Self::fetch_since(path.as_ref(), last_rowid).map_err(|err| err.to_string())
+        })
     }
 }
 
@@ -142,6 +247,30 @@ impl DiscordConnector {
             .map_err(|err| format!("parse error: {}", err))
     }
 
+    pub fn send_message_with_retry(
+        base_url: &str,
+        token: &str,
+        channel_id: &str,
+        content: &str,
+        policy: RetryPolicy,
+    ) -> Result<DiscordMessage, RetryError> {
+        retry_with_backoff(policy, |attempt| {
+            let url = join_url(base_url, &format!("channels/{}/messages", channel_id));
+            let mut request = ureq::post(&url).set("Authorization", &format!("Bot {}", token));
+            if attempt == 1 {
+                request = request.set("X-Retry-Stage", "first");
+            } else {
+                request = request.set("X-Retry-Stage", "second");
+            }
+            let response = request
+                .send_json(serde_json::json!({ "content": content }))
+                .map_err(ureq_error)?;
+            response
+                .into_json::<DiscordMessage>()
+                .map_err(|err| format!("parse error: {}", err))
+        })
+    }
+
     pub fn fetch_messages(
         base_url: &str,
         token: &str,
@@ -157,6 +286,25 @@ impl DiscordConnector {
         response
             .into_json::<Vec<DiscordMessage>>()
             .map_err(|err| format!("parse error: {}", err))
+    }
+
+    pub fn fetch_messages_with_retry(
+        base_url: &str,
+        token: &str,
+        channel_id: &str,
+        after: Option<&str>,
+        policy: RetryPolicy,
+    ) -> Result<Vec<DiscordMessage>, RetryError> {
+        retry_with_backoff(policy, |_| {
+            Self::fetch_messages(base_url, token, channel_id, after)
+        })
+    }
+
+    pub fn dedupe_messages(
+        store: &mut IdempotencyStore,
+        messages: Vec<DiscordMessage>,
+    ) -> Vec<DiscordMessage> {
+        dedupe_by_id(store, messages, |m| m.id.clone())
     }
 }
 
@@ -203,6 +351,31 @@ impl TelegramConnector {
         }
     }
 
+    pub fn send_message_with_retry(
+        base_url: &str,
+        token: &str,
+        chat_id: &str,
+        text: &str,
+        policy: RetryPolicy,
+    ) -> Result<TelegramMessage, RetryError> {
+        retry_with_backoff(policy, |attempt| {
+            let url = join_url(base_url, &format!("bot{}/sendMessage", token));
+            let stage = if attempt == 1 { "first" } else { "second" };
+            let response = ureq::post(&url)
+                .set("X-Retry-Stage", stage)
+                .send_json(serde_json::json!({"chat_id": chat_id, "text": text}))
+                .map_err(ureq_error)?;
+            let body: TelegramSendResponse = response
+                .into_json()
+                .map_err(|err| format!("parse error: {}", err))?;
+            if body.ok {
+                Ok(body.result)
+            } else {
+                Err("telegram send failed".to_string())
+            }
+        })
+    }
+
     pub fn get_updates(
         base_url: &str,
         token: &str,
@@ -222,6 +395,22 @@ impl TelegramConnector {
         } else {
             Err("telegram getUpdates failed".to_string())
         }
+    }
+
+    pub fn get_updates_with_retry(
+        base_url: &str,
+        token: &str,
+        offset: Option<i64>,
+        policy: RetryPolicy,
+    ) -> Result<Vec<TelegramUpdate>, RetryError> {
+        retry_with_backoff(policy, |_| Self::get_updates(base_url, token, offset))
+    }
+
+    pub fn dedupe_updates(
+        store: &mut IdempotencyStore,
+        updates: Vec<TelegramUpdate>,
+    ) -> Vec<TelegramUpdate> {
+        dedupe_by_id(store, updates, |u| u.update_id.to_string())
     }
 }
 
@@ -290,6 +479,14 @@ impl EmailConnector {
         transport.send(message)
     }
 
+    pub fn smtp_send_with_retry<T: EmailTransport>(
+        transport: &T,
+        message: &EmailMessage,
+        policy: RetryPolicy,
+    ) -> Result<(), RetryError> {
+        retry_with_backoff(policy, |_| transport.send(message))
+    }
+
     pub fn smtp_send(
         server: &str,
         from: &str,
@@ -314,6 +511,13 @@ impl EmailConnector {
 
     pub fn imap_idle_with_client<C: ImapClient>(client: &mut C) -> Result<(), String> {
         client.idle()
+    }
+
+    pub fn imap_idle_with_retry<C: ImapClient>(
+        client: &mut C,
+        policy: RetryPolicy,
+    ) -> Result<(), RetryError> {
+        retry_with_backoff(policy, |_| client.idle())
     }
 
     pub fn connect_imap(

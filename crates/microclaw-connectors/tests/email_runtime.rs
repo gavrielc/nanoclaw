@@ -1,4 +1,6 @@
-use microclaw_connectors::{EmailConnector, EmailMessage, EmailTransport, ImapClient};
+use microclaw_connectors::{
+    EmailConnector, EmailMessage, EmailTransport, ImapClient, RetryPolicy,
+};
 
 struct StubTransport {
     sent: std::sync::Mutex<Vec<EmailMessage>>,
@@ -45,4 +47,28 @@ fn imap_idle_with_client_calls_idle() {
     let mut client = StubImap { called: false };
     EmailConnector::imap_idle_with_client(&mut client).unwrap();
     assert!(client.called);
+}
+
+#[test]
+fn smtp_send_with_retry_retries() {
+    struct FlakyTransport {
+        calls: std::sync::Mutex<usize>,
+    }
+    impl EmailTransport for FlakyTransport {
+        fn send(&self, _message: &EmailMessage) -> Result<(), String> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls < 2 {
+                Err("fail".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let transport = FlakyTransport {
+        calls: std::sync::Mutex::new(0),
+    };
+    let message = EmailConnector::build_message("a@example.com", "b@example.com", "hi", "body");
+    let policy = RetryPolicy::new(2, 5);
+    EmailConnector::smtp_send_with_retry(&transport, &message, policy).unwrap();
 }

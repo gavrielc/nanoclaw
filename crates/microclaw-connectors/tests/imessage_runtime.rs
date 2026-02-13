@@ -1,4 +1,5 @@
 use microclaw_connectors::{CommandExecutor, CommandResult, IMessageConnector, IMessageMessage};
+use microclaw_connectors::RetryPolicy;
 use rusqlite::Connection;
 
 struct StubExecutor {
@@ -21,6 +22,34 @@ impl CommandExecutor for StubExecutor {
             stdout: String::new(),
             stderr: String::new(),
         })
+    }
+}
+
+struct FlakyExecutor {
+    calls: std::sync::Mutex<usize>,
+}
+
+impl FlakyExecutor {
+    fn new() -> Self {
+        Self {
+            calls: std::sync::Mutex::new(0),
+        }
+    }
+}
+
+impl CommandExecutor for FlakyExecutor {
+    fn run(&self, _args: &[String]) -> Result<CommandResult, String> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        if *calls < 2 {
+            Err("transient".to_string())
+        } else {
+            Ok(CommandResult {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
     }
 }
 
@@ -65,4 +94,12 @@ fn fetch_since_reads_new_messages() {
 
     let none = IMessageConnector::fetch_since(tmp.path(), 1).unwrap();
     assert!(none.is_empty());
+}
+
+#[test]
+fn send_with_retry_retries_on_failure() {
+    let executor = FlakyExecutor::new();
+    let policy = RetryPolicy::new(2, 5);
+    let result = IMessageConnector::send_with_retry(&executor, "+15551212", "hello", policy);
+    assert!(result.is_ok());
 }
