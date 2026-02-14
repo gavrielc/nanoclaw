@@ -1,0 +1,2 @@
+{"level":30,"time":1771058404948,"pid":70294,"hostname":"ZBMac-HD7QFJ77VC","msg":"Starting NanoClaw Terminal UI (assistant: Andy)"}
+{"level":30,"time":1771058408632,"pid":70294,"hostname":"ZBMac-HD7QFJ77VC","group":"terminal","containerName":"nanoclaw-main-1771058408632","mountCount":5,"isMain":true,"msg":"Spawning container agent"}
