@@ -1,4 +1,5 @@
-use microclaw_device::{now_ms, protocol::*, RuntimeAction, RuntimeMode, RuntimeState};
+use microclaw_device::{now_ms, protocol::*, AgentActivity, RuntimeAction, RuntimeMode, RuntimeState};
+use microclaw_device::ui::Scene;
 use microclaw_protocol::TouchEventPayload;
 use serde_json::json;
 
@@ -402,4 +403,44 @@ fn messages_without_ttl_are_not_expired() {
         ),
         "message without TTL should not be rejected"
     );
+}
+
+#[test]
+fn agent_activity_transitions_scene() {
+    let mut state = RuntimeState::new();
+    // Connect first
+    state.apply_transport_message(&TransportMessage {
+        envelope: Envelope::new("host", "microclaw-device", "boot", MessageId::new("m-connect")),
+        kind: MessageKind::HelloAck,
+        corr_id: None,
+        ttl_ms: None,
+        issued_at: Some(0),
+        signature: None,
+        nonce: None,
+        payload: serde_json::json!({}),
+    });
+    assert_eq!(state.scene(), Scene::Paired);
+
+    // Set thinking
+    state.set_agent_activity(Some(AgentActivity::Thinking));
+    assert_eq!(state.scene(), Scene::AgentThinking);
+
+    // Set streaming
+    state.set_agent_activity(Some(AgentActivity::Streaming {
+        partial_text: String::new(),
+    }));
+    assert_eq!(state.scene(), Scene::AgentStreaming);
+
+    // Set task progress
+    state.set_agent_activity(Some(AgentActivity::TaskProgress {
+        task_name: "Searching".to_string(),
+        current: 3,
+        total: 7,
+        step_label: Some("Pattern matching".to_string()),
+    }));
+    assert_eq!(state.scene(), Scene::AgentTaskProgress);
+
+    // Clear activity
+    state.set_agent_activity(None);
+    assert_eq!(state.scene(), Scene::Paired);
 }

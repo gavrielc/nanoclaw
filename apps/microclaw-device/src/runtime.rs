@@ -38,6 +38,42 @@ pub enum RuntimeAction {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentActivity {
+    Thinking,
+    Streaming { partial_text: String },
+    TaskProgress {
+        task_name: String,
+        current: u32,
+        total: u32,
+        step_label: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct ToastNotification {
+    pub title: String,
+    pub body: String,
+    pub severity: ToastSeverity,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastSeverity {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub struct NotificationItem {
+    pub title: String,
+    pub body: String,
+    pub severity: ToastSeverity,
+    pub timestamp_ms: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct InFlightCommand {
     pub corr_id: String,
@@ -67,6 +103,11 @@ pub struct RuntimeState {
     scene_cache: Cell<Scene>,
     storage: Option<Box<dyn DeviceStorage>>,
     pending_reconciliation: bool,
+    agent_activity: Option<AgentActivity>,
+    show_notifications: bool,
+    active_toast: Option<ToastNotification>,
+    notifications: VecDeque<NotificationItem>,
+    connect_page_index: u8,
 }
 
 impl RuntimeState {
@@ -93,6 +134,11 @@ impl RuntimeState {
             scene_cache: Cell::new(Scene::Boot),
             storage: None,
             pending_reconciliation: false,
+            agent_activity: None,
+            show_notifications: false,
+            active_toast: None,
+            notifications: VecDeque::new(),
+            connect_page_index: 0,
         }
     }
 
@@ -194,10 +240,86 @@ impl RuntimeState {
         self.in_flight.keys().cloned().collect()
     }
 
+    pub fn set_agent_activity(&mut self, activity: Option<AgentActivity>) {
+        self.agent_activity = activity;
+    }
+
+    pub fn agent_activity(&self) -> Option<&AgentActivity> {
+        self.agent_activity.as_ref()
+    }
+
+    pub fn toggle_notifications(&mut self) {
+        self.show_notifications = !self.show_notifications;
+    }
+
+    pub fn show_notifications(&self) -> bool {
+        self.show_notifications
+    }
+
+    pub fn push_notification(&mut self, item: NotificationItem) {
+        self.notifications.push_back(item);
+        while self.notifications.len() > 20 {
+            self.notifications.pop_front();
+        }
+    }
+
+    pub fn notifications(&self) -> &VecDeque<NotificationItem> {
+        &self.notifications
+    }
+
+    pub fn notification_count(&self) -> usize {
+        self.notifications.len()
+    }
+
+    pub fn set_toast(&mut self, toast: Option<ToastNotification>) {
+        self.active_toast = toast;
+    }
+
+    pub fn active_toast(&self) -> Option<&ToastNotification> {
+        self.active_toast.as_ref()
+    }
+
+    pub fn expire_toast(&mut self, now_ms: u64) -> bool {
+        if let Some(toast) = &self.active_toast {
+            if now_ms >= toast.expires_at_ms {
+                self.active_toast = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn connect_page_index(&self) -> u8 {
+        self.connect_page_index
+    }
+
+    pub fn set_connect_page_index(&mut self, index: u8) {
+        self.connect_page_index = index.min(3);
+    }
+
+    pub fn next_connect_page(&mut self) {
+        self.connect_page_index = (self.connect_page_index + 1).min(3);
+    }
+
+    pub fn prev_connect_page(&mut self) {
+        self.connect_page_index = self.connect_page_index.saturating_sub(1);
+    }
+
     pub fn scene(&self) -> Scene {
         let scene = match &self.mode {
             RuntimeMode::Booting => Scene::Boot,
-            RuntimeMode::Connected => Scene::Paired,
+            RuntimeMode::Connected => {
+                if self.show_notifications {
+                    Scene::NotificationList
+                } else {
+                    match &self.agent_activity {
+                        Some(AgentActivity::Thinking) => Scene::AgentThinking,
+                        Some(AgentActivity::Streaming { .. }) => Scene::AgentStreaming,
+                        Some(AgentActivity::TaskProgress { .. }) => Scene::AgentTaskProgress,
+                        None => Scene::Paired,
+                    }
+                }
+            }
             RuntimeMode::Offline => Scene::Offline,
             RuntimeMode::Error(_) => Scene::Error,
             RuntimeMode::SafeMode(_) => Scene::Settings,

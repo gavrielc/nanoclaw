@@ -10,7 +10,7 @@ pub mod storage;
 pub mod transport;
 pub mod ui;
 
-pub use runtime::{now_ms, InFlightCommand, RuntimeAction, RuntimeMode, RuntimeState};
+pub use runtime::{now_ms, AgentActivity, InFlightCommand, RuntimeAction, RuntimeMode, RuntimeState};
 
 pub fn boot_message() -> &'static str {
     "microclaw-device ready"
