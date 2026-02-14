@@ -1,10 +1,20 @@
 ---
 name: agent-browser
-description: Browse the web for any task — research topics, read articles, interact with web apps, fill forms, take screenshots, extract data, and test web pages. Use whenever a browser would be useful, not just when the user explicitly asks.
+description: Browse the web for any task — research topics, read articles, interact with web apps, fill forms, take screenshots, extract data, and test web pages. Use whenever a browser would be useful, not just when the user explicitly asks. Note - First use requires one-time setup (run install command).
 allowed-tools: Bash(agent-browser:*)
 ---
 
 # Browser Automation with agent-browser
+
+## First-time setup
+
+agent-browser is **not pre-installed** to keep container startup fast. On first use, run:
+
+```bash
+bun install -g agent-browser && bunx playwright install chromium
+```
+
+This downloads Chromium (~350MB) and takes ~30 seconds. Only needed once per container.
 
 ## Quick start
 

@@ -1,28 +1,13 @@
 # NanoClaw Agent Container
-# Runs Claude Agent SDK in isolated Linux VM with browser automation
+# Runs Claude Agent SDK in isolated Linux VM
 
 FROM oven/bun:slim
 
 # Install Node.js (agents expect node/npm/npx to be available alongside bun)
-# and system dependencies for Chromium (libs needed by agent-browser's bundled Chromium)
+# and essential system tools
 RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
-    fonts-liberation \
-    fonts-noto-color-emoji \
-    libgbm1 \
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxshmfence1 \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -36,10 +21,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install agent-browser and claude-code globally, then download Chromium via bunx
-# (agent-browser install hardcodes npx in its native binary, so we bypass it)
-RUN bun install -g agent-browser @anthropic-ai/claude-code \
-    && bunx playwright install chromium
+# Install claude-code globally
+# Note: agent-browser is available as an on-demand skill (installed on first use)
+RUN bun install -g @anthropic-ai/claude-code
 
 # Create app directory
 WORKDIR /app
