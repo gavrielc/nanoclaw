@@ -416,6 +416,9 @@ export function updateTask(
     >
   >,
 ): void {
+  // SECURITY NOTE: Field names are hardcoded below (not user-controlled), making this safe from SQL injection.
+  // All values use parameterized queries (?). If this logic changes to allow dynamic field selection,
+  // ensure field names are validated against an allowlist.
   const fields: string[] = [];
   const values: (string | null)[] = [];
 
@@ -450,8 +453,13 @@ export function updateTask(
 
 export function deleteTask(id: string): void {
   // Delete child records first (FK constraint)
-  db.query('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  db.query('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  // Wrap in transaction to ensure both deletes succeed or both roll back
+  const transaction = db.transaction(() => {
+    db.query('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
+    db.query('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  });
+
+  transaction();
 }
 
 export function getDueTasks(): ScheduledTask[] {
