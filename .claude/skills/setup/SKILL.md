@@ -736,6 +736,78 @@ tail -f logs/nanoclaw.log
 
 The user should receive a response in WhatsApp.
 
+## Reboot Agents
+
+When the user asks to reboot or restart their agents, **check status first** before restarting anything.
+
+### 1. Check which agents are registered
+
+```bash
+sqlite3 store/messages.db "SELECT folder, name, backend FROM registered_groups"
+```
+
+### 2. Check if the NanoClaw service is running
+
+```bash
+launchctl list | grep nanoclaw
+```
+
+A running service shows a PID in the first column. `-` means it's not running.
+
+### 3. Check recent activity per agent
+
+For each registered group folder, check the most recent container log timestamp to determine if it's been active:
+
+```bash
+for folder in $(sqlite3 store/messages.db "SELECT folder FROM registered_groups"); do
+  LATEST=$(ls -t "groups/$folder/logs/" 2>/dev/null | head -1)
+  if [ -n "$LATEST" ]; then
+    echo "$folder: last active $(echo "$LATEST" | sed 's/container-//;s/\.log//' | tr 'T' ' ')"
+  else
+    echo "$folder: no recent activity"
+  fi
+done
+```
+
+Also check the main log for recent errors:
+```bash
+tail -20 logs/nanoclaw.log
+```
+
+### 4. Present status and ask
+
+Use the **AskUserQuestion** tool to show the user the status of each agent and ask which ones to reboot. Example:
+
+> **Agent Status:**
+> - **main** — last active 2 min ago
+> - **ditto-discord** — last active 3 hours ago
+> - **bot-commands** — no recent activity
+>
+> Which agents do you want to reboot?
+>
+> Options:
+> 1. Reboot all (restart NanoClaw service)
+> 2. Let me pick specific ones
+
+### 5. Reboot
+
+**Reboot all** (restarts the entire NanoClaw service, which reconnects all channels):
+```bash
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+```
+
+After restarting, verify it came back up:
+```bash
+sleep 3 && launchctl list | grep nanoclaw
+```
+
+Then check the log for successful startup:
+```bash
+tail -5 logs/nanoclaw.log
+```
+
+Tell the user the result — whether the service restarted successfully and is processing messages again.
+
 ## Troubleshooting
 
 **Service not starting**: Check `logs/nanoclaw.error.log`
