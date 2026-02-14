@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
+const flushPromises = () => new Promise((r) => setTimeout(r, 0));
+
 // --- Mocks ---
 
 // Mock config
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',
+  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
 }));
 
 // Mock logger
@@ -41,6 +44,15 @@ vi.mock('fs', async () => {
 // Mock child_process (used for osascript notification)
 vi.mock('child_process', () => ({
   exec: vi.fn(),
+}));
+
+// Mock whatsapp-media
+const mockGetMediaInfo = vi.fn<() => { type: string; mimetype: string } | null>(() => null);
+const mockDownloadAndSaveMedia = vi.fn<() => Promise<{ filePath: string; containerPath: string } | null>>();
+
+vi.mock('../whatsapp-media.js', () => ({
+  getMediaInfo: (...args: Parameters<typeof mockGetMediaInfo>) => mockGetMediaInfo(...args),
+  downloadAndSaveMedia: (...args: Parameters<typeof mockDownloadAndSaveMedia>) => mockDownloadAndSaveMedia(...args),
 }));
 
 // Build a fake WASocket that's an EventEmitter with the methods we need
@@ -139,6 +151,8 @@ describe('WhatsAppChannel', () => {
   beforeEach(() => {
     fakeSocket = createFakeSocket();
     vi.mocked(getLastGroupSync).mockReturnValue(null);
+    mockGetMediaInfo.mockReset().mockReturnValue(null);
+    mockDownloadAndSaveMedia.mockReset();
   });
 
   afterEach(() => {
@@ -314,6 +328,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
@@ -349,6 +365,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'unregistered@g.us',
         expect.any(String),
@@ -374,6 +392,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       expect(opts.onChatMetadata).not.toHaveBeenCalled();
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
@@ -395,6 +415,8 @@ describe('WhatsAppChannel', () => {
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
       ]);
+
+      await flushPromises();
 
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
@@ -420,6 +442,8 @@ describe('WhatsAppChannel', () => {
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
       ]);
+
+      await flushPromises();
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
@@ -449,6 +473,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({ content: 'Check this photo' }),
@@ -477,9 +503,115 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({ content: 'Watch this' }),
+      );
+    });
+
+    it('prepends media path to content when media download succeeds', async () => {
+      mockGetMediaInfo.mockReturnValueOnce({ type: 'imageMessage', mimetype: 'image/jpeg' });
+      mockDownloadAndSaveMedia.mockResolvedValueOnce({
+        filePath: '/groups/test-group/media/msg-media.jpg',
+        containerPath: '/workspace/group/media/msg-media.jpg',
+      });
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      triggerMessages([
+        {
+          key: {
+            id: 'msg-media',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            imageMessage: { caption: 'Check this photo', mimetype: 'image/jpeg' },
+          },
+          pushName: 'Alice',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      // Wait for async media download
+      await flushPromises();
+
+      expect(mockDownloadAndSaveMedia).toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: '[media: /workspace/group/media/msg-media.jpg]\nCheck this photo',
+        }),
+      );
+    });
+
+    it('delivers original content when media download fails', async () => {
+      mockGetMediaInfo.mockReturnValueOnce({ type: 'imageMessage', mimetype: 'image/jpeg' });
+      mockDownloadAndSaveMedia.mockResolvedValueOnce(null);
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      triggerMessages([
+        {
+          key: {
+            id: 'msg-fail',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            imageMessage: { caption: 'Photo caption', mimetype: 'image/jpeg' },
+          },
+          pushName: 'Bob',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      await flushPromises();
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({ content: 'Photo caption' }),
+      );
+    });
+
+    it('skips media download for text-only messages', async () => {
+      mockGetMediaInfo.mockReturnValue(null);
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      triggerMessages([
+        {
+          key: {
+            id: 'msg-text',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: { conversation: 'Just text' },
+          pushName: 'Charlie',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      await flushPromises();
+
+      expect(mockDownloadAndSaveMedia).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({ content: 'Just text' }),
       );
     });
 
@@ -504,6 +636,8 @@ describe('WhatsAppChannel', () => {
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
       ]);
+
+      await flushPromises();
 
       // Still delivered but with empty content
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -531,6 +665,8 @@ describe('WhatsAppChannel', () => {
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
       ]);
+
+      await flushPromises();
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
@@ -572,6 +708,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       // Should be translated to phone JID
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '1234567890@s.whatsapp.net',
@@ -599,6 +737,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
+      await flushPromises();
+
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
@@ -623,6 +763,8 @@ describe('WhatsAppChannel', () => {
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
       ]);
+
+      await flushPromises();
 
       // Unknown LID passes through unchanged
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
@@ -682,7 +824,7 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       // Give the async flush time to complete
-      await new Promise((r) => setTimeout(r, 50));
+      await flushPromises();
 
       expect(fakeSocket.sendMessage).toHaveBeenCalledTimes(3);
       expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(1, 'test@g.us', { text: 'First' });
@@ -706,7 +848,7 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       // Wait for async sync to complete
-      await new Promise((r) => setTimeout(r, 50));
+      await flushPromises();
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
       expect(updateChatName).toHaveBeenCalledWith('group1@g.us', 'Group One');
@@ -725,7 +867,7 @@ describe('WhatsAppChannel', () => {
 
       await connectChannel(channel);
 
-      await new Promise((r) => setTimeout(r, 50));
+      await flushPromises();
 
       expect(fakeSocket.groupFetchAllParticipating).not.toHaveBeenCalled();
     });
