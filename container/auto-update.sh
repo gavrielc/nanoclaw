@@ -1,113 +1,135 @@
 #!/bin/bash
 # Auto-update script for NanoClaw instances
-# Pulls latest code, rebuilds container, and restarts the service
+# Pulls latest code from main, rebuilds container + host, and restarts the service
+#
+# Supports: macOS (launchd), Linux (systemd), Docker (docker-compose)
+# Usage:    ./container/auto-update.sh
+# Env vars: NANOCLAW_BRANCH (default: main), NANOCLAW_SERVICE (default: nanoclaw)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 LOCKFILE="/tmp/nanoclaw-update.lock"
+BRANCH="${NANOCLAW_BRANCH:-main}"
+LOG_DATE="$(date '+%Y-%m-%d %H:%M:%S')"
 
-echo "🔄 NanoClaw Auto-Update Starting..."
-echo "Repository: $REPO_DIR"
+log() { echo "[$LOG_DATE] $1"; }
+
+log "NanoClaw Auto-Update Starting..."
+log "Repository: $REPO_DIR"
+log "Target branch: $BRANCH"
 
 # Check if running inside container
 if [ -f /.dockerenv ]; then
-    echo "⚠️  This script should be run on the host, not inside the container"
+    log "ERROR: This script should be run on the host, not inside the container"
     exit 1
 fi
 
-# Acquire lock to prevent concurrent updates
-exec 200>"$LOCKFILE"
-if ! flock -n 200; then
-    echo "⚠️  Another update is already running (lock: $LOCKFILE)"
-    exit 1
+# Acquire lock to prevent concurrent updates (use mkdir for macOS compat — no flock)
+if ! mkdir "$LOCKFILE" 2>/dev/null; then
+    # Check if stale lock (older than 30 minutes)
+    if [ "$(uname)" = "Darwin" ]; then
+        LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LOCKFILE" 2>/dev/null || echo 0) ))
+    else
+        LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCKFILE" 2>/dev/null || echo 0) ))
+    fi
+    if [ "$LOCK_AGE" -gt 1800 ]; then
+        log "Removing stale lock (${LOCK_AGE}s old)"
+        rm -rf "$LOCKFILE"
+        mkdir "$LOCKFILE"
+    else
+        log "Another update is already running (lock: $LOCKFILE, age: ${LOCK_AGE}s)"
+        exit 0
+    fi
 fi
-trap 'rm -f "$LOCKFILE"' EXIT
+trap 'rm -rf "$LOCKFILE"' EXIT
 
-# Navigate to repo directory
 cd "$REPO_DIR"
 
-# Check for uncommitted changes and warn user
-STASH_CREATED=false
-if ! git diff-index --quiet HEAD --; then
-    echo ""
-    echo "⚠️  WARNING: You have uncommitted changes in your working directory."
-    echo "   Auto-update will not proceed with dirty state."
-    echo ""
-    echo "   Please commit or stash your changes first:"
-    echo "     git stash push -m 'Manual stash before update'"
-    echo "     # or"
-    echo "     git add . && git commit -m 'Your commit message'"
-    echo ""
-    exit 1
-fi
-
-# Get current branch
+# Ensure we're on the target branch
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-echo "📍 Current branch: $CURRENT_BRANCH"
-
-# Fetch latest changes
-echo "⬇️  Fetching latest changes..."
-git fetch origin
-
-# Get current and remote commit hashes
-LOCAL_COMMIT=$(git rev-parse HEAD)
-REMOTE_COMMIT=$(git rev-parse "origin/$CURRENT_BRANCH")
-
-if [ "$LOCAL_COMMIT" = "$REMOTE_COMMIT" ]; then
-    echo "✅ Already up to date (commit: ${LOCAL_COMMIT:0:8})"
+if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+    log "WARNING: On branch '$CURRENT_BRANCH', expected '$BRANCH'. Skipping update."
     exit 0
 fi
 
-echo "🆕 Updates available:"
-echo "   Local:  ${LOCAL_COMMIT:0:8}"
-echo "   Remote: ${REMOTE_COMMIT:0:8}"
+# Bail on dirty working tree
+if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    log "WARNING: Uncommitted changes detected. Skipping update."
+    exit 0
+fi
 
-# Pull latest changes
-echo "⬇️  Pulling latest code..."
-git pull origin "$CURRENT_BRANCH"
+# Fetch latest changes
+log "Fetching origin/$BRANCH..."
+git fetch origin "$BRANCH" --quiet
 
-# Rebuild container
-echo "🔨 Rebuilding container..."
+# Compare commits
+LOCAL_COMMIT=$(git rev-parse HEAD)
+REMOTE_COMMIT=$(git rev-parse "origin/$BRANCH")
+
+if [ "$LOCAL_COMMIT" = "$REMOTE_COMMIT" ]; then
+    log "Already up to date (${LOCAL_COMMIT:0:8})"
+    exit 0
+fi
+
+log "Updates available: ${LOCAL_COMMIT:0:8} -> ${REMOTE_COMMIT:0:8}"
+
+# Show what's new
+git log --oneline "${LOCAL_COMMIT}..${REMOTE_COMMIT}" | while read -r line; do
+    log "  $line"
+done
+
+# Pull
+log "Pulling latest code..."
+git pull --ff-only origin "$BRANCH"
+
+# Build host-side TypeScript
+log "Building host code..."
+if command -v bun &> /dev/null; then
+    bun run build
+elif command -v npm &> /dev/null; then
+    npm run build
+fi
+
+# Rebuild container image
+log "Rebuilding container..."
 if [ -f "docker-compose.yml" ]; then
-    echo "   Using docker-compose..."
-    # Support both legacy and new docker compose commands
     if command -v docker-compose &> /dev/null; then
         docker-compose build
     else
         docker compose build
     fi
 elif [ -f "container/build.sh" ]; then
-    echo "   Using build script..."
     bash container/build.sh
 else
-    echo "   Using docker build..."
-    docker build -t nanoclaw:latest -f container/Dockerfile .
+    log "No container build method found, skipping container rebuild"
 fi
 
 # Restart service
-echo "♻️  Restarting service..."
+log "Restarting service..."
 if [ -f "docker-compose.yml" ]; then
+    # Docker Compose
     if command -v docker-compose &> /dev/null; then
-        docker-compose down
-        docker-compose up -d
+        docker-compose down && docker-compose up -d
     else
-        docker compose down
-        docker compose up -d
+        docker compose down && docker compose up -d
     fi
+elif [ "$(uname)" = "Darwin" ] && launchctl list 2>/dev/null | grep -q com.nanoclaw; then
+    # macOS launchd
+    launchctl kickstart -k "gui/$(id -u)/com.nanoclaw"
+    log "Kicked com.nanoclaw via launchd"
 elif command -v systemctl &> /dev/null; then
-    # Try systemd service restart
+    # Linux systemd
     SERVICE_NAME="${NANOCLAW_SERVICE:-nanoclaw}"
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo "   Restarting systemd service: $SERVICE_NAME"
+    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
         sudo systemctl restart "$SERVICE_NAME"
+        log "Restarted systemd service: $SERVICE_NAME"
     else
-        echo "   Service $SERVICE_NAME not found, manual restart required"
+        log "Service $SERVICE_NAME not active, skipping restart"
     fi
 else
-    echo "   Manual restart required - no docker-compose or systemd found"
+    log "No service manager found — manual restart required"
 fi
 
-echo "✅ Update complete!"
-echo "   New commit: ${REMOTE_COMMIT:0:8}"
+log "Update complete! Now at ${REMOTE_COMMIT:0:8}"
