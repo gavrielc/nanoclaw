@@ -507,6 +507,62 @@ impl RuntimeState {
                 self.mode = RuntimeMode::Connected;
                 RuntimeAction::None
             }
+            MessageKind::AgentActivity => {
+                if let Some(activity) = msg.as_agent_activity() {
+                    match activity.phase {
+                        microclaw_protocol::AgentPhase::Thinking => {
+                            self.agent_activity = Some(AgentActivity::Thinking);
+                        }
+                        microclaw_protocol::AgentPhase::Streaming => {
+                            self.agent_activity = Some(AgentActivity::Streaming {
+                                partial_text: activity.partial_text.unwrap_or_default(),
+                            });
+                        }
+                        microclaw_protocol::AgentPhase::TaskProgress => {
+                            self.agent_activity = Some(AgentActivity::TaskProgress {
+                                task_name: activity
+                                    .task_name
+                                    .unwrap_or_else(|| "Working".to_owned()),
+                                current: activity.current_step.unwrap_or(0),
+                                total: activity.total_steps.unwrap_or(0),
+                                step_label: activity.step_label,
+                            });
+                        }
+                        microclaw_protocol::AgentPhase::Complete => {
+                            self.agent_activity = None;
+                        }
+                    }
+                }
+                RuntimeAction::RaiseUiState {
+                    message: "agent_activity_updated",
+                }
+            }
+            MessageKind::Notification => {
+                if let Some(notif) = msg.as_notification() {
+                    let severity = match notif.severity.as_str() {
+                        "success" => ToastSeverity::Success,
+                        "warning" => ToastSeverity::Warning,
+                        "error" => ToastSeverity::Error,
+                        _ => ToastSeverity::Info,
+                    };
+                    let duration = notif.toast_duration_ms.unwrap_or(3_000);
+                    self.active_toast = Some(ToastNotification {
+                        title: notif.title.clone(),
+                        body: notif.body.clone(),
+                        severity,
+                        expires_at_ms: now_ms().saturating_add(duration),
+                    });
+                    self.push_notification(NotificationItem {
+                        title: notif.title,
+                        body: notif.body,
+                        severity,
+                        timestamp_ms: now_ms(),
+                    });
+                }
+                RuntimeAction::RaiseUiState {
+                    message: "notification_received",
+                }
+            }
             _ => RuntimeAction::None,
         }
     }

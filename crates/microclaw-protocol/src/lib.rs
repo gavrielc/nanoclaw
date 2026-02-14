@@ -53,6 +53,8 @@ pub enum MessageKind {
     TouchEvent,
     Heartbeat,
     HostCommand,
+    AgentActivity,
+    Notification,
     #[serde(other)]
     Unknown,
 }
@@ -153,6 +155,44 @@ pub struct TouchEventPayload {
     pub raw_timestamp_ms: Option<u64>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPhase {
+    Thinking,
+    Streaming,
+    TaskProgress,
+    Complete,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentActivityPayload {
+    pub phase: AgentPhase,
+    #[serde(default)]
+    pub partial_text: Option<String>,
+    #[serde(default)]
+    pub task_name: Option<String>,
+    #[serde(default)]
+    pub current_step: Option<u32>,
+    #[serde(default)]
+    pub total_steps: Option<u32>,
+    #[serde(default)]
+    pub step_label: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationPayload {
+    pub title: String,
+    pub body: String,
+    #[serde(default = "default_severity")]
+    pub severity: String,
+    #[serde(default)]
+    pub toast_duration_ms: Option<u64>,
+}
+
+fn default_severity() -> String {
+    "info".to_owned()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TransportMessage {
@@ -220,6 +260,20 @@ impl TransportMessage {
 
     pub fn as_status_snapshot(&self) -> Option<DeviceStatus> {
         if self.kind != MessageKind::StatusSnapshot && self.kind != MessageKind::StatusDelta {
+            return None;
+        }
+        self.payload_as().ok()
+    }
+
+    pub fn as_agent_activity(&self) -> Option<AgentActivityPayload> {
+        if self.kind != MessageKind::AgentActivity {
+            return None;
+        }
+        self.payload_as().ok()
+    }
+
+    pub fn as_notification(&self) -> Option<NotificationPayload> {
+        if self.kind != MessageKind::Notification {
             return None;
         }
         self.payload_as().ok()
