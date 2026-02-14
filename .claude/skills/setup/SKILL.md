@@ -811,6 +811,31 @@ tail -5 logs/nanoclaw.log
 
 Tell the user the result — whether the service restarted successfully and is processing messages again.
 
+## 12. Auto-Update (Optional)
+
+Ask the user:
+> Do you want to set up **automatic updates** for NanoClaw?
+>
+> This allows your NanoClaw instance to automatically pull the latest code, rebuild the container, and restart the service.
+
+If **no**, skip to Troubleshooting.
+
+If **yes**, tell them:
+> See `container/AUTO_UPDATE.md` for complete setup instructions. Quick options:
+>
+> **Option 1: Cron Job** (runs every 6 hours)
+> ```bash
+> crontab -e
+> # Add this line:
+> 0 */6 * * * /path/to/nanoclaw/container/auto-update.sh >> /var/log/nanoclaw-update.log 2>&1
+> ```
+>
+> **Option 2: Systemd Timer** (for Linux)
+> See AUTO_UPDATE.md for systemd configuration files.
+>
+> **Manual Update**
+> Run anytime: `./container/auto-update.sh`
+
 ## Troubleshooting
 
 **Service not starting**: Check `logs/nanoclaw.error.log`

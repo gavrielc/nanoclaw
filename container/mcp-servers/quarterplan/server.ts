@@ -2,13 +2,14 @@
 /**
  * QuarterPlan MCP Server
  * Provides tools for managing initiatives, tracking PRs, and ARR data
- * Uses shared S3 utilities for backend storage
+ * Uses shared S3 utilities for backend storage with Effect.ts for retry logic
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { SharedS3Client, QuarterPlanSync, type Initiative } from '../../shared/index.js';
+import { Effect, Schedule, pipe } from 'effect';
 
 // Validate required environment variables
 const requiredEnvVars = ['S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'];
@@ -29,6 +30,34 @@ const s3 = new SharedS3Client({
 });
 
 const quarterplan = new QuarterPlanSync(s3);
+
+// Effect.ts retry policy: exponential backoff with 3 retries
+const retryPolicy = pipe(
+  Schedule.exponential('100 millis'),
+  Schedule.compose(Schedule.recurs(3)),
+  Schedule.jittered
+);
+
+// Wrap S3 operations with Effect for automatic retries
+const getQuarterPlanWithRetry = Effect.tryPromise({
+  try: () => quarterplan.getQuarterPlan(),
+  catch: (error) => new Error(`Failed to fetch quarter plan: ${error}`)
+}).pipe(Effect.retry(retryPolicy));
+
+const saveQuarterPlanWithRetry = (data: any) => Effect.tryPromise({
+  try: () => quarterplan.saveQuarterPlan(data),
+  catch: (error) => new Error(`Failed to save quarter plan: ${error}`)
+}).pipe(Effect.retry(retryPolicy));
+
+const getARRDataWithRetry = Effect.tryPromise({
+  try: () => quarterplan.getARRData(),
+  catch: (error) => new Error(`Failed to fetch ARR data: ${error}`)
+}).pipe(Effect.retry(retryPolicy));
+
+const saveARRDataWithRetry = (data: any) => Effect.tryPromise({
+  try: () => quarterplan.saveARRData(data),
+  catch: (error) => new Error(`Failed to save ARR data: ${error}`)
+}).pipe(Effect.retry(retryPolicy));
 
 const server = new Server({ name: 'quarterplan', version: '1.0.0' }, { capabilities: { tools: {} } });
 
@@ -56,8 +85,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           id: { type: 'string' },
-          status: { type: 'string', enum: ['planning', 'in-progress', 'completed', 'blocked'] },
+          status: { type: 'string', enum: ['planning', 'in-progress', 'completed', 'blocked', 'archived'] },
           description: { type: 'string' },
+          owner: { type: 'string' },
           target_date: { type: 'string' },
           tags: { type: 'array', items: { type: 'string' } },
         },
@@ -111,34 +141,93 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'create_initiative': {
-        const plan = await quarterplan.getQuarterPlan();
-        const initiative: Initiative = {
-          id: `init-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          title: args.title,
-          description: args.description,
-          owner: args.owner,
-          status: 'planning',
-          prs: [],
-          created: new Date().toISOString(),
-          updated: new Date().toISOString(),
-          target_date: args.target_date,
-          tags: args.tags,
-        };
-        plan.initiatives.push(initiative);
-        await quarterplan.saveQuarterPlan(plan);
+        const createEffect = pipe(
+          getQuarterPlanWithRetry,
+          Effect.map(plan => {
+            const initiative: Initiative = {
+              id: `init-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              title: args.title,
+              description: args.description,
+              owner: args.owner,
+              status: 'planning',
+              prs: [],
+              created: new Date().toISOString(),
+              updated: new Date().toISOString(),
+              target_date: args.target_date,
+              tags: args.tags,
+            };
+            plan.initiatives.push(initiative);
+            return { plan, initiative };
+          }),
+          Effect.flatMap(({ plan, initiative }) =>
+            pipe(
+              saveQuarterPlanWithRetry(plan),
+              Effect.map(() => initiative)
+            )
+          )
+        );
+
+        const initiative = await Effect.runPromise(createEffect);
         return { content: [{ type: 'text', text: JSON.stringify(initiative, null, 2) }] };
       }
       case 'update_initiative': {
-        const plan = await quarterplan.getQuarterPlan();
-        const initiative = plan.initiatives.find((i) => i.id === args.id);
-        if (!initiative) return { content: [{ type: 'text', text: `Initiative ${args.id} not found` }], isError: true };
-        if (args.status) initiative.status = args.status as any;
-        if (args.description) initiative.description = args.description as string;
-        if (args.target_date) initiative.target_date = args.target_date as string;
-        if (args.tags) initiative.tags = args.tags as string[];
-        initiative.updated = new Date().toISOString();
-        await quarterplan.saveQuarterPlan(plan);
-        return { content: [{ type: 'text', text: JSON.stringify(initiative, null, 2) }] };
+        const updateEffect = pipe(
+          getQuarterPlanWithRetry,
+          Effect.flatMap(plan => {
+            const initiative = plan.initiatives.find((i) => i.id === args.id);
+            if (!initiative) {
+              const availableIds = plan.initiatives.map(i => i.id).join(', ');
+              return Effect.fail({
+                type: 'text',
+                text: `Error: Initiative "${args.id}" not found.\n\nAvailable initiative IDs:\n${availableIds || 'No initiatives exist yet'}\n\nTip: Use get_quarter_plan() to see all initiatives.`
+              });
+            }
+
+            // Track what changed for better logging
+            const changes: string[] = [];
+
+            if (args.status && args.status !== initiative.status) {
+              initiative.status = args.status as any;
+              changes.push(`status: ${args.status}`);
+            }
+            if (args.description && args.description !== initiative.description) {
+              initiative.description = args.description as string;
+              changes.push('description updated');
+            }
+            if (args.owner && args.owner !== initiative.owner) {
+              initiative.owner = args.owner as string;
+              changes.push(`owner: ${args.owner}`);
+            }
+            if (args.target_date && args.target_date !== initiative.target_date) {
+              initiative.target_date = args.target_date as string;
+              changes.push(`target_date: ${args.target_date}`);
+            }
+            if (args.tags) {
+              initiative.tags = args.tags as string[];
+              changes.push(`tags: [${args.tags.join(', ')}]`);
+            }
+
+            initiative.updated = new Date().toISOString();
+            return Effect.succeed({ plan, initiative, changes });
+          }),
+          Effect.flatMap(({ plan, initiative, changes }) =>
+            pipe(
+              saveQuarterPlanWithRetry(plan),
+              Effect.map(() => ({ initiative, changes }))
+            )
+          )
+        );
+
+        const result = await Effect.runPromise(updateEffect).catch(error => ({
+          content: [error],
+          isError: true
+        }));
+
+        if ('isError' in result) return result;
+
+        const { initiative, changes } = result;
+        const changeLog = changes.length > 0 ? `\n\nChanges: ${changes.join(', ')}` : '\n\nNo changes made.';
+        return { content: [{ type: 'text', text: JSON.stringify(initiative, null, 2) + changeLog }] };
       }
       case 'link_pr': {
         const plan = await quarterplan.getQuarterPlan();
@@ -162,21 +251,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: `Update added to ${args.initiative_id}` }] };
       }
       case 'update_arr_data': {
-        const current = await quarterplan.getARRData();
-        const updated = { mrr: (args.mrr as number) ?? current.mrr, arr: (args.arr as number) ?? current.arr, users: (args.users as number) ?? current.users, updated: new Date().toISOString() };
-        await quarterplan.saveARRData(updated);
+        const updateARREffect = pipe(
+          getARRDataWithRetry,
+          Effect.map(current => ({
+            mrr: (args.mrr as number) ?? current.mrr,
+            arr: (args.arr as number) ?? current.arr,
+            users: (args.users as number) ?? current.users,
+            updated: new Date().toISOString()
+          })),
+          Effect.flatMap(updated =>
+            pipe(
+              saveARRDataWithRetry(updated),
+              Effect.map(() => updated)
+            )
+          )
+        );
+
+        const updated = await Effect.runPromise(updateARREffect);
         return { content: [{ type: 'text', text: JSON.stringify(updated, null, 2) }] };
       }
       case 'get_arr_data': {
-        const data = await quarterplan.getARRData();
+        const data = await Effect.runPromise(getARRDataWithRetry);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       }
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
   } catch (error) {
-    console.error('Tool execution error:', error);
-    return { content: [{ type: 'text', text: `Error executing tool: ${name}` }], isError: true };
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+
+    console.error(`Tool execution error (${name}):`, error);
+
+    // Provide actionable error messages
+    let userMessage = `Error executing "${name}":\n${errorMessage}`;
+
+    // Add specific guidance for common errors
+    if (errorMessage.includes('S3') || errorMessage.includes('AccessDenied')) {
+      userMessage += '\n\nTroubleshooting:\n- Check S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are set\n- Verify bucket permissions (omniaura-agents)\n- Check network connectivity to S3 endpoint';
+    } else if (errorMessage.includes('JSON')) {
+      userMessage += '\n\nTroubleshooting:\n- S3 data may be corrupted\n- Try reading quarterplan/initiatives.json manually\n- Check S3 bucket for valid JSON format';
+    }
+
+    if (errorStack) {
+      console.error('Stack trace:', errorStack);
+    }
+
+    return { content: [{ type: 'text', text: userMessage }], isError: true };
   }
 });
 

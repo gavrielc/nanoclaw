@@ -17,9 +17,11 @@
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.142.0",
+    "@effect/schema": "^0.75.5",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "cron-parser": "^5.5.0",
     "discord.js": "^14.16.0",
+    "effect": "^3.19.17",
     "grammy": "^1.40.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
