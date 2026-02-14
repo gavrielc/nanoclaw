@@ -392,6 +392,37 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
+  // Check if Docker is available first
+  try {
+    execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+    logger.info('Using Docker as container runtime');
+
+    // Clean up orphaned Docker containers from previous runs
+    try {
+      const output = execSync('docker ps -a --filter "name=nanoclaw-" --format "{{.ID}}"', {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      });
+      const containerIds = output.trim().split('\n').filter(Boolean);
+      if (containerIds.length > 0) {
+        logger.info({ count: containerIds.length }, 'Cleaning up orphaned Docker containers');
+        for (const id of containerIds) {
+          try {
+            execSync(`docker rm -f ${id}`, { stdio: 'pipe' });
+          } catch (err) {
+            logger.warn({ id, err }, 'Failed to remove orphaned container');
+          }
+        }
+      }
+    } catch (err) {
+      logger.debug('No orphaned Docker containers to clean up');
+    }
+    return;
+  } catch {
+    // Docker not available, try Apple Container
+  }
+
+  // Fall back to Apple Container
   try {
     execSync('container system status', { stdio: 'pipe' });
     logger.debug('Apple Container system already running');
@@ -406,31 +437,28 @@ function ensureContainerSystemRunning(): void {
         '\n╔════════════════════════════════════════════════════════════════╗',
       );
       console.error(
-        '║  FATAL: Apple Container system failed to start                 ║',
+        '║  FATAL: Container runtime failed to start                      ║',
       );
       console.error(
         '║                                                                ║',
       );
       console.error(
-        '║  Agents cannot run without Apple Container. To fix:           ║',
+        '║  NanoClaw requires Docker or Apple Container. To fix:         ║',
       );
       console.error(
-        '║  1. Install from: https://github.com/apple/container/releases ║',
+        '║  - Docker: Ensure Docker is installed and running             ║',
       );
       console.error(
-        '║  2. Run: container system start                               ║',
-      );
-      console.error(
-        '║  3. Restart NanoClaw                                          ║',
+        '║  - Apple Container: https://github.com/apple/container/releases ║',
       );
       console.error(
         '╚════════════════════════════════════════════════════════════════╝\n',
       );
-      throw new Error('Apple Container system is required but failed to start');
+      throw new Error('Container runtime is required but failed to start');
     }
   }
 
-  // Kill and clean up orphaned NanoClaw containers from previous runs
+  // Kill and clean up orphaned Apple Container instances from previous runs
   try {
     const output = execSync('container ls --format json', {
       stdio: ['pipe', 'pipe', 'pipe'],

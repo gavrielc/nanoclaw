@@ -11,6 +11,16 @@ import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
+// Trello integration (optional)
+let registerTrelloTools: ((server: McpServer) => void) | null = null;
+try {
+  // @ts-ignore - File copied during build if Trello integration is enabled
+  const trelloModule = await import('./skills/add-trello/agent.js');
+  registerTrelloTools = trelloModule.registerTrelloTools;
+} catch {
+  // Trello integration not available
+}
+
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
@@ -273,6 +283,11 @@ Use available_groups.json to find the JID for a group. The folder name should be
     };
   },
 );
+
+// Register Trello tools if available
+if (registerTrelloTools) {
+  registerTrelloTools(server);
+}
 
 // Start the stdio transport
 const transport = new StdioServerTransport();

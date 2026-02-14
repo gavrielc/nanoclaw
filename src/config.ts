@@ -1,4 +1,8 @@
 import path from 'path';
+import { config as loadEnv } from 'dotenv';
+
+// Load .env file into process.env
+loadEnv();
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const POLL_INTERVAL = 2000;

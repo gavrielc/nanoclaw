@@ -41,6 +41,9 @@ COPY agent-runner/package*.json ./
 # Install dependencies
 RUN npm install
 
+# Copy Trello integration (if available)
+COPY --chown=node:node agent-runner/src/skills ./src/skills
+
 # Copy source code
 COPY agent-runner/ ./
 
