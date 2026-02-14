@@ -39,6 +39,12 @@ export class WhatsAppChannel implements Channel {
   private flushing = false;
   private groupSyncTimerStarted = false;
 
+  // Store event handlers so they can be removed on reconnect
+  private messageHandler: ((data: any) => Promise<void>) | null = null;
+  private reactionHandler: ((data: any) => Promise<void>) | null = null;
+  private connectionHandler: ((data: any) => void) | null = null;
+  private credsHandler: (() => Promise<void>) | null = null;
+
   private opts: WhatsAppChannelOpts;
 
   constructor(opts: WhatsAppChannelOpts) {
@@ -57,6 +63,22 @@ export class WhatsAppChannel implements Channel {
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
+    // Remove old event listeners before creating new socket (prevents memory leaks)
+    if (this.sock?.ev) {
+      if (this.connectionHandler) {
+        this.sock.ev.off('connection.update', this.connectionHandler);
+      }
+      if (this.credsHandler) {
+        this.sock.ev.off('creds.update', this.credsHandler);
+      }
+      if (this.messageHandler) {
+        this.sock.ev.off('messages.upsert', this.messageHandler);
+      }
+      if (this.reactionHandler) {
+        this.sock.ev.off('messages.reaction', this.reactionHandler);
+      }
+    }
+
     this.sock = makeWASocket({
       auth: {
         creds: state.creds,
@@ -67,7 +89,8 @@ export class WhatsAppChannel implements Channel {
       browser: Browsers.macOS('Chrome'),
     });
 
-    this.sock.ev.on('connection.update', (update) => {
+    // Store connection handler for later removal
+    this.connectionHandler = (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -140,11 +163,15 @@ export class WhatsAppChannel implements Channel {
           onFirstOpen = undefined;
         }
       }
-    });
+    };
+    this.sock.ev.on('connection.update', this.connectionHandler);
 
-    this.sock.ev.on('creds.update', saveCreds);
+    // Store creds handler for later removal
+    this.credsHandler = saveCreds;
+    this.sock.ev.on('creds.update', this.credsHandler);
 
-    this.sock.ev.on('messages.upsert', async ({ messages }) => {
+    // Store message handler for later removal
+    this.messageHandler = async ({ messages }) => {
       for (const msg of messages) {
         if (!msg.message) continue;
         const rawJid = msg.key.remoteJid;
@@ -183,15 +210,18 @@ export class WhatsAppChannel implements Channel {
           });
         }
       }
-    });
+    };
+    this.sock.ev.on('messages.upsert', this.messageHandler);
 
-    this.sock.ev.on('messages.reaction', async (reactions) => {
+    // Store reaction handler for later removal
+    this.reactionHandler = async (reactions) => {
       for (const { key, reaction } of reactions) {
         if (!reaction?.text || !key.id || !key.remoteJid) continue;
         const chatJid = await this.translateJid(key.remoteJid);
         this.opts.onReaction?.(chatJid, key.id, reaction.text);
       }
-    });
+    };
+    this.sock.ev.on('messages.reaction', this.reactionHandler);
   }
 
   async sendMessage(jid: string, text: string): Promise<string | void> {

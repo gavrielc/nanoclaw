@@ -113,11 +113,28 @@ function saveState(): void {
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
+  // Validate folder name to prevent path traversal attacks
+  if (!/^[a-zA-Z0-9_-]+$/.test(group.folder)) {
+    throw new Error(
+      `Invalid group folder name: "${group.folder}". Only alphanumeric characters, hyphens, and underscores are allowed.`,
+    );
+  }
+
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
 
   // Create group folder
   const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
+
+  // Additional safety check: ensure the resolved path is within the groups directory
+  const groupsRoot = path.resolve(path.join(DATA_DIR, '..', 'groups'));
+  const resolvedGroupDir = path.resolve(groupDir);
+  if (!resolvedGroupDir.startsWith(groupsRoot + path.sep)) {
+    throw new Error(
+      `Path traversal detected in group folder: "${group.folder}"`,
+    );
+  }
+
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
   // Seed CLAUDE.md for Discord groups with secondary-channel instructions
@@ -687,6 +704,15 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // Handle unhandled promise rejections to prevent process crashes
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error(
+      { reason, promise },
+      'CRITICAL: Unhandled promise rejection detected - this should be fixed'
+    );
+    // Don't exit - log and continue to prevent service outage
+  });
 
   // Create WhatsApp channel
   whatsapp = new WhatsAppChannel({
