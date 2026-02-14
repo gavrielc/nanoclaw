@@ -5,9 +5,14 @@ use crate::display::DisplayPoint;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scene {
     Boot,
+    ConnectSetup,
     Paired,
     Conversation,
+    AgentThinking,
+    AgentStreaming,
+    AgentTaskProgress,
     Settings,
+    NotificationList,
     Error,
     Offline,
 }
@@ -48,6 +53,29 @@ fn targets_for_scene(scene: Scene) -> &'static [HitTarget] {
             h: 46,
             action: DeviceAction::Retry,
         }],
+        Scene::ConnectSetup => &[
+            HitTarget {
+                x: 40,
+                y: 280,
+                w: 56,
+                h: 56,
+                action: DeviceAction::WifiReconnect,
+            },
+            HitTarget {
+                x: 110,
+                y: 280,
+                w: 140,
+                h: 56,
+                action: DeviceAction::Reconnect,
+            },
+            HitTarget {
+                x: 264,
+                y: 280,
+                w: 56,
+                h: 56,
+                action: DeviceAction::StatusGet,
+            },
+        ],
         Scene::Paired => &[
             HitTarget {
                 x: 60,
@@ -101,6 +129,7 @@ fn targets_for_scene(scene: Scene) -> &'static [HitTarget] {
                 action: DeviceAction::OpenConversation,
             },
         ],
+        Scene::AgentThinking | Scene::AgentStreaming | Scene::AgentTaskProgress => &[],
         Scene::Settings => &[HitTarget {
             x: 150,
             y: 320,
@@ -108,6 +137,7 @@ fn targets_for_scene(scene: Scene) -> &'static [HitTarget] {
             h: 30,
             action: DeviceAction::StatusGet,
         }],
+        Scene::NotificationList => &[],
         Scene::Error | Scene::Offline => &[
             HitTarget {
                 x: 86,

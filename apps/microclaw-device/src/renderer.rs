@@ -49,6 +49,10 @@ impl SceneFramePlan {
                 background: 0x001F,
                 accent: 0xF800,
             },
+            crate::ui::Scene::ConnectSetup => Self {
+                background: 0x001F,
+                accent: 0xF800,
+            },
             crate::ui::Scene::Paired => Self {
                 background: 0x07E0,
                 accent: 0x001F,
@@ -57,7 +61,23 @@ impl SceneFramePlan {
                 background: 0xFFFF,
                 accent: 0x0000,
             },
+            crate::ui::Scene::AgentThinking => Self {
+                background: 0x001F,
+                accent: 0x6B5B,
+            },
+            crate::ui::Scene::AgentStreaming => Self {
+                background: 0x07E0,
+                accent: 0x0000,
+            },
+            crate::ui::Scene::AgentTaskProgress => Self {
+                background: 0x07E0,
+                accent: 0x001F,
+            },
             crate::ui::Scene::Settings => Self {
+                background: 0x4A49,
+                accent: 0xFFFF,
+            },
+            crate::ui::Scene::NotificationList => Self {
                 background: 0x4A49,
                 accent: 0xFFFF,
             },
@@ -199,11 +219,16 @@ impl<D: DisplayDriver> SceneRenderer for DisplaySceneRenderer<D> {
 fn scene_to_index(scene: crate::ui::Scene) -> i32 {
     match scene {
         crate::ui::Scene::Boot => 0,
-        crate::ui::Scene::Paired => 1,
-        crate::ui::Scene::Conversation => 2,
-        crate::ui::Scene::Settings => 3,
-        crate::ui::Scene::Error => 4,
-        crate::ui::Scene::Offline => 5,
+        crate::ui::Scene::ConnectSetup => 1,
+        crate::ui::Scene::Paired => 2,
+        crate::ui::Scene::Conversation => 3,
+        crate::ui::Scene::AgentThinking => 4,
+        crate::ui::Scene::AgentStreaming => 5,
+        crate::ui::Scene::AgentTaskProgress => 6,
+        crate::ui::Scene::Settings => 7,
+        crate::ui::Scene::NotificationList => 8,
+        crate::ui::Scene::Error => 9,
+        crate::ui::Scene::Offline => 10,
     }
 }
 

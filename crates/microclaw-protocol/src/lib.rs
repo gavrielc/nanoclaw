@@ -120,6 +120,10 @@ pub enum DeviceAction {
     DiagnosticsSnapshot,
     Restart,
     Retry,
+    SwipeLeft,
+    SwipeRight,
+    OpenNotifications,
+    DismissToast,
     #[serde(other)]
     Unknown,
 }
