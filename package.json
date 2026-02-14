@@ -9,19 +9,23 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "auth": "tsx src/whatsapp-auth.ts",
+    "tui": "NANOCLAW_TUI=1 tsx src/tui-main.ts",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@types/react": "^19.2.14",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
-"pino": "^9.6.0",
+    "ink": "^6.7.0",
+    "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "qrcode-terminal": "^0.12.0",
+    "react": "^19.2.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {
