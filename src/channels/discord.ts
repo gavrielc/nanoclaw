@@ -11,6 +11,8 @@ import {
   TextChannel,
   DMChannel,
   ChannelType,
+  ThreadAutoArchiveDuration,
+  type ThreadChannel,
 } from 'discord.js';
 
 import fs from 'fs';
@@ -167,6 +169,37 @@ export class DiscordChannel implements Channel {
       }
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to send Discord typing indicator');
+    }
+  }
+
+  async createThread(jid: string, messageId: string, name: string): Promise<ThreadChannel | null> {
+    const channelId = jidToChannelId(jid);
+    if (!channelId) return null;
+
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !('messages' in channel)) return null;
+
+      const message = await (channel as TextChannel).messages.fetch(messageId);
+      const thread = await message.startThread({
+        name: name.slice(0, 100),
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
+      });
+      return thread;
+    } catch (err) {
+      logger.warn({ jid, messageId, err }, 'Failed to create Discord thread');
+      return null;
+    }
+  }
+
+  async sendToThread(thread: ThreadChannel, text: string): Promise<void> {
+    try {
+      const chunks = splitMessage(text, 2000);
+      for (const chunk of chunks) {
+        await thread.send(chunk);
+      }
+    } catch (err) {
+      logger.warn({ threadId: thread.id, err }, 'Failed to send to Discord thread');
     }
   }
 

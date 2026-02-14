@@ -35,6 +35,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  intermediate?: boolean;
 }
 
 interface SessionEntry {
@@ -596,6 +597,7 @@ async function runQuery(
       if (Array.isArray(content)) {
         const tools = content.filter((c: any) => c.type === 'tool_use');
         const texts = content.filter((c: any) => c.type === 'text');
+        const thinkingBlocks = content.filter((c: any) => c.type === 'thinking');
         if (tools.length > 0) {
           for (const tool of tools) {
             const input = tool.input || {};
@@ -616,6 +618,64 @@ async function runQuery(
           const textPreview = texts.map((t: any) => t.text).join('').slice(0, 120);
           if (textPreview.trim()) {
             log(`[msg #${messageCount}] text="${textPreview}"`);
+          }
+        }
+
+        // Emit intermediate output for assistant messages (thinking, text, tool calls)
+        const parts: string[] = [];
+        for (const block of thinkingBlocks) {
+          if (block.thinking) {
+            const truncated = block.thinking.length > 1500
+              ? block.thinking.slice(0, 1500) + '...'
+              : block.thinking;
+            parts.push(`> *thinking*: ${truncated}`);
+          }
+        }
+        for (const block of texts) {
+          if (block.text?.trim()) {
+            parts.push(block.text);
+          }
+        }
+        for (const tool of tools) {
+          const input = tool.input || {};
+          const summary = tool.name === 'Bash' ? `\`${(input.command || '').slice(0, 120)}\``
+            : tool.name === 'Read' ? input.file_path
+            : tool.name === 'Write' ? input.file_path
+            : tool.name === 'Edit' ? input.file_path
+            : tool.name === 'Grep' ? `\`${input.pattern} ${input.path || ''}\``
+            : tool.name === 'Glob' ? `\`${input.pattern}\``
+            : tool.name === 'Task' ? input.description
+            : tool.name === 'WebFetch' ? input.url
+            : tool.name === 'WebSearch' ? input.query
+            : JSON.stringify(input).slice(0, 80);
+          parts.push(`> **${tool.name}**: ${summary}`);
+        }
+        if (parts.length > 0) {
+          writeOutput({ status: 'success', result: parts.join('\n'), newSessionId, intermediate: true });
+        }
+      }
+    } else if (message.type === 'user' && 'message' in message) {
+      log(`[msg #${messageCount}] type=${msgType}`);
+      // Emit intermediate output for tool results
+      const userContent = (message as any).message?.content;
+      if (Array.isArray(userContent)) {
+        const toolResults = userContent.filter((c: any) => c.type === 'tool_result');
+        for (const result of toolResults) {
+          const resultText = typeof result.content === 'string'
+            ? result.content
+            : Array.isArray(result.content)
+              ? result.content.map((c: any) => c.text || '').join('')
+              : '';
+          if (resultText.trim()) {
+            const truncated = resultText.length > 500
+              ? resultText.slice(0, 500) + '...'
+              : resultText;
+            writeOutput({
+              status: 'success',
+              result: '```\n' + truncated + '\n```',
+              newSessionId,
+              intermediate: true,
+            });
           }
         }
       }

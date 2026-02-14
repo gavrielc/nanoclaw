@@ -110,6 +110,9 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: thread support for streaming intermediate output.
+  createThread?(jid: string, messageId: string, name: string): Promise<any>;
+  sendToThread?(thread: any, text: string): Promise<void>;
   // Whether to prefix outbound messages with the assistant name.
   // Telegram bots already display their name, so they return false.
   // WhatsApp returns true. Default true if not implemented.
