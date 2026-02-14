@@ -1,0 +1,56 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # Run daily at 6am UTC (10pm PST / 11pm PDT)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remotes
+        run: |
+          git remote add upstream https://github.com/qwibitai/nanoclaw.git || true
+          git remote add microclaw https://github.com/cosmin/microclaw.git || true
+          git fetch upstream
+          git fetch microclaw
+
+      - name: Check for new upstream PRs
+        id: check_prs
+        run: |
+          echo "Checking qwibitai/nanoclaw for new PRs..."
+          gh api repos/qwibitai/nanoclaw/pulls --jq '.[] | select(.state=="open") | "#\(.number) - \(.title)"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for upstream issues in microclaw
+        id: check_issues
+        run: |
+          echo "Checking cosmin/microclaw for upstream tracking issues..."
+          gh api repos/cosmin/microclaw/issues --jq '.[] | select(.state=="open" and (.title | contains("Upstream"))) | "#\(.number) - \(.title)"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create summary
+        run: |
+          echo "## Upstream Activity Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### qwibitai/nanoclaw PRs" >> $GITHUB_STEP_SUMMARY
+          gh api repos/qwibitai/nanoclaw/pulls --jq '.[] | select(.state=="open") | "- [#\(.number)](\(.html_url)) - \(.title)"' | head -10 >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### cosmin/microclaw Issues" >> $GITHUB_STEP_SUMMARY
+          gh api repos/cosmin/microclaw/issues --jq '.[] | select(.state=="open" and (.title | contains("Upstream"))) | "- [#\(.number)](\(.html_url)) - \(.title)"' | head -10 >> $GITHUB_STEP_SUMMARY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

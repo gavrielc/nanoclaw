@@ -12,6 +12,7 @@ import {
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, setRegisteredGroup, updateTask } from './db.js';
 import { transferFiles } from './file-transfer.js';
+import { findGroupByFolder, findJidByFolder, findMainGroupJid, isMainGroup } from './group-helpers.js';
 import { logger } from './logger.js';
 import { reconcileHeartbeats } from './task-scheduler.js';
 import { BackendType, HeartbeatConfig, RegisteredGroup } from './types.js';
@@ -523,7 +524,7 @@ export async function processTaskIpc(
       // Resolve target group
       const targetJid = isMain && data.target_group_jid
         ? data.target_group_jid
-        : Object.entries(registeredGroups).find(([, g]) => g.folder === sourceGroup)?.[0];
+        : findJidByFolder(registeredGroups, sourceGroup);
 
       if (!targetJid) {
         logger.warn({ sourceGroup }, 'configure_heartbeat: could not resolve target group');
@@ -568,17 +569,13 @@ export async function processTaskIpc(
       }
 
       // Find the source group's display name and JID
-      const sourceGroupEntry = Object.entries(registeredGroups).find(
-        ([, g]) => g.folder === sourceGroup,
-      );
+      const sourceGroupEntry = findGroupByFolder(registeredGroups, sourceGroup);
       const sourceName = sourceGroupEntry?.[1].name || sourceGroup;
       const sourceJid = sourceGroupEntry?.[0] || sourceGroup;
 
       // If files are specified with a target_agent, do the file transfer
       if (data.target_agent && data.files && data.files.length > 0) {
-        const targetGroupEntry = Object.entries(registeredGroups).find(
-          ([, g]) => g.folder === data.target_agent,
-        );
+        const targetGroupEntry = findGroupByFolder(registeredGroups, data.target_agent!);
         if (targetGroupEntry && sourceGroupEntry) {
           const result = await transferFiles({
             sourceGroup: sourceGroupEntry[1],
@@ -595,9 +592,7 @@ export async function processTaskIpc(
 
       // If request_files are specified, pull files from target to source
       if (data.target_agent && data.request_files && data.request_files.length > 0) {
-        const targetGroupEntry = Object.entries(registeredGroups).find(
-          ([, g]) => g.folder === data.target_agent,
-        );
+        const targetGroupEntry = findGroupByFolder(registeredGroups, data.target_agent!);
         if (targetGroupEntry && sourceGroupEntry) {
           const result = await transferFiles({
             sourceGroup: targetGroupEntry[1],
@@ -615,15 +610,11 @@ export async function processTaskIpc(
       // Determine target JID: specific agent or main
       let targetJid: string | undefined;
       if (data.target_agent) {
-        targetJid = Object.entries(registeredGroups).find(
-          ([, g]) => g.folder === data.target_agent,
-        )?.[0];
+        targetJid = findJidByFolder(registeredGroups, data.target_agent);
       }
       if (!targetJid) {
         // Fall back to main group
-        targetJid = Object.entries(registeredGroups).find(
-          ([, g]) => g.folder === MAIN_GROUP_FOLDER,
-        )?.[0];
+        targetJid = findMainGroupJid(registeredGroups);
       }
 
       if (!targetJid) {
@@ -679,17 +670,13 @@ export async function processTaskIpc(
       }
 
       // Find the source group's display name and JID
-      const sourceGroupEntry = Object.entries(registeredGroups).find(
-        ([, g]) => g.folder === sourceGroup,
-      );
+      const sourceGroupEntry = findGroupByFolder(registeredGroups, sourceGroup);
       const sourceName = sourceGroupEntry?.[1].name || sourceGroup;
       const sourceJid = sourceGroupEntry?.[0] || sourceGroup;
       const callbackAgent = data.callbackAgentId || sourceGroup;
 
       // Route to admin (main) group for approval
-      const mainJid = Object.entries(registeredGroups).find(
-        ([, g]) => g.folder === MAIN_GROUP_FOLDER,
-      )?.[0];
+      const mainJid = findMainGroupJid(registeredGroups);
       if (!mainJid) {
         logger.warn('delegate_task: could not find main group JID');
         break;
@@ -724,16 +711,12 @@ export async function processTaskIpc(
         break;
       }
 
-      const sourceGroupEntry = Object.entries(registeredGroups).find(
-        ([, g]) => g.folder === sourceGroup,
-      );
+      const sourceGroupEntry = findGroupByFolder(registeredGroups, sourceGroup);
       const sourceName = sourceGroupEntry?.[1].name || sourceGroup;
       const sourceJid = sourceGroupEntry?.[0] || sourceGroup;
 
       // Route to admin for approval
-      const mainJid = Object.entries(registeredGroups).find(
-        ([, g]) => g.folder === MAIN_GROUP_FOLDER,
-      )?.[0];
+      const mainJid = findMainGroupJid(registeredGroups);
       if (!mainJid) {
         logger.warn('context_request: could not find main group JID');
         break;
