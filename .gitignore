@@ -33,3 +33,4 @@ groups/global/*
 .vscode/
 
 agents-sdk-docs
+package-lock.json
