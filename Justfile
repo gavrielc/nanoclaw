@@ -37,6 +37,19 @@ install:
 restart:
     launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 
+# Build the host/orchestrator (dist/index.js)
+build:
+    bun run build
+
+# Build host + container (use after code changes to either)
+build-all:
+    just build
+    just build-container
+
+# Tail NanoClaw logs (follow mode)
+tail:
+    tail -f logs/nanoclaw.log
+
 # Build the agent container image. Usage: just build-container [tag]  (default tag: latest)
 build-container tag="latest":
     ./container/build.sh {{tag}}
@@ -46,24 +59,10 @@ stop:
     launchctl bootout gui/$(id -u)/com.nanoclaw
     echo "NanoClaw stopped"
 
-# Reset message cursor for a group to retry unprocessed messages.
-# Usage: just reset-cursor dm-omar  (or main, omar-discord, etc.)
-reset-cursor group="dm-omar":
-    #!/usr/bin/env bash
-    DB="store/messages.db"
-    JID=$(sqlite3 "$DB" "SELECT jid FROM registered_groups WHERE folder = '{{group}}';")
-    if [ -z "$JID" ]; then
-        echo "Group '{{group}}' not found"
-        exit 1
-    fi
-    # JSON path for keys with colons needs quotes: $."dc:dm:..."
-    PATH_ARG='$."'"$JID"'"'
-    sqlite3 "$DB" "UPDATE router_state SET value = json_remove(value, '$PATH_ARG') WHERE key = 'last_agent_timestamp';"
-    echo "Reset cursor for {{group}} (jid: $JID). Restart NanoClaw to retry: just"
 
-# Enable project access (mount /workspace/project) for Discord groups so they can read omar-knowledge-packet.
-# Usage: just enable-project-access [group_folder]  (default: ditto-discord)
-enable-project-access group="ditto-discord":
+# Enable project access (mount /workspace/project) for a group.
+# Usage: just enable-project-access [group_folder]  (default: main)
+enable-project-access group="main":
     #!/usr/bin/env bash
     DB="store/messages.db"
     if [ ! -f "$DB" ]; then
@@ -86,14 +85,9 @@ enable-project-access group="ditto-discord":
         exit 1
     fi
 
-# Enable project access for all OmarOmni Discord groups (ditto-discord, omar-discord)
-enable-project-access-all:
-    just enable-project-access ditto-discord
-    just enable-project-access omar-discord
-
-# Enable Ditto MCP for a group (default: dm-omar). Requires DITTO_MCP_TOKEN in .env or environment.
-# Usage: just enable-ditto-mcp [group_folder]
-enable-ditto-mcp group="dm-omar":
+# Enable Ditto MCP for a group. Requires DITTO_MCP_TOKEN in .env or environment.
+# Usage: just enable-ditto-mcp [group_folder]  (default: main)
+enable-ditto-mcp group="main":
     #!/usr/bin/env bash
     DB="store/messages.db"
     if [ ! -f "$DB" ]; then
