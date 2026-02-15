@@ -12,6 +12,7 @@ import {
   DMChannel,
   ChannelType,
   ThreadAutoArchiveDuration,
+  PermissionFlagsBits,
   type ThreadChannel,
 } from 'discord.js';
 
@@ -180,12 +181,53 @@ export class DiscordChannel implements Channel {
       const channel = await this.client.channels.fetch(channelId);
       if (!channel || !('messages' in channel)) return null;
 
+      // Log thread-related permissions for debugging (guild channels only)
+      if ('guild' in channel && channel.guild?.members?.me) {
+        const perms = channel.permissionsFor(channel.guild.members.me);
+        if (perms) {
+          const createThreads = perms.has(PermissionFlagsBits.CreatePublicThreads) || perms.has(PermissionFlagsBits.ManageThreads);
+          const sendInThreads = perms.has(PermissionFlagsBits.SendMessagesInThreads) || perms.has(PermissionFlagsBits.SendMessages);
+          logger.info(
+            { jid, createThreads, sendInThreads, channelType: channel.type },
+            'Discord thread permissions check',
+          );
+          if (!createThreads || !sendInThreads) {
+            logger.warn(
+              { jid, createThreads, sendInThreads },
+              'Bot missing thread permissions — enable Create Public Threads and Send Messages in Threads in server/channel settings',
+            );
+          }
+        }
+      }
+
       const message = await (channel as TextChannel).messages.fetch(messageId);
-      const thread = await message.startThread({
-        name: name.slice(0, 100),
-        autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
-      });
-      return thread;
+
+      // Already in a thread (e.g. forum post — jid is dc:threadId): the channel IS the thread
+      if (channel.isThread?.()) {
+        return channel as ThreadChannel;
+      }
+
+      // Forum channels: the message IS the thread starter; use existing thread or fetch by threadId
+      if (channel.type === ChannelType.GuildForum) {
+        if (message.thread) return message.thread as ThreadChannel;
+        if (message.threadId && 'threads' in channel) {
+          const thread = await (channel as any).threads.fetch(message.threadId);
+          return thread as ThreadChannel;
+        }
+        return null;
+      }
+
+      // Text/news channels: create a new thread from the message
+      if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement) {
+        const thread = await message.startThread({
+          name: name.slice(0, 100),
+          autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
+        });
+        return thread;
+      }
+
+      logger.warn({ jid, channelType: channel.type }, 'Channel type does not support threads');
+      return null;
     } catch (err) {
       logger.warn({ jid, messageId, err }, 'Failed to create Discord thread');
       return null;
@@ -351,6 +393,29 @@ export class DiscordChannel implements Channel {
         'Message from unregistered Discord chat',
       );
       return;
+    }
+
+    // Log thread permissions for guild channels (helps debug why threads might not work)
+    if (!isDM && message.guild?.members?.me) {
+      const ch = message.channel;
+      const channelToCheck = ch.isThread?.() ? ch.parent : ch;
+      if (channelToCheck && 'permissionsFor' in channelToCheck) {
+        const perms = (channelToCheck as TextChannel).permissionsFor(message.guild.members.me);
+        if (perms) {
+          const createThreads = perms.has(PermissionFlagsBits.CreatePublicThreads) || perms.has(PermissionFlagsBits.ManageThreads);
+          const sendInThreads = perms.has(PermissionFlagsBits.SendMessagesInThreads) || perms.has(PermissionFlagsBits.SendMessages);
+          logger.info(
+            { chatJid, chatName, createThreads, sendInThreads, inThread: ch.isThread?.() ?? false },
+            'Discord thread permissions',
+          );
+          if (!createThreads || !sendInThreads) {
+            logger.warn(
+              { chatJid, createThreads, sendInThreads },
+              'Bot missing thread permissions — Server Settings → Roles → bot role: enable Create Public Threads, Send Messages in Threads',
+            );
+          }
+        }
+      }
     }
 
     // Handle attachments (after group check so we know the folder for image downloads)

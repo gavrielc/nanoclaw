@@ -385,18 +385,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Handle intermediate output (thinking, tool calls, tool results)
     if (result.intermediate && result.result) {
+      if (thoughtLogBuffer.length === 0) {
+        logger.info({ chatJid, channelName: channel?.name }, 'Received intermediate output from agent');
+      }
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
       // Always buffer for thought log
       thoughtLogBuffer.push(raw);
 
-      // Stream to Discord thread if channel supports threads
-      if (channel?.createThread && channel?.sendToThread && triggeringMessageId) {
+      // Stream to Discord thread if channel supports threads (threads don't exist in DMs)
+      const canCreateThread =
+        !!(channel?.createThread && channel?.sendToThread && triggeringMessageId) &&
+        !chatJid.startsWith('dc:dm:');
+      if (!canCreateThread && thoughtLogBuffer.length === 1) {
+        logger.info(
+          {
+            chatJid,
+            hasCreateThread: !!channel?.createThread,
+            hasSendToThread: !!channel?.sendToThread,
+            triggeringMessageId: triggeringMessageId ?? null,
+          },
+          'Discord thread skipped: missing channel methods or triggering message ID',
+        );
+      }
+      if (canCreateThread) {
         if (!threadCreationAttempted) {
           threadCreationAttempted = true;
           try {
             discordThread = await channel.createThread(chatJid, triggeringMessageId, threadName);
-          } catch {
-            // Thread creation failed — silently drop intermediates from channel
+            if (discordThread) {
+              logger.info({ chatJid, triggeringMessageId, threadName }, 'Discord thread created for intermediate output');
+            }
+          } catch (err) {
+            logger.warn(
+              { chatJid, triggeringMessageId, threadName, err },
+              'Failed to create Discord thread — intermediates will not appear in channel',
+            );
           }
         }
         if (discordThread) {
