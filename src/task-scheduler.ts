@@ -270,6 +270,10 @@ async function runTask(
       },
       (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder, 'task'),
       async (streamedOutput: ContainerOutput) => {
+        // Skip intermediate output (thinking, tool calls, tool results) —
+        // only forward final results to the channel
+        if (streamedOutput.intermediate) return;
+
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)

@@ -129,6 +129,11 @@ function createSchema(database: Database): void {
     database.exec(`ALTER TABLE registered_groups ADD COLUMN auto_respond_keywords TEXT`);
   } catch { /* column already exists */ }
 
+  // Add stream_intermediates column to registered_groups (off by default)
+  try {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN stream_intermediates INTEGER DEFAULT 0`);
+  } catch { /* column already exists */ }
+
   // --- Agent-Channel Decoupling tables ---
   database.exec(`
     CREATE TABLE IF NOT EXISTS agents (
@@ -600,6 +605,7 @@ export function getRegisteredGroup(
         description: string | null;
         auto_respond_to_questions: number | null;
         auto_respond_keywords: string | null;
+        stream_intermediates: number | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -622,6 +628,7 @@ export function getRegisteredGroup(
     description: row.description || undefined,
     autoRespondToQuestions: row.auto_respond_to_questions === 1 || undefined,
     autoRespondKeywords: row.auto_respond_keywords ? JSON.parse(row.auto_respond_keywords) : undefined,
+    streamIntermediates: row.stream_intermediates === 1 || undefined,
   };
 }
 
@@ -630,8 +637,8 @@ export function setRegisteredGroup(
   group: RegisteredGroup,
 ): void {
   db.query(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, heartbeat, discord_guild_id, server_folder, backend, description, auto_respond_to_questions, auto_respond_keywords)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, heartbeat, discord_guild_id, server_folder, backend, description, auto_respond_to_questions, auto_respond_keywords, stream_intermediates)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -647,6 +654,7 @@ export function setRegisteredGroup(
     group.description || null,
     group.autoRespondToQuestions ? 1 : 0,
     group.autoRespondKeywords ? JSON.stringify(group.autoRespondKeywords) : null,
+    group.streamIntermediates ? 1 : 0,
   );
 }
 
@@ -668,6 +676,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     description: string | null;
     auto_respond_to_questions: number | null;
     auto_respond_keywords: string | null;
+    stream_intermediates: number | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -689,6 +698,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       description: row.description || undefined,
       autoRespondToQuestions: row.auto_respond_to_questions === 1 || undefined,
       autoRespondKeywords: row.auto_respond_keywords ? JSON.parse(row.auto_respond_keywords) : undefined,
+      streamIntermediates: row.stream_intermediates === 1 || undefined,
     };
   }
   return result;

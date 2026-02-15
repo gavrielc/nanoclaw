@@ -389,8 +389,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Always buffer for thought log
       thoughtLogBuffer.push(raw);
 
-      // Stream to Discord thread if channel supports threads
-      if (channel?.createThread && channel?.sendToThread && triggeringMessageId) {
+      // Stream to channel thread if enabled and supported (off by default)
+      if (group.streamIntermediates && channel?.createThread && channel?.sendToThread && triggeringMessageId) {
         if (!threadCreationAttempted) {
           threadCreationAttempted = true;
           try {

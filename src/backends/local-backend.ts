@@ -144,41 +144,19 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input-task'), { recursive: true });
 
+  // Mount the full IPC directory. For scheduled tasks, override the input/
+  // subdirectory with input-task/ so follow-up messages don't cross lanes.
+  // Note: Apple Container doesn't support file-level bind mounts, so we
+  // mount the whole directory and override only the input subdirectory.
+  mounts.push({
+    hostPath: groupIpcDir,
+    containerPath: '/workspace/ipc',
+    readonly: false,
+  });
   if (isScheduledTask) {
-    // Task containers get input-task/ mounted as their /workspace/ipc/input
-    // so follow-up messages don't cross lanes
-    mounts.push({
-      hostPath: path.join(groupIpcDir, 'messages'),
-      containerPath: '/workspace/ipc/messages',
-      readonly: false,
-    });
-    mounts.push({
-      hostPath: path.join(groupIpcDir, 'tasks'),
-      containerPath: '/workspace/ipc/tasks',
-      readonly: false,
-    });
     mounts.push({
       hostPath: path.join(groupIpcDir, 'input-task'),
       containerPath: '/workspace/ipc/input',
-      readonly: false,
-    });
-    // Mount IPC root for agent_registry.json and other top-level files
-    // Use a separate mount point so agent-runner can still find them
-    const ipcFiles = ['agent_registry.json', 'tasks.json', 'groups.json'];
-    for (const file of ipcFiles) {
-      const filePath = path.join(groupIpcDir, file);
-      if (fs.existsSync(filePath)) {
-        mounts.push({
-          hostPath: filePath,
-          containerPath: `/workspace/ipc/${file}`,
-          readonly: true,
-        });
-      }
-    }
-  } else {
-    mounts.push({
-      hostPath: groupIpcDir,
-      containerPath: '/workspace/ipc',
       readonly: false,
     });
   }

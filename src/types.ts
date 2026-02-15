@@ -63,6 +63,7 @@ export interface RegisteredGroup {
   backend?: BackendType;     // Which backend runs this group's agent (default: apple-container)
   description?: string;      // What this agent does (for agent registry)
   devUrl?: string;           // Sprites dev URL (auto-populated for sprites backend)
+  streamIntermediates?: boolean; // Stream intermediate output (thinking, tool calls) to channel threads. Default: false
 }
 
 export interface NewMessage {
