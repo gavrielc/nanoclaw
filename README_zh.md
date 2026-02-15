@@ -24,7 +24,7 @@ NanoClaw 用一个你能在 8 分钟内理解的代码库，为你提供了同�
 ```bash
 git clone https://github.com/gavrielc/nanoclaw.git
 cd nanoclaw
-claude
+npm install
 ```
 
 然后运行 `/setup`。Claude Code 会处理一切：依赖安装、身份验证、容器设置、服务配置。
