@@ -12,6 +12,7 @@ import path from 'path';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_MEMORY,
   CONTAINER_STARTUP_TIMEOUT,
   CONTAINER_TIMEOUT,
   DATA_DIR,
@@ -231,7 +232,7 @@ function buildVolumeMounts(
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const args: string[] = ['run', '-i', '--rm', '--memory', CONTAINER_MEMORY, '--name', containerName];
 
   for (const mount of mounts) {
     if (mount.readonly) {
