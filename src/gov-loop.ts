@@ -33,6 +33,8 @@ import {
 import {
   getAllGovTasks,
   getDispatchableGovTasks,
+  getGovActivities,
+  getGovApprovals,
   getGovTaskById,
   getReviewableGovTasks,
   logGovActivity,
@@ -40,6 +42,7 @@ import {
   updateDispatchStatus,
   updateGovTask,
 } from './gov-db.js';
+import { getExtCalls } from './ext-broker-db.js';
 import { getAllTasks } from './db.js';
 import { GATE_APPROVER } from './governance/gates.js';
 import type { GateType } from './governance/gates.js';
@@ -264,6 +267,62 @@ async function dispatchReviewTasks(deps: GovLoopDeps): Promise<void> {
 
 // --- Task execution ---
 
+/**
+ * Build cross-agent context for a task: activity log, ext_calls summary, approvals.
+ * Gives the receiving agent cognitive continuity from previous agents' work.
+ */
+export function buildTaskContext(taskId: string, maxActivities = 20): string {
+  const sections: string[] = [];
+
+  // Activity log — shows what happened so far (transitions, reasons)
+  const activities = getGovActivities(taskId);
+  if (activities.length > 0) {
+    const recent = activities.slice(-maxActivities);
+    sections.push('## Activity Log');
+    for (const a of recent) {
+      const transition = a.from_state && a.to_state ? `${a.from_state} → ${a.to_state}` : a.action;
+      sections.push(`- [${a.created_at}] ${a.actor}: ${transition}${a.reason ? ` — ${a.reason}` : ''}`);
+    }
+    sections.push('');
+  }
+
+  // Approvals — shows who approved what gates
+  const approvals = getGovApprovals(taskId);
+  if (approvals.length > 0) {
+    sections.push('## Gate Approvals');
+    for (const ap of approvals) {
+      sections.push(`- ${ap.gate_type} approved by ${ap.approved_by} at ${ap.approved_at}${ap.notes ? ` — ${ap.notes}` : ''}`);
+    }
+    sections.push('');
+  }
+
+  // Ext calls — shows what external actions were taken for this task
+  // We check all groups since the task may have moved between agents
+  try {
+    const allCalls = [
+      ...getExtCalls('developer', 100),
+      ...getExtCalls('security', 100),
+      ...getExtCalls('main', 100),
+    ].filter(c => c.task_id === taskId);
+
+    if (allCalls.length > 0) {
+      const recent = allCalls
+        .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+        .slice(-10);
+      sections.push('## External Actions');
+      for (const c of recent) {
+        const status = c.status === 'executed' ? '✓' : c.status === 'denied' ? '✗' : c.status;
+        sections.push(`- [${status}] ${c.provider}/${c.action} by ${c.group_folder} (${c.created_at})`);
+      }
+      sections.push('');
+    }
+  } catch {
+    // ext_calls table may not exist in tests — safe to skip
+  }
+
+  return sections.join('\n');
+}
+
 function buildGovTaskPrompt(task: GovTask): string {
   const lines = [
     `You have a governance task assigned:`,
@@ -273,6 +332,14 @@ function buildGovTaskPrompt(task: GovTask): string {
   ];
   if (task.description) lines.push(`- Description: ${task.description}`);
   if (task.product) lines.push(`- Product: ${task.product}`);
+
+  // Cross-agent context
+  const context = buildTaskContext(task.id);
+  if (context) {
+    lines.push('');
+    lines.push('--- Prior context ---');
+    lines.push(context);
+  }
 
   lines.push('');
   lines.push('When you finish, use the gov_transition tool to move this task to REVIEW.');
@@ -292,6 +359,14 @@ function buildApprovalPrompt(task: GovTask, gate: string): string {
   if (task.description) lines.push(`- Description: ${task.description}`);
   if (task.executor) lines.push(`- Executor: ${task.executor}`);
   if (task.assigned_group) lines.push(`- Developer group: ${task.assigned_group}`);
+
+  // Cross-agent context — critical for approval decisions
+  const context = buildTaskContext(task.id);
+  if (context) {
+    lines.push('');
+    lines.push('--- Execution context from prior agents ---');
+    lines.push(context);
+  }
 
   lines.push('');
   lines.push(`Use gov_approve to approve the ${gate} gate.`);

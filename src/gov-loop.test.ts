@@ -33,16 +33,19 @@ vi.mock('./container-runner.js', () => ({
 
 import { _initTestDatabase } from './db.js';
 import {
+  createGovApproval,
   createGovTask,
   getDispatchableGovTasks,
   getDispatchByKey,
   getGovTaskById,
   getReviewableGovTasks,
+  logGovActivity,
   tryCreateDispatch,
 } from './gov-db.js';
 import { grantCapability } from './ext-broker-db.js';
 import { registerProvider } from './ext-broker-providers.js';
 import {
+  buildTaskContext,
   ensureIpcGroupSecret,
   writeExtCapabilitiesSnapshot,
   writeGovSnapshot,
@@ -398,5 +401,110 @@ describe('idempotent dispatch (tryCreateDispatch)', () => {
     expect(dispatch).toBeDefined();
     expect(dispatch!.task_id).toBe('task-lookup');
     expect(dispatch!.status).toBe('ENQUEUED');
+  });
+});
+
+// --- Cross-agent context ---
+
+describe('buildTaskContext', () => {
+  it('returns empty string for task with no activity', () => {
+    seedTask({ id: 'ctx-empty' });
+    const ctx = buildTaskContext('ctx-empty');
+    expect(ctx).toBe('');
+  });
+
+  it('includes activity log entries', () => {
+    seedTask({ id: 'ctx-act' });
+    const now = new Date().toISOString();
+    logGovActivity({
+      task_id: 'ctx-act',
+      action: 'transition',
+      from_state: 'READY',
+      to_state: 'DOING',
+      actor: 'system',
+      reason: 'Auto-dispatched',
+      created_at: now,
+    });
+    logGovActivity({
+      task_id: 'ctx-act',
+      action: 'transition',
+      from_state: 'DOING',
+      to_state: 'REVIEW',
+      actor: 'developer',
+      reason: 'Implementation complete',
+      created_at: now,
+    });
+
+    const ctx = buildTaskContext('ctx-act');
+    expect(ctx).toContain('Activity Log');
+    expect(ctx).toContain('READY → DOING');
+    expect(ctx).toContain('Auto-dispatched');
+    expect(ctx).toContain('DOING → REVIEW');
+    expect(ctx).toContain('Implementation complete');
+    expect(ctx).toContain('developer');
+  });
+
+  it('includes gate approvals', () => {
+    seedTask({ id: 'ctx-approve', gate: 'Security' });
+    const now = new Date().toISOString();
+    createGovApproval({
+      task_id: 'ctx-approve',
+      gate_type: 'Security',
+      approved_by: 'security',
+      approved_at: now,
+      notes: 'LGTM, no vulnerabilities found',
+    });
+
+    const ctx = buildTaskContext('ctx-approve');
+    expect(ctx).toContain('Gate Approvals');
+    expect(ctx).toContain('Security approved by security');
+    expect(ctx).toContain('LGTM, no vulnerabilities found');
+  });
+
+  it('respects maxActivities limit', () => {
+    seedTask({ id: 'ctx-limit' });
+    const now = new Date().toISOString();
+    for (let i = 0; i < 25; i++) {
+      logGovActivity({
+        task_id: 'ctx-limit',
+        action: 'transition',
+        from_state: null,
+        to_state: null,
+        actor: 'system',
+        reason: `Activity ${i}`,
+        created_at: now,
+      });
+    }
+
+    const ctx = buildTaskContext('ctx-limit', 5);
+    // Should only show last 5 activities
+    expect(ctx).toContain('Activity 20');
+    expect(ctx).toContain('Activity 24');
+    expect(ctx).not.toContain('Activity 0');
+  });
+
+  it('combines activities and approvals', () => {
+    seedTask({ id: 'ctx-combined', gate: 'Security' });
+    const now = new Date().toISOString();
+    logGovActivity({
+      task_id: 'ctx-combined',
+      action: 'transition',
+      from_state: 'DOING',
+      to_state: 'REVIEW',
+      actor: 'developer',
+      reason: 'Done',
+      created_at: now,
+    });
+    createGovApproval({
+      task_id: 'ctx-combined',
+      gate_type: 'Security',
+      approved_by: 'security',
+      approved_at: now,
+      notes: null,
+    });
+
+    const ctx = buildTaskContext('ctx-combined');
+    expect(ctx).toContain('Activity Log');
+    expect(ctx).toContain('Gate Approvals');
   });
 });
