@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Create a GitHub Discussion
+# Usage: gh-discussion-create [owner/repo] [category] [title] [body]
+
+set -euo pipefail
+
+REPO="${1:-omniaura/quarterplan-dashboard}"
+CATEGORY="${2:-General}"
+TITLE="${3:-}"
+BODY="${4:-}"
+
+if [[ -z "$TITLE" ]]; then
+  echo "Error: Title is required" >&2
+  echo "Usage: gh-discussion-create [owner/repo] [category] [title] [body]" >&2
+  exit 1
+fi
+
+IFS='/' read -r OWNER REPO_NAME <<< "$REPO"
+
+# Get repository ID
+REPO_ID=$(gh api graphql -f query="
+query {
+  repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+    id
+  }
+}
+" | jq -r '.data.repository.id')
+
+# Get category ID
+CATEGORY_ID=$(gh api graphql -f query="
+query {
+  repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+    discussionCategories(first: 20) {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+}
+" | jq -r ".data.repository.discussionCategories.nodes[] | select(.name == \"$CATEGORY\") | .id")
+
+if [[ -z "$CATEGORY_ID" ]]; then
+  echo "Error: Category '$CATEGORY' not found" >&2
+  echo "Available categories:" >&2
+  gh api graphql -f query="
+  query {
+    repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+      discussionCategories(first: 20) {
+        nodes {
+          name
+          emoji
+          description
+        }
+      }
+    }
+  }
+  " | jq -r '.data.repository.discussionCategories.nodes[] | "  \(.emoji) \(.name) - \(.description)"' >&2
+  exit 1
+fi
+
+# Create discussion
+RESULT=$(gh api graphql -f query="
+mutation {
+  createDiscussion(input: {
+    repositoryId: \"$REPO_ID\"
+    categoryId: \"$CATEGORY_ID\"
+    title: \"$TITLE\"
+    body: \"$BODY\"
+  }) {
+    discussion {
+      id
+      number
+      title
+      url
+    }
+  }
+}
+")
+
+echo "$RESULT" | jq -r '.data.createDiscussion.discussion | "Created discussion #\(.number): \(.title)\n\(.url)"'

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# List GitHub Discussions for a repository
+# Usage: gh-discussion-list [owner/repo] [limit]
+
+set -euo pipefail
+
+REPO="${1:-omniaura/quarterplan-dashboard}"
+LIMIT="${2:-20}"
+
+IFS='/' read -r OWNER REPO_NAME <<< "$REPO"
+
+gh api graphql -f query="
+query {
+  repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+    discussions(first: $LIMIT, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        author {
+          login
+        }
+        category {
+          name
+          emoji
+        }
+        createdAt
+        updatedAt
+        url
+        comments(first: 0) {
+          totalCount
+        }
+        upvoteCount
+      }
+    }
+  }
+}
+" | jq -r '
+  ["#", "CATEGORY", "TITLE", "AUTHOR", "COMMENTS", "UPVOTES", "CREATED", "URL"],
+  (.data.repository.discussions.nodes[] |
+    [
+      .number,
+      "\(.category.emoji) \(.category.name)",
+      .title,
+      "@\(.author.login)",
+      "\(.comments.totalCount) comments",
+      "\(.upvoteCount) upvotes",
+      .createdAt,
+      .url
+    ]
+  ) |
+  @tsv
+'
