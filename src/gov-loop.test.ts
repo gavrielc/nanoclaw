@@ -56,6 +56,7 @@ import {
   writeExtCapabilitiesSnapshot,
   writeGovSnapshot,
 } from './gov-loop.js';
+import { storeMemory } from './memory-db.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -726,5 +727,75 @@ describe('buildContextPack', () => {
     expect(pack).not.toContain('Execution Summary');
     expect(pack).not.toContain('Evidence');
     expect(pack).not.toContain('Activity Log');
+  });
+});
+
+// --- Sprint 4: Memory injection in dispatch ---
+
+describe('memory injection in buildContextPack', () => {
+  function seedMemory(overrides: Record<string, unknown>) {
+    const now = new Date().toISOString();
+    const defaults = {
+      id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      content: 'Test memory content',
+      content_hash: 'abc123',
+      level: 'L1',
+      scope: 'COMPANY',
+      product_id: null,
+      group_folder: 'developer',
+      tags: null,
+      pii_detected: 0,
+      pii_types: null,
+      source_type: 'agent',
+      source_ref: null,
+      policy_version: null,
+      created_at: now,
+      updated_at: now,
+    };
+    const mem = { ...defaults, ...overrides };
+    storeMemory(mem as Parameters<typeof storeMemory>[0]);
+    return mem;
+  }
+
+  it('injects relevant memories in context pack', () => {
+    seedMemory({ id: 'mem-auth', content: 'Authentication uses JWT tokens with RS256 signing', group_folder: 'developer', level: 'L1' });
+    seedTask({ id: 'cp-mem-1', title: 'Fix authentication bug', state: 'APPROVAL', assigned_group: 'developer', scope: 'COMPANY' });
+
+    const pack = buildContextPack(getGovTaskById('cp-mem-1')!);
+    expect(pack).toContain('Relevant Memories');
+    expect(pack).toContain('[L1]');
+    expect(pack).toContain('JWT tokens');
+  });
+
+  it('omits memory section when no relevant memories exist', () => {
+    seedTask({ id: 'cp-mem-2', title: 'Completely unrelated xyz topic', state: 'APPROVAL', assigned_group: 'developer', scope: 'COMPANY' });
+
+    const pack = buildContextPack(getGovTaskById('cp-mem-2')!);
+    expect(pack).not.toContain('Relevant Memories');
+  });
+
+  it('filters L3 memories from non-main groups', () => {
+    seedMemory({ id: 'mem-secret', content: 'Secret deployment credentials and keys', group_folder: 'main', level: 'L3' });
+    seedTask({ id: 'cp-mem-3', title: 'Deployment credentials setup', state: 'APPROVAL', assigned_group: 'developer', scope: 'COMPANY' });
+
+    const pack = buildContextPack(getGovTaskById('cp-mem-3')!);
+    // Developer should not see L3 memories
+    expect(pack).not.toContain('Secret deployment credentials');
+  });
+
+  it('respects product isolation for PRODUCT-scoped memories', () => {
+    const now = new Date().toISOString();
+    createProduct({ id: 'prod-a', name: 'Product A', status: 'active', risk_level: 'normal', created_at: now, updated_at: now });
+    createProduct({ id: 'prod-b', name: 'Product B', status: 'active', risk_level: 'normal', created_at: now, updated_at: now });
+
+    seedMemory({ id: 'mem-prod-a', content: 'Product A specific API documentation for endpoints', scope: 'PRODUCT', product_id: 'prod-a', group_folder: 'developer', level: 'L2' });
+    seedMemory({ id: 'mem-prod-b', content: 'Product B specific API documentation for endpoints', scope: 'PRODUCT', product_id: 'prod-b', group_folder: 'developer', level: 'L2' });
+
+    seedTask({ id: 'cp-mem-4', title: 'API documentation review', state: 'APPROVAL', assigned_group: 'developer', scope: 'PRODUCT', product_id: 'prod-a' });
+
+    const pack = buildContextPack(getGovTaskById('cp-mem-4')!);
+    // Should see prod-a memory but not prod-b (product isolation)
+    expect(pack).toContain('Product A specific API');
+    expect(pack).not.toContain('Product B specific API');
   });
 });

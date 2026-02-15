@@ -452,6 +452,138 @@ server.tool(
   },
 );
 
+// --- Memory Tools ---
+
+server.tool(
+  'store_memory',
+  `Store a piece of knowledge in the shared memory system. Memories are classified by sensitivity level:
+- L0: Public (visible to all groups)
+- L1: Operational (visible to your group + main)
+- L2: Product-internal (visible to same-product groups + main)
+- L3: Sensitive (main only, audit-logged)
+
+PII (emails, phone numbers, API keys, etc.) is automatically detected and redacted. Content with PII is auto-classified to L3.
+If level is not specified, the system auto-classifies based on content and scope.`,
+  {
+    content: z.string().describe('The knowledge to store. PII will be automatically redacted.'),
+    level: z.enum(['L0', 'L1', 'L2', 'L3']).optional().describe('Classification level (auto-classified if omitted)'),
+    tags: z.array(z.string()).optional().describe('Keyword tags for searchability'),
+    scope: z.enum(['COMPANY', 'PRODUCT']).default('COMPANY').describe('COMPANY=org-wide, PRODUCT=product-specific'),
+    product_id: z.string().optional().describe('Product ID (required when scope=PRODUCT)'),
+    source_ref: z.string().optional().describe('Reference to source (e.g., task ID, document)'),
+  },
+  async (args) => {
+    const requestId = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const body: Record<string, unknown> = {
+      type: 'mem_store',
+      request_id: requestId,
+      content: args.content,
+      level: args.level,
+      tags: args.tags,
+      scope: args.scope || 'COMPANY',
+      product_id: args.product_id,
+      source_ref: args.source_ref,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, body);
+
+    // Poll for response
+    const response = await pollForMemoryResponse(requestId);
+
+    if (response.status === 'ok') {
+      const data = response.data as Record<string, unknown> | undefined;
+      const parts: string[] = [`Memory stored (${requestId})`];
+      if (data?.level) parts.push(`Level: ${data.level}`);
+      if (data?.pii_detected) parts.push('PII detected and redacted');
+      if (data?.injection_detected) parts.push('Injection pattern detected (stored with safeguards)');
+      return { content: [{ type: 'text' as const, text: parts.join('. ') + '.' }] };
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: `Memory store failed: ${response.error || 'Unknown error'}` }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'recall_memory',
+  `Search shared memory for relevant knowledge. Results are filtered by your access level:
+- You can always see L0 (public) memories
+- You can see L1 memories from your own group
+- You can see L2 memories for products you have access to
+- L3 memories are only visible to main (all access attempts are audit-logged)`,
+  {
+    query: z.string().describe('Search query — keywords or natural language'),
+    scope: z.enum(['COMPANY', 'PRODUCT']).optional().describe('Filter by scope'),
+    product_id: z.string().optional().describe('Filter by product (for PRODUCT scope)'),
+    limit: z.number().min(1).max(20).default(10).describe('Max results to return'),
+  },
+  async (args) => {
+    const requestId = `recall-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const body: Record<string, unknown> = {
+      type: 'mem_recall',
+      request_id: requestId,
+      query: args.query,
+      scope: args.scope,
+      product_id: args.product_id,
+      limit: args.limit || 10,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, body);
+
+    // Poll for response
+    const response = await pollForMemoryResponse(requestId);
+
+    if (response.status === 'ok') {
+      const data = response.data as { memories?: Array<{ id: string; content: string; level: string; score: number }>; access_denials?: number } | undefined;
+      const memories = data?.memories || [];
+      if (memories.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No relevant memories found.' }] };
+      }
+
+      const lines = [`Found ${memories.length} relevant memories:`];
+      for (const m of memories) {
+        lines.push(`\n[${m.level}] (${(m.score * 100).toFixed(0)}% match) ${m.content}`);
+      }
+      if (data?.access_denials) {
+        lines.push(`\n(${data.access_denials} memories filtered by access control)`);
+      }
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: `Memory recall failed: ${response.error || 'Unknown error'}` }],
+      isError: true,
+    };
+  },
+);
+
+// Poll for memory IPC response
+async function pollForMemoryResponse(
+  requestId: string,
+  timeoutMs = 10_000,
+  intervalMs = 200,
+): Promise<{ status: string; data?: unknown; error?: string }> {
+  const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    if (fs.existsSync(responsePath)) {
+      const raw = fs.readFileSync(responsePath, 'utf-8');
+      try { fs.unlinkSync(responsePath); } catch { /* race ok */ }
+      return JSON.parse(raw);
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+
+  return { status: 'timeout', error: 'Memory operation timed out' };
+}
+
 // --- External Access Broker Tools ---
 
 import crypto from 'crypto';

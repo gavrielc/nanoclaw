@@ -12,6 +12,7 @@ import { grantCapability, logExtCall } from './ext-broker-db.js';
 import { snapshotTableCounts, exportGovData, importGovData } from './backup.js';
 import { createGovSchema } from './gov-db.js';
 import { createExtAccessSchema } from './ext-broker-db.js';
+import { storeMemory, logMemoryAccess, createMemorySchema } from './memory-db.js';
 
 const now = new Date().toISOString();
 
@@ -146,6 +147,8 @@ describe('snapshotTableCounts', () => {
     expect(counts.gov_dispatches).toBe(0);
     expect(counts.ext_capabilities).toBe(0);
     expect(counts.ext_calls).toBe(0);
+    expect(counts.memories).toBe(0);
+    expect(counts.memory_access_log).toBe(0);
   });
 
   it('returns correct counts after seeding', () => {
@@ -160,9 +163,9 @@ describe('snapshotTableCounts', () => {
     expect(counts.ext_calls).toBe(1);
   });
 
-  it('covers all 7 governance tables', () => {
+  it('covers all 9 governance + memory tables', () => {
     const counts = snapshotTableCounts(getDb());
-    expect(Object.keys(counts).length).toBe(7);
+    expect(Object.keys(counts).length).toBe(9);
     expect(Object.keys(counts).sort()).toEqual([
       'ext_calls',
       'ext_capabilities',
@@ -170,6 +173,8 @@ describe('snapshotTableCounts', () => {
       'gov_approvals',
       'gov_dispatches',
       'gov_tasks',
+      'memories',
+      'memory_access_log',
       'products',
     ]);
   });
@@ -186,6 +191,7 @@ describe('exportGovData + importGovData round-trip', () => {
     const targetDb = new Database(':memory:');
     createGovSchema(targetDb);
     createExtAccessSchema(targetDb);
+    createMemorySchema(targetDb);
 
     importGovData(targetDb, exported);
     const targetCounts = snapshotTableCounts(targetDb);
@@ -202,6 +208,7 @@ describe('exportGovData + importGovData round-trip', () => {
     const targetDb = new Database(':memory:');
     createGovSchema(targetDb);
     createExtAccessSchema(targetDb);
+    createMemorySchema(targetDb);
     importGovData(targetDb, exported);
 
     const approvals = targetDb.prepare('SELECT * FROM gov_approvals').all() as Record<string, unknown>[];
@@ -220,6 +227,7 @@ describe('exportGovData + importGovData round-trip', () => {
     const targetDb = new Database(':memory:');
     createGovSchema(targetDb);
     createExtAccessSchema(targetDb);
+    createMemorySchema(targetDb);
     importGovData(targetDb, exported);
 
     const calls = targetDb.prepare('SELECT * FROM ext_calls').all() as Record<string, unknown>[];
@@ -245,6 +253,7 @@ describe('exportGovData + importGovData round-trip', () => {
     const targetDb = new Database(':memory:');
     createGovSchema(targetDb);
     createExtAccessSchema(targetDb);
+    createMemorySchema(targetDb);
     importGovData(targetDb, exported);
     const firstCounts = snapshotTableCounts(targetDb);
 
@@ -252,6 +261,80 @@ describe('exportGovData + importGovData round-trip', () => {
     const secondCounts = snapshotTableCounts(targetDb);
 
     expect(secondCounts).toEqual(firstCounts);
+    targetDb.close();
+  });
+});
+
+// --- Sprint 4: Memory tables in backup ---
+
+describe('memory backup', () => {
+  it('includes memory tables in snapshot counts', () => {
+    storeMemory({
+      id: 'mem-backup-1',
+      content: 'API design patterns',
+      content_hash: 'hash1',
+      level: 'L1',
+      scope: 'COMPANY',
+      product_id: null,
+      group_folder: 'developer',
+      tags: null,
+      pii_detected: 0,
+      pii_types: null,
+      source_type: 'agent',
+      source_ref: null,
+      policy_version: null,
+      created_at: now,
+      updated_at: now,
+    });
+    logMemoryAccess({
+      memory_id: 'mem-backup-1',
+      accessor_group: 'developer',
+      access_type: 'recall',
+      granted: 1,
+      reason: null,
+      created_at: now,
+    });
+
+    const counts = snapshotTableCounts(getDb());
+    expect(counts.memories).toBe(1);
+    expect(counts.memory_access_log).toBe(1);
+  });
+
+  it('round-trip export/import preserves memory data', () => {
+    storeMemory({
+      id: 'mem-rt-1',
+      content: 'Round trip memory content',
+      content_hash: 'hash-rt',
+      level: 'L2',
+      scope: 'PRODUCT',
+      product_id: 'ritmo',
+      group_folder: 'developer',
+      tags: JSON.stringify(['api', 'docs']),
+      pii_detected: 0,
+      pii_types: null,
+      source_type: 'agent',
+      source_ref: 'task-1',
+      policy_version: '1.1.0',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const sourceDb = getDb();
+    const exported = exportGovData(sourceDb);
+
+    const targetDb = new Database(':memory:');
+    createGovSchema(targetDb);
+    createExtAccessSchema(targetDb);
+    createMemorySchema(targetDb);
+    importGovData(targetDb, exported);
+
+    const memories = targetDb.prepare('SELECT * FROM memories').all() as Record<string, unknown>[];
+    expect(memories.length).toBe(1);
+    expect(memories[0].id).toBe('mem-rt-1');
+    expect(memories[0].content).toBe('Round trip memory content');
+    expect(memories[0].level).toBe('L2');
+    expect(memories[0].product_id).toBe('ritmo');
+    expect(memories[0].policy_version).toBe('1.1.0');
     targetDb.close();
   });
 });

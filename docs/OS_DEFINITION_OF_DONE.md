@@ -195,6 +195,73 @@ To declare OS v1.0 DONE, run this playbook and confirm each step:
 
 ---
 
+## 8. Memory & Intelligence Layer (Sprint 4)
+
+### 8.1 Memory classification (L0-L3)
+
+- [x] Classification engine with auto-level assignment (PII→L3, PRODUCT→L2, default→L1)
+- [x] Explicit level never downgrades below auto-classified level
+- [x] Product-scoped memories enforce product isolation
+
+**Evidence:**
+- [x] Classifier tests (8 tests), recall access control tests (10 tests)
+
+### 8.2 PII sanitization
+
+- [x] 10 PII patterns detected and redacted before storage
+- [x] Raw PII never stored in memories table (only sanitized + content hash)
+- [x] PII detection auto-escalates classification to L3
+
+**Evidence:**
+- [x] PII guard tests (11 tests) covering all pattern types
+
+### 8.3 Prompt injection guard
+
+- [x] 8 injection patterns detected with risk scoring
+- [x] Suspicious content wrapped in `<user_memory>` tags with escaped XML
+- [x] Injection detected = flagged but still stored (for forensics)
+
+**Evidence:**
+- [x] Injection guard tests (8 tests)
+
+### 8.4 Scoped recall with access control
+
+- [x] Keyword-based search always available
+- [x] Access control applied post-search per memory
+- [x] L3 access attempts always audit-logged (granted + denied)
+- [x] Product isolation enforced in recall
+
+**Evidence:**
+- [x] Recall tests (10 tests), memory IPC tests (10 tests)
+
+### 8.5 Context injection in dispatch
+
+- [x] Relevant memories injected in `buildGovTaskPrompt()` (developer dispatch)
+- [x] Relevant memories injected in `buildContextPack()` (approval/review context)
+- [x] Empty memories = no section added
+
+**Evidence:**
+- [x] Gov-loop memory injection tests (4 tests)
+
+### 8.6 Model escalation policy
+
+- [x] `recommendModelTier()` — P0/SECURITY→deep, L3→deep, high risk→standard, default→fast
+- [x] `shouldEscalate()` — auto-escalation on failure (fast→standard→deep)
+
+**Evidence:**
+- [x] Escalation policy tests (6 tests)
+
+### 8.7 MCP tools + backup
+
+- [x] `store_memory` and `recall_memory` MCP tools in agent container
+- [x] `memories` and `memory_access_log` tables included in backup/restore
+- [x] Memory policy documented (OS_MEMORY_POLICY.md)
+
+**Evidence:**
+- [x] Memory IPC tests (10 tests), backup memory tests (2 tests)
+
+---
+
 ## Scope Note (explicit)
 
-Memory embedding guard (L0–L3 + PII sanitization) is **not required** for OS v1.0 if embeddings are not enabled. It becomes required before handling real client PII or enabling embedding-based memory search.
+Memory embedding guard is optional for OS v1.0 when embeddings are not enabled. Keyword-based recall is always available. Set `EMBEDDING_API_KEY` to enable semantic search.

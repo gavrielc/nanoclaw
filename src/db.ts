@@ -5,6 +5,7 @@ import path from 'path';
 import { DATA_DIR, STORE_DIR } from './config.js';
 import { createExtAccessSchema } from './ext-broker-db.js';
 import { createGovSchema } from './gov-db.js';
+import { createMemorySchema } from './memory-db.js';
 import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database.Database;
@@ -98,6 +99,7 @@ export function initDatabase(): void {
   createSchema(db);
   createGovSchema(db);
   createExtAccessSchema(db);
+  createMemorySchema(db);
 
   // Migrate from JSON files if they exist
   migrateJsonState();
@@ -109,6 +111,7 @@ export function _initTestDatabase(): void {
   createSchema(db);
   createGovSchema(db);
   createExtAccessSchema(db);
+  createMemorySchema(db);
 }
 
 /**

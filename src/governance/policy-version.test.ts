@@ -6,7 +6,7 @@ describe('POLICY_VERSION', () => {
     expect(POLICY_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it('is 1.0.0 for Sprint 3', () => {
-    expect(POLICY_VERSION).toBe('1.0.0');
+  it('is 1.1.0 for Sprint 4', () => {
+    expect(POLICY_VERSION).toBe('1.1.0');
   });
 });

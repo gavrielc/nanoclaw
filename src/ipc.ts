@@ -15,6 +15,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { processExtAccessIpc } from './ext-broker.js';
 import { processGovIpc } from './gov-ipc.js';
 import { logger } from './logger.js';
+import { processMemoryIpc } from './memory-ipc.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -390,6 +391,11 @@ export async function processTaskIpc(
     case 'ext_grant':
     case 'ext_revoke':
       await processExtAccessIpc(data, sourceGroup, isMain);
+      break;
+
+    case 'mem_store':
+    case 'mem_recall':
+      await processMemoryIpc(data, sourceGroup, isMain);
       break;
 
     default:

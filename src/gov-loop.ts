@@ -52,6 +52,7 @@ import { GATE_APPROVER } from './governance/gates.js';
 import type { GateType } from './governance/gates.js';
 import { validateTransition } from './governance/policy.js';
 import type { GovTask } from './governance/constants.js';
+import { recallRelevantMemory } from './memory/recall.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -395,6 +396,25 @@ function buildGovTaskPrompt(task: GovTask): string {
     lines.push(context);
   }
 
+  // Sprint 4: Inject relevant memories
+  const memResult = recallRelevantMemory({
+    query: task.title + ' ' + (task.description || ''),
+    accessor_group: task.assigned_group || 'main',
+    accessor_is_main: (task.assigned_group || 'main') === MAIN_GROUP_FOLDER,
+    scope: task.scope,
+    product_id: task.product_id,
+    limit: 5,
+  });
+  if (memResult.memories.length > 0) {
+    lines.push('');
+    lines.push('--- Relevant Memories ---');
+    for (const m of memResult.memories) {
+      lines.push(
+        `- [${m.level}] ${m.content.slice(0, 300)}${m.content.length > 300 ? '...' : ''}`,
+      );
+    }
+  }
+
   lines.push('');
   lines.push('When you finish, use the gov_transition tool to move this task to REVIEW with a summary of what you did.');
   lines.push('If you are blocked, move it to BLOCKED with a reason.');
@@ -470,6 +490,25 @@ export function buildContextPack(task: GovTask): string {
     sections.push('## Gate Approvals');
     for (const ap of approvals) {
       sections.push(`- ${ap.gate_type} approved by ${ap.approved_by} at ${ap.approved_at}${ap.notes ? ` — ${ap.notes}` : ''}`);
+    }
+    sections.push('');
+  }
+
+  // Sprint 4: Inject relevant memories for reviewer context
+  const memResult = recallRelevantMemory({
+    query: task.title + ' ' + (task.description || ''),
+    accessor_group: task.assigned_group || 'main',
+    accessor_is_main: (task.assigned_group || 'main') === MAIN_GROUP_FOLDER,
+    scope: task.scope,
+    product_id: task.product_id,
+    limit: 5,
+  });
+  if (memResult.memories.length > 0) {
+    sections.push('## Relevant Memories');
+    for (const m of memResult.memories) {
+      sections.push(
+        `- [${m.level}] ${m.content.slice(0, 300)}${m.content.length > 300 ? '...' : ''}`,
+      );
     }
     sections.push('');
   }

@@ -12,6 +12,8 @@ const GOV_TABLES = [
   'gov_dispatches',
   'ext_capabilities',
   'ext_calls',
+  'memories',
+  'memory_access_log',
 ] as const;
 
 /** Count rows in all governance tables. */
