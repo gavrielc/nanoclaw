@@ -528,6 +528,67 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   return result;
 }
 
+// --- WebUI query functions ---
+
+export function getMessagesForGroup(
+  chatJid: string,
+  limit: number,
+  before?: string,
+): NewMessage[] {
+  if (before) {
+    return db
+      .prepare(
+        `SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+         FROM messages WHERE chat_jid = ? AND timestamp < ?
+         ORDER BY timestamp DESC LIMIT ?`,
+      )
+      .all(chatJid, before, limit) as NewMessage[];
+  }
+  return db
+    .prepare(
+      `SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+       FROM messages WHERE chat_jid = ?
+       ORDER BY timestamp DESC LIMIT ?`,
+    )
+    .all(chatJid, limit) as NewMessage[];
+}
+
+export function storeChatMessage(msg: {
+  id: string;
+  chat_jid: string;
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_me: boolean;
+}): void {
+  // Ensure chat row exists before inserting message (FK constraint)
+  storeChatMetadata(msg.chat_jid, msg.timestamp, 'Web Chat');
+  storeMessageDirect(msg);
+}
+
+export function deleteSession(groupFolder: string): void {
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+}
+
+export function getDbStats(): Record<string, number> {
+  const tables = ['chats', 'messages', 'scheduled_tasks', 'task_run_logs', 'sessions', 'registered_groups', 'router_state'];
+  const stats: Record<string, number> = {};
+  for (const table of tables) {
+    const row = db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
+    stats[table] = row.count;
+  }
+  return stats;
+}
+
+export function getTaskRunLogs(taskId: string, limit = 20): TaskRunLog[] {
+  return db
+    .prepare(
+      'SELECT * FROM task_run_logs WHERE task_id = ? ORDER BY run_at DESC LIMIT ?',
+    )
+    .all(taskId, limit) as TaskRunLog[];
+}
+
 // --- JSON migration ---
 
 function migrateJsonState(): void {

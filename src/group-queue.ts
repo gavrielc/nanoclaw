@@ -281,6 +281,47 @@ export class GroupQueue {
     }
   }
 
+  getState(): {
+    activeCount: number;
+    maxConcurrent: number;
+    waitingCount: number;
+    groups: Array<{
+      jid: string;
+      active: boolean;
+      pendingMessages: boolean;
+      pendingTaskCount: number;
+      containerName: string | null;
+      groupFolder: string | null;
+    }>;
+  } {
+    const groups: Array<{
+      jid: string;
+      active: boolean;
+      pendingMessages: boolean;
+      pendingTaskCount: number;
+      containerName: string | null;
+      groupFolder: string | null;
+    }> = [];
+    for (const [jid, state] of this.groups) {
+      if (state.active || state.pendingMessages || state.pendingTasks.length > 0) {
+        groups.push({
+          jid,
+          active: state.active,
+          pendingMessages: state.pendingMessages,
+          pendingTaskCount: state.pendingTasks.length,
+          containerName: state.containerName,
+          groupFolder: state.groupFolder,
+        });
+      }
+    }
+    return {
+      activeCount: this.activeCount,
+      maxConcurrent: MAX_CONCURRENT_CONTAINERS,
+      waitingCount: this.waitingGroups.length,
+      groups,
+    };
+  }
+
   async shutdown(_gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
