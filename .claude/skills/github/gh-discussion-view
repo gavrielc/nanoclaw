@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# View a GitHub Discussion with its comments
+# Usage: gh-discussion-view [owner/repo] [discussion-number]
+
+set -euo pipefail
+
+REPO="${1:-omniaura/quarterplan-dashboard}"
+DISCUSSION_NUM="${2:-}"
+
+if [[ -z "$DISCUSSION_NUM" ]]; then
+  echo "Error: Discussion number is required" >&2
+  echo "Usage: gh-discussion-view [owner/repo] [discussion-number]" >&2
+  exit 1
+fi
+
+IFS='/' read -r OWNER REPO_NAME <<< "$REPO"
+
+gh api graphql -f query="
+query {
+  repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+    discussion(number: $DISCUSSION_NUM) {
+      number
+      title
+      body
+      author {
+        login
+      }
+      category {
+        name
+        emoji
+      }
+      createdAt
+      updatedAt
+      url
+      upvoteCount
+      comments(first: 50) {
+        totalCount
+        nodes {
+          author {
+            login
+          }
+          body
+          createdAt
+          upvoteCount
+        }
+      }
+    }
+  }
+}
+" | jq -r '
+.data.repository.discussion |
+"# [\(.category.emoji) \(.category.name)] \(.title)
+
+**Author**: @\(.author.login)
+**Created**: \(.createdAt)
+**Updated**: \(.updatedAt)
+**Upvotes**: \(.upvoteCount)
+**URL**: \(.url)
+
+---
+
+\(.body)
+
+---
+
+## Comments (\(.comments.totalCount))
+
+" + (.comments.nodes | map("### @\(.author.login) - \(.createdAt) (\(.upvoteCount) upvotes)\n\n\(.body)\n") | join("\n---\n\n"))
+'
