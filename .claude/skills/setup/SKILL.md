@@ -117,7 +117,33 @@ KEY=$(grep "^ANTHROPIC_API_KEY=" .env | cut -d= -f2)
 [ -n "$KEY" ] && echo "API key configured: ${KEY:0:7}..." || echo "Missing"
 ```
 
-## 4. Build Container Image
+## 4. Configure Assistant Phone Number
+
+**Use the AskUserQuestion tool** to ask:
+
+> Are you running the assistant on your **personal WhatsApp**, or does it have its **own dedicated phone number**?
+>
+> Options:
+> 1. **Personal WhatsApp** (Recommended) - I'm running the assistant on my personal phone's WhatsApp
+> 2. **Dedicated number** - The assistant has its own phone/SIM card (e.g., a secondary phone or business number)
+
+### Option 1: Personal WhatsApp (Default)
+
+No additional configuration needed. The assistant will:
+- Prefix messages with its name in group chats (so users know who's speaking)
+- Skip the prefix in personal chats (since it's your own phone)
+
+### Option 2: Dedicated Number
+
+The assistant has its own identity and doesn't need name prefixes. Add to `.env`:
+
+```bash
+echo "ASSISTANT_HAS_OWN_NUMBER=true" >> .env
+```
+
+This skips the name prefix everywhere since the assistant is identified by its phone number.
+
+## 5. Build Container Image
 
 Build the NanoClaw agent container:
 
@@ -137,7 +163,7 @@ else
 fi
 ```
 
-## 5. WhatsApp Authentication
+## 6. WhatsApp Authentication
 
 **USER ACTION REQUIRED**
 
@@ -267,7 +293,7 @@ Replace `PROJECT_PATH` with the actual project path (use `pwd`).
 
 Wait for the user to confirm authentication succeeded, then continue to the next step.
 
-## 6. Configure Assistant Name and Main Channel
+## 7. Configure Assistant Name and Main Channel
 
 This step configures three things at once: the trigger word, the main channel type, and the main channel selection.
 
@@ -351,7 +377,7 @@ sqlite3 store/messages.db "SELECT jid, name FROM chats WHERE name LIKE '%GROUP_N
 
 ### 6d. Write the configuration
 
-Once you have the JID, configure it. Use the assistant name from step 6a.
+Once you have the JID, configure it. Use the assistant name from step 7a.
 
 For personal chats (solo, no prefix needed), set `requiresTrigger` to `false`:
 
@@ -386,7 +412,7 @@ Ensure the groups folder exists:
 mkdir -p groups/main/logs
 ```
 
-## 7. Configure External Directory Access (Mount Allowlist)
+## 8. Configure External Directory Access (Mount Allowlist)
 
 Ask the user:
 > Do you want the agent to be able to access any directories **outside** the NanoClaw project?
@@ -494,7 +520,7 @@ Tell the user:
 > ```
 > The folder appears inside the container at `/workspace/extra/<folder-name>` (derived from the last segment of the path). Add `"readonly": false` for write access, or `"containerPath": "custom-name"` to override the default name.
 
-## 8. Configure launchd Service
+## 9. Configure launchd Service
 
 Generate the plist file with correct paths automatically:
 
@@ -554,7 +580,7 @@ Verify it's running:
 launchctl list | grep nanoclaw
 ```
 
-## 9. Test
+## 10. Test
 
 Tell the user (using the assistant name they configured):
 > Send `@ASSISTANT_NAME hello` in your registered chat.
