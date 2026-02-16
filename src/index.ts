@@ -58,7 +58,7 @@ import { GroupQueue } from './group-queue.js';
 import { consumeShareRequest, startIpcWatcher } from './ipc.js';
 import { NanoClawS3 } from './s3/client.js';
 import { startS3IpcPoller } from './s3/ipc-poller.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound, getAgentName } from './router.js';
 import { reconcileHeartbeats, startSchedulerLoop } from './task-scheduler.js';
 import { createThreadStreamer } from './thread-streaming.js';
 import { Agent, Channel, ChannelRoute, NewMessage, RegisteredGroup, registeredGroupToAgent, registeredGroupToRoute } from './types.js';
@@ -415,7 +415,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text && channel) {
-        const formatted = formatOutbound(channel, text);
+        const formatted = formatOutbound(channel, text, getAgentName(group));
         if (formatted) {
           await channel.sendMessage(chatJid, formatted, triggeringMessageId || undefined);
           outputSentToUser = true;
@@ -969,7 +969,8 @@ async function main(): Promise<void> {
         logger.warn({ jid }, 'No channel found for scheduled message');
         return;
       }
-      const text = formatOutbound(ch, rawText);
+      const group = registeredGroups[jid];
+      const text = formatOutbound(ch, rawText, group ? getAgentName(group) : undefined);
       if (text) {
         const msgId = await ch.sendMessage(jid, text);
         return msgId ? String(msgId) : undefined;
@@ -984,7 +985,8 @@ async function main(): Promise<void> {
         logger.warn({ jid }, 'No channel found for IPC message');
         return;
       }
-      const text = formatOutbound(ch, rawText);
+      const group = registeredGroups[jid];
+      const text = formatOutbound(ch, rawText, group ? getAgentName(group) : undefined);
       if (text) return await ch.sendMessage(jid, text);
     },
     notifyGroup: (jid, text) => {
