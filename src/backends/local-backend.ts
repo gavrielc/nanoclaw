@@ -562,74 +562,66 @@ export class LocalBackend implements AgentBackend {
   }
 
   async initialize(): Promise<void> {
-    // Cycle Apple Container system on startup to flush stale state
-    logger.info('Restarting Apple Container system (flushing stale state)...');
-
+    // Kill any orphaned NanoClaw containers from a previous run
     await $`pkill -f 'container run.*nanoclaw-'`.quiet().nothrow();
-    await $`container system stop`.quiet().nothrow();
-    await Bun.sleep(3000);
 
+    // Idempotent start — fast no-op if already running
+    logger.info('Starting Apple Container system...');
     const start = await $`container system start`.quiet().nothrow();
     if (start.exitCode !== 0) {
       logger.error({ stderr: start.stderr.toString() }, 'Failed to start Apple Container system');
-      console.error(
-        '\n╔════════════════════════════════════════════════════════════════╗',
-      );
-      console.error(
-        '║  FATAL: Apple Container system failed to start                 ║',
-      );
-      console.error(
-        '║                                                                ║',
-      );
-      console.error(
-        '║  Agents cannot run without Apple Container. To fix:           ║',
-      );
-      console.error(
-        '║  1. Install from: https://github.com/apple/container/releases ║',
-      );
-      console.error(
-        '║  2. Run: container system start                               ║',
-      );
-      console.error(
-        '║  3. Restart NanoClaw                                          ║',
-      );
-      console.error(
-        '╚════════════════════════════════════════════════════════════════╝\n',
-      );
+      this.printContainerSystemError();
       throw new Error('Apple Container system is required but failed to start');
     }
-    logger.info('Apple Container system started');
 
-    // Verify containers work
+    // Probe to verify containers actually work
     const probe = await $`container run --rm --entrypoint /bin/echo ${CONTAINER_IMAGE} ok`.quiet().nothrow();
-    if (probe.exitCode !== 0 || probe.text().trim() !== 'ok') {
-      logger.warn({ exitCode: probe.exitCode, output: probe.text().trim() }, 'Container probe failed after system start, retrying cycle...');
-      await $`container system stop`.quiet().nothrow();
-      await Bun.sleep(5000);
-      const retry = await $`container system start`.quiet().nothrow();
-      if (retry.exitCode !== 0) {
-        throw new Error('Apple Container system failed to start on retry');
-      }
-      const probe2 = await $`container run --rm --entrypoint /bin/echo ${CONTAINER_IMAGE} ok`.quiet().nothrow();
-      if (probe2.exitCode !== 0 || probe2.text().trim() !== 'ok') {
-        logger.error('Container probe still failing after retry — containers may not work');
-      } else {
-        logger.info('Container probe succeeded on retry');
-      }
-    } else {
-      logger.info('Container probe passed');
+    if (probe.exitCode === 0 && probe.text().trim() === 'ok') {
+      logger.info('Container system ready (probe passed)');
+      await this.cleanupOrphanedContainers();
+      return;
     }
 
-    // Clean up orphaned containers
+    // Probe failed — fall back to full stop/sleep/start cycle
+    logger.warn({ exitCode: probe.exitCode, output: probe.text().trim() }, 'Container probe failed, performing full restart cycle...');
+    await $`container system stop`.quiet().nothrow();
+    await Bun.sleep(3000);
+
+    const retry = await $`container system start`.quiet().nothrow();
+    if (retry.exitCode !== 0) {
+      logger.error({ stderr: retry.stderr.toString() }, 'Failed to start Apple Container system on retry');
+      this.printContainerSystemError();
+      throw new Error('Apple Container system failed to start on retry');
+    }
+
+    const probe2 = await $`container run --rm --entrypoint /bin/echo ${CONTAINER_IMAGE} ok`.quiet().nothrow();
+    if (probe2.exitCode !== 0 || probe2.text().trim() !== 'ok') {
+      logger.error('Container probe still failing after full restart');
+      this.printContainerSystemError();
+      throw new Error('Container system probe failed after restart');
+    } else {
+      logger.info('Container probe succeeded after full restart');
+    }
+
+    await this.cleanupOrphanedContainers();
+  }
+
+  private printContainerSystemError(): void {
+    console.error(
+      '\nFATAL: Container system failed to start.',
+      '\nRun `container system start` and restart the application.',
+      '\nSee the project README for installation instructions.\n',
+    );
+  }
+
+  private async cleanupOrphanedContainers(): Promise<void> {
     try {
       const lsResult = await $`container ls --format json`.quiet();
       const containers: { status: string; configuration: { id: string } }[] = JSON.parse(lsResult.text() || '[]');
       const orphans = containers
         .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
         .map((c) => c.configuration.id);
-      for (const name of orphans) {
-        await $`container stop ${name}`.quiet().nothrow();
-      }
+      await Promise.all(orphans.map((name) => $`container stop ${name}`.quiet().nothrow()));
       if (orphans.length > 0) {
         logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
       }

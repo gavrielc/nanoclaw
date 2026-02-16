@@ -90,6 +90,8 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger,
       browser: Browsers.macOS('Chrome'),
+      // NanoClaw has its own message DB — skip history sync to avoid 20s timeout
+      shouldSyncHistoryMessage: () => false,
     });
 
     // Store connection handler for later removal

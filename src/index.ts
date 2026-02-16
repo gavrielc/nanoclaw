@@ -64,6 +64,7 @@ import { createThreadStreamer } from './thread-streaming.js';
 import { Agent, Channel, ChannelRoute, NewMessage, RegisteredGroup, registeredGroupToAgent, registeredGroupToRoute } from './types.js';
 import { findMainGroupJid } from './group-helpers.js';
 import { logger } from './logger.js';
+import { Effect } from 'effect';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -760,9 +761,6 @@ async function main(): Promise<void> {
     logger.info('B2 S3 client initialized');
   }
 
-  // Initialize all backends needed by registered groups and agents
-  await initializeBackends(registeredGroups);
-
   // Expire stale sessions on startup to prevent unbounded context growth
   const expired = expireStaleSessions(SESSION_MAX_AGE);
   if (expired.length > 0) {
@@ -794,165 +792,178 @@ async function main(): Promise<void> {
     // Don't exit - log and continue to prevent service outage
   });
 
-  // Create WhatsApp channel
-  whatsapp = new WhatsAppChannel({
-    onMessage: (chatJid, msg) => storeMessage(msg),
-    onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
-    registeredGroups: () => registeredGroups,
-    onReaction: (chatJid, messageId, emoji) => {
-      // Only handle approval emojis
-      if (!emoji.startsWith('👍') && emoji !== '❤️' && emoji !== '✅') return;
+  // --- Parallel startup: backends + channels concurrently ---
+  const startupT0 = Date.now();
 
-      const request = consumeShareRequest(messageId);
-      if (!request) return; // Not a tracked share request
+  const initBackends = Effect.promise(() => initializeBackends(registeredGroups));
 
-      // Find the main group's JID
-      const mainJid = findMainGroupJid(registeredGroups);
-      if (!mainJid) return;
+  const connectWhatsApp = Effect.gen(function* () {
+    const wa = new WhatsAppChannel({
+      onMessage: (chatJid, msg) => storeMessage(msg),
+      onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+      registeredGroups: () => registeredGroups,
+      onReaction: (chatJid, messageId, emoji) => {
+        // Only handle approval emojis
+        if (!emoji.startsWith('👍') && emoji !== '❤️' && emoji !== '✅') return;
 
-      logger.info(
-        { messageId, emoji, sourceGroup: request.sourceGroup, sourceName: request.sourceName },
-        'Share request approved via reaction',
-      );
+        const request = consumeShareRequest(messageId);
+        if (!request) return; // Not a tracked share request
 
-      // Inject synthetic message into main group DB
-      const writePaths = request.serverFolder
-        ? `groups/${request.sourceGroup}/CLAUDE.md and/or groups/${request.serverFolder}/CLAUDE.md`
-        : `groups/${request.sourceGroup}/CLAUDE.md`;
-      const syntheticContent = [
-        `Share request APPROVED from ${request.sourceName} (${request.sourceJid}):`,
-        ``,
-        `${request.description}`,
-        ``,
-        `Fulfill this request — write context to ${writePaths}, clone repos if needed.`,
-        `When done, use send_message to ${request.sourceJid} to notify them: "Your context request has been fulfilled! [brief summary] — check your CLAUDE.md and workspace for updates."`,
-      ].join('\n');
+        // Find the main group's JID
+        const mainJid = findMainGroupJid(registeredGroups);
+        if (!mainJid) return;
 
-      storeMessage({
-        id: `synth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        chat_jid: mainJid,
-        sender: 'system',
-        sender_name: 'System',
-        content: syntheticContent,
-        timestamp: new Date().toISOString(),
-        is_from_me: false,
-      });
+        logger.info(
+          { messageId, emoji, sourceGroup: request.sourceGroup, sourceName: request.sourceName },
+          'Share request approved via reaction',
+        );
 
-      // Wake up the main agent
-      queue.enqueueMessageCheck(mainJid);
-    },
+        // Inject synthetic message into main group DB
+        const writePaths = request.serverFolder
+          ? `groups/${request.sourceGroup}/CLAUDE.md and/or groups/${request.serverFolder}/CLAUDE.md`
+          : `groups/${request.sourceGroup}/CLAUDE.md`;
+        const syntheticContent = [
+          `Share request APPROVED from ${request.sourceName} (${request.sourceJid}):`,
+          ``,
+          `${request.description}`,
+          ``,
+          `Fulfill this request — write context to ${writePaths}, clone repos if needed.`,
+          `When done, use send_message to ${request.sourceJid} to notify them: "Your context request has been fulfilled! [brief summary] — check your CLAUDE.md and workspace for updates."`,
+        ].join('\n');
+
+        storeMessage({
+          id: `synth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          chat_jid: mainJid,
+          sender: 'system',
+          sender_name: 'System',
+          content: syntheticContent,
+          timestamp: new Date().toISOString(),
+          is_from_me: false,
+        });
+
+        // Wake up the main agent
+        queue.enqueueMessageCheck(mainJid);
+      },
+    });
+    yield* Effect.promise(() => wa.connect());
+    return wa;
   });
 
-  // Connect — resolves when first connected
-  await whatsapp.connect();
-  channels.push(whatsapp);
+  const connectDiscord = DISCORD_BOT_TOKEN
+    ? Effect.gen(function* () {
+        const discord = new DiscordChannel({
+          token: DISCORD_BOT_TOKEN,
+          onReaction: async (chatJid, messageId, emoji, userName) => {
+            // 1. Check for share_request approval first (only approval emojis)
+            if (emoji.startsWith('👍') || emoji === '❤️' || emoji === '✅') {
+              const request = consumeShareRequest(messageId);
+              if (request) {
+                const mainJid = Object.entries(registeredGroups).find(
+                  ([, g]) => g.folder === MAIN_GROUP_FOLDER,
+                )?.[0];
+                if (!mainJid) return;
 
-  // Conditionally connect Discord
-  if (DISCORD_BOT_TOKEN) {
-    try {
-      const discord = new DiscordChannel({
-        token: DISCORD_BOT_TOKEN,
-        onReaction: async (chatJid, messageId, emoji, userName) => {
-          // 1. Check for share_request approval first (only approval emojis)
-          if (emoji.startsWith('👍') || emoji === '❤️' || emoji === '✅') {
-            const request = consumeShareRequest(messageId);
-            if (request) {
-              const mainJid = Object.entries(registeredGroups).find(
-                ([, g]) => g.folder === MAIN_GROUP_FOLDER,
-              )?.[0];
-              if (!mainJid) return;
+                logger.info(
+                  { messageId, emoji, sourceGroup: request.sourceGroup, sourceName: request.sourceName },
+                  'Share request approved via Discord reaction',
+                );
 
-              logger.info(
-                { messageId, emoji, sourceGroup: request.sourceGroup, sourceName: request.sourceName },
-                'Share request approved via Discord reaction',
-              );
+                const writePaths = request.serverFolder
+                  ? `groups/${request.sourceGroup}/CLAUDE.md and/or groups/${request.serverFolder}/CLAUDE.md`
+                  : `groups/${request.sourceGroup}/CLAUDE.md`;
+                const syntheticContent = [
+                  `Share request APPROVED from ${request.sourceName} (${request.sourceJid}):`,
+                  '',
+                  `${request.description}`,
+                  '',
+                  `Fulfill this request — write context to ${writePaths}, clone repos if needed.`,
+                  `When done, use send_message to ${request.sourceJid} to notify them: "Your context request has been fulfilled! [brief summary] — check your CLAUDE.md and workspace for updates."`,
+                ].join('\n');
 
-              const writePaths = request.serverFolder
-                ? `groups/${request.sourceGroup}/CLAUDE.md and/or groups/${request.serverFolder}/CLAUDE.md`
-                : `groups/${request.sourceGroup}/CLAUDE.md`;
-              const syntheticContent = [
-                `Share request APPROVED from ${request.sourceName} (${request.sourceJid}):`,
-                '',
-                `${request.description}`,
-                '',
-                `Fulfill this request — write context to ${writePaths}, clone repos if needed.`,
-                `When done, use send_message to ${request.sourceJid} to notify them: "Your context request has been fulfilled! [brief summary] — check your CLAUDE.md and workspace for updates."`,
-              ].join('\n');
+                storeMessage({
+                  id: `synth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  chat_jid: mainJid,
+                  sender: 'system',
+                  sender_name: 'System',
+                  content: syntheticContent,
+                  timestamp: new Date().toISOString(),
+                  is_from_me: false,
+                });
 
-              storeMessage({
-                id: `synth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                chat_jid: mainJid,
-                sender: 'system',
-                sender_name: 'System',
-                content: syntheticContent,
-                timestamp: new Date().toISOString(),
-                is_from_me: false,
-              });
-
-              queue.enqueueMessageCheck(mainJid);
-              return;
+                queue.enqueueMessageCheck(mainJid);
+                return;
+              }
             }
-          }
 
-          // 2. Context-aware reaction notification: include emoji and reactor name
-          const group = registeredGroups[chatJid];
-          if (!group) return;
+            // 2. Context-aware reaction notification: include emoji and reactor name
+            const group = registeredGroups[chatJid];
+            if (!group) return;
 
-          logger.info(
-            { chatJid, messageId, emoji, userName, group: group.name },
-            'Reaction on bot message in Discord',
-          );
+            logger.info(
+              { chatJid, messageId, emoji, userName, group: group.name },
+              'Reaction on bot message in Discord',
+            );
 
-          const reactionContent = `@${ASSISTANT_NAME} [${userName} reacted with ${emoji}]`;
+            const reactionContent = `@${ASSISTANT_NAME} [${userName} reacted with ${emoji}]`;
 
-          // Try to pipe directly to active container
-          const piped = await queue.sendMessage(chatJid, formatMessages([{
-            id: `react-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            chat_jid: chatJid,
-            sender: 'system',
-            sender_name: 'System',
-            content: reactionContent,
-            timestamp: new Date().toISOString(),
-          }]));
-          if (!piped) {
-            // No active container — store in DB and enqueue
-            storeMessage({
+            // Try to pipe directly to active container
+            const piped = await queue.sendMessage(chatJid, formatMessages([{
               id: `react-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               chat_jid: chatJid,
               sender: 'system',
               sender_name: 'System',
               content: reactionContent,
               timestamp: new Date().toISOString(),
-              is_from_me: false,
-            });
-            queue.enqueueMessageCheck(chatJid);
-          }
-        },
-      });
-      await discord.connect();
-      channels.push(discord);
+            }]));
+            if (!piped) {
+              // No active container — store in DB and enqueue
+              storeMessage({
+                id: `react-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                chat_jid: chatJid,
+                sender: 'system',
+                sender_name: 'System',
+                content: reactionContent,
+                timestamp: new Date().toISOString(),
+                is_from_me: false,
+              });
+              queue.enqueueMessageCheck(chatJid);
+            }
+          },
+        });
+        yield* Effect.promise(() => discord.connect());
+        yield* Effect.promise(() => backfillDiscordGuildIds(discord));
+        return discord as Channel;
+      }).pipe(Effect.catchAll((err) => {
+        logger.error({ err }, 'Failed to connect Discord bot (continuing without Discord)');
+        return Effect.succeed(null);
+      }))
+    : Effect.succeed(null);
 
-      // Backfill guild IDs for existing Discord groups
-      await backfillDiscordGuildIds(discord);
-    } catch (err) {
-      logger.error({ err }, 'Failed to connect Discord bot (continuing without Discord)');
-    }
-  }
+  const connectTelegram = TELEGRAM_BOT_TOKEN
+    ? Effect.gen(function* () {
+        const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, {
+          onMessage: (chatJid, msg) => storeMessage(msg),
+          onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp, name),
+          registeredGroups: () => registeredGroups,
+        });
+        yield* Effect.promise(() => telegram.connect());
+        return telegram as Channel;
+      }).pipe(Effect.catchAll((err) => {
+        logger.error({ err }, 'Failed to connect Telegram bot (continuing without Telegram)');
+        return Effect.succeed(null);
+      }))
+    : Effect.succeed(null);
 
-  // Conditionally connect Telegram
-  if (TELEGRAM_BOT_TOKEN) {
-    try {
-      const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, {
-        onMessage: (chatJid, msg) => storeMessage(msg),
-        onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp, name),
-        registeredGroups: () => registeredGroups,
-      });
-      await telegram.connect();
-      channels.push(telegram);
-    } catch (err) {
-      logger.error({ err }, 'Failed to connect Telegram bot (continuing without Telegram)');
-    }
-  }
+  const [, wa, discord, telegram] = await Effect.runPromise(
+    Effect.all([initBackends, connectWhatsApp, connectDiscord, connectTelegram], { concurrency: 'unbounded' }),
+  );
+
+  whatsapp = wa;
+  channels.push(whatsapp);
+  if (discord) channels.push(discord);
+  if (telegram) channels.push(telegram);
+
+  logger.info({ durationMs: Date.now() - startupT0 }, 'Startup complete');
 
   // Reconcile heartbeat tasks with group config before starting scheduler
   reconcileHeartbeats(registeredGroups);
