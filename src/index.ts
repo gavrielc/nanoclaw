@@ -454,7 +454,11 @@ function ensureContainerSystemRunning(): void {
 
 async function main(): Promise<void> {
   runPreflight();
-  ensureContainerSystemRunning();
+  try {
+    ensureContainerSystemRunning();
+  } catch {
+    logger.warn('Container runtime unavailable — agents will fail at invocation time');
+  }
   initDatabase();
   initExtBroker();
   logger.info('Database initialized');
