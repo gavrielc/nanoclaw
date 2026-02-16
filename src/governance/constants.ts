@@ -99,6 +99,7 @@ export interface GovDispatch {
   dispatch_key: string;
   group_jid: string;
   status: 'ENQUEUED' | 'STARTED' | 'DONE' | 'FAILED';
+  worker_id?: string;
   created_at: string;
   updated_at: string;
 }

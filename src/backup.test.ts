@@ -283,6 +283,9 @@ describe('memory backup', () => {
       source_type: 'agent',
       source_ref: null,
       policy_version: null,
+      embedding: null,
+      embedding_model: null,
+      embedding_at: null,
       created_at: now,
       updated_at: now,
     });
@@ -315,6 +318,9 @@ describe('memory backup', () => {
       source_type: 'agent',
       source_ref: 'task-1',
       policy_version: '1.1.0',
+      embedding: null,
+      embedding_model: null,
+      embedding_at: null,
       created_at: now,
       updated_at: now,
     });

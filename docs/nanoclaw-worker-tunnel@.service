@@ -1,0 +1,34 @@
+[Unit]
+Description=NanoClaw SSH Tunnel to Worker %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# %i format: localport:user@host (e.g., 7810:deploy@10.0.0.2)
+# Usage: systemctl enable nanoclaw-worker-tunnel@7810:deploy@10.0.0.2
+ExecStart=/usr/bin/ssh -NL %i:127.0.0.1:7801 \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3 \
+  -o ExitOnForwardFailure=yes \
+  -o ConnectTimeout=10 \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes
+
+# Restart policy: always restart, with burst protection
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=10
+TimeoutStartSec=30
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

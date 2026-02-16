@@ -102,6 +102,8 @@ function runGovMigrations(database: Database.Database): void {
   try { database.exec(`ALTER TABLE gov_tasks ADD COLUMN product_id TEXT`); } catch { /* already exists */ }
   // Migration 002: Add scope column to gov_tasks
   try { database.exec(`ALTER TABLE gov_tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'PRODUCT'`); } catch { /* already exists */ }
+  // Migration 003: Add worker_id column to gov_dispatches
+  try { database.exec(`ALTER TABLE gov_dispatches ADD COLUMN worker_id TEXT`); } catch { /* already exists */ }
 }
 
 // --- Products CRUD ---
@@ -445,14 +447,15 @@ export function tryCreateDispatch(dispatch: GovDispatch): boolean {
   try {
     db.prepare(
       `INSERT INTO gov_dispatches
-         (task_id, from_state, to_state, dispatch_key, group_jid, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (task_id, from_state, to_state, dispatch_key, group_jid, worker_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       dispatch.task_id,
       dispatch.from_state,
       dispatch.to_state,
       dispatch.dispatch_key,
       dispatch.group_jid,
+      dispatch.worker_id || null,
       dispatch.status,
       dispatch.created_at,
       dispatch.updated_at,
@@ -482,4 +485,15 @@ export function getDispatchByKey(
   return db
     .prepare('SELECT * FROM gov_dispatches WHERE dispatch_key = ?')
     .get(dispatchKey) as GovDispatch | undefined;
+}
+
+export function getDispatchesByWorkerId(
+  workerId: string,
+  limit: number = 20,
+): GovDispatch[] {
+  return db
+    .prepare(
+      'SELECT * FROM gov_dispatches WHERE worker_id = ? ORDER BY created_at DESC LIMIT ?',
+    )
+    .all(workerId, limit) as GovDispatch[];
 }

@@ -63,3 +63,39 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Ops HTTP server
+export const OPS_HTTP_PORT = parseInt(
+  process.env.OPS_HTTP_PORT || '7700',
+  10,
+);
+export const OS_HTTP_SECRET = process.env.OS_HTTP_SECRET || '';
+
+// Worker multi-node
+export const WORKER_PORT = parseInt(process.env.WORKER_PORT || '7801', 10);
+export const WORKER_HEALTH_INTERVAL = parseInt(
+  process.env.WORKER_HEALTH_INTERVAL || '30000',
+  10,
+);
+export const WORKER_TUNNEL_RECONNECT_MAX = parseInt(
+  process.env.WORKER_TUNNEL_RECONNECT_MAX || '10',
+  10,
+);
+
+// Nonce hardening
+export const NONCE_TTL_MS = parseInt(
+  process.env.NONCE_TTL_MS || '60000',
+  10,
+); // 60s default
+export const NONCE_CLEANUP_OLDER_THAN_MS = parseInt(
+  process.env.NONCE_CLEANUP_OLDER_THAN_MS || '86400000',
+  10,
+); // 24h default
+export const NONCE_CAP = parseInt(
+  process.env.NONCE_CAP || '100000',
+  10,
+);
+export const NONCE_CLEANUP_INTERVAL_MS = parseInt(
+  process.env.NONCE_CLEANUP_INTERVAL_MS || '21600000',
+  10,
+); // 6h default

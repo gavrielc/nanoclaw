@@ -37,6 +37,7 @@ import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { initExtBroker } from './ext-broker.js';
 import { startGovLoop } from './gov-loop.js';
+import { startOpsHttp } from './ops-http.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -456,9 +457,13 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Start ops HTTP server (read-only visibility API)
+  const opsServer = startOpsHttp();
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    opsServer.close();
     await queue.shutdown(10000);
     await whatsapp.disconnect();
     process.exit(0);

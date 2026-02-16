@@ -108,3 +108,69 @@ export function getL3CallsLast24h(): L3Call[] {
     )
     .all(cutoff) as L3Call[];
 }
+
+// --- Top keys (Sprint 7) ---
+
+export interface TopKey {
+  key: string;
+  count: number;
+}
+
+export function getTopQuotaUsedToday(limit = 10): TopKey[] {
+  const db = getDb();
+  const dayKey = new Date().toISOString().slice(0, 10);
+  return db
+    .prepare(
+      `SELECT (op || ':' || scope_key) as key, used as count
+       FROM quotas_daily
+       WHERE day_key = ? AND used > 0
+       ORDER BY used DESC
+       LIMIT ?`,
+    )
+    .all(dayKey, limit) as TopKey[];
+}
+
+export function getTopDenials24h(limit = 10): TopKey[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+  return db
+    .prepare(
+      `SELECT (op || ':' || scope_key) as key, COUNT(*) as count
+       FROM limit_denials
+       WHERE created_at > ?
+       GROUP BY op, scope_key
+       ORDER BY count DESC
+       LIMIT ?`,
+    )
+    .all(cutoff, limit) as TopKey[];
+}
+
+export function getTopExtCalls24h(limit = 10): TopKey[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+  return db
+    .prepare(
+      `SELECT (group_folder || ':' || provider || ':L' || access_level) as key, COUNT(*) as count
+       FROM ext_calls
+       WHERE created_at > ?
+       GROUP BY group_folder, provider, access_level
+       ORDER BY count DESC
+       LIMIT ?`,
+    )
+    .all(cutoff, limit) as TopKey[];
+}
+
+export function getTopEmbeds24h(limit = 10): TopKey[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+  return db
+    .prepare(
+      `SELECT (group_folder || ':' || COALESCE(embedding_model, 'unknown')) as key, COUNT(*) as count
+       FROM memories
+       WHERE embedding_at > ?
+       GROUP BY group_folder, embedding_model
+       ORDER BY count DESC
+       LIMIT ?`,
+    )
+    .all(cutoff, limit) as TopKey[];
+}

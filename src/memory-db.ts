@@ -26,6 +26,9 @@ export function createMemorySchema(database: Database.Database): void {
       source_type TEXT NOT NULL DEFAULT 'agent',
       source_ref TEXT,
       policy_version TEXT,
+      embedding BLOB,
+      embedding_model TEXT,
+      embedding_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       version INTEGER NOT NULL DEFAULT 0
@@ -35,6 +38,7 @@ export function createMemorySchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_memories_product ON memories(product_id);
     CREATE INDEX IF NOT EXISTS idx_memories_group ON memories(group_folder);
     CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source_type, source_ref);
+    CREATE INDEX IF NOT EXISTS idx_memories_embedding_at ON memories(embedding_at);
 
     CREATE TABLE IF NOT EXISTS memory_access_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,8 +60,9 @@ export function storeMemory(memory: Omit<Memory, 'version'>): void {
     `INSERT INTO memories
        (id, content, content_hash, level, scope, product_id, group_folder,
         tags, pii_detected, pii_types, source_type, source_ref,
-        policy_version, created_at, updated_at, version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        policy_version, embedding, embedding_model, embedding_at,
+        created_at, updated_at, version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      ON CONFLICT(id) DO UPDATE SET
        content = excluded.content,
        content_hash = excluded.content_hash,
@@ -68,6 +73,9 @@ export function storeMemory(memory: Omit<Memory, 'version'>): void {
        pii_detected = excluded.pii_detected,
        pii_types = excluded.pii_types,
        policy_version = excluded.policy_version,
+       embedding = excluded.embedding,
+       embedding_model = excluded.embedding_model,
+       embedding_at = excluded.embedding_at,
        updated_at = excluded.updated_at`,
   ).run(
     memory.id,
@@ -83,6 +91,9 @@ export function storeMemory(memory: Omit<Memory, 'version'>): void {
     memory.source_type,
     memory.source_ref ?? null,
     memory.policy_version ?? null,
+    memory.embedding ?? null,
+    memory.embedding_model ?? null,
+    memory.embedding_at ?? null,
     memory.created_at,
     memory.updated_at,
   );
@@ -170,6 +181,54 @@ export function searchMemoriesByKeywords(
       `SELECT * FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
     )
     .all(...params) as Memory[];
+}
+
+/**
+ * Get memories that have embeddings, for semantic search.
+ * Excludes L3 (which should never have embeddings anyway).
+ * Returns raw rows with embedding as Buffer for caller to deserialize.
+ */
+export function getMemoriesWithEmbeddings(
+  filters: {
+    scope?: string;
+    productId?: string | null;
+    maxLevel?: string;
+    limit?: number;
+  },
+): Memory[] {
+  const conditions: string[] = ['embedding IS NOT NULL', "level != 'L3'"];
+  const params: unknown[] = [];
+
+  if (filters.scope) {
+    conditions.push('scope = ?');
+    params.push(filters.scope);
+  }
+  if (filters.productId !== undefined && filters.productId !== null) {
+    conditions.push('product_id = ?');
+    params.push(filters.productId);
+  }
+  if (filters.maxLevel) {
+    conditions.push('level <= ?');
+    params.push(filters.maxLevel);
+  }
+
+  const limit = filters.limit ?? 200;
+  params.push(limit);
+
+  return db
+    .prepare(
+      `SELECT * FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(...params) as Memory[];
+}
+
+/** Count memories with embeddings computed in the last 24h. */
+export function countEmbeddings24h(): number {
+  const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+  const row = db
+    .prepare('SELECT COUNT(*) as count FROM memories WHERE embedding_at > ?')
+    .get(cutoff) as { count: number };
+  return row.count;
 }
 
 /**

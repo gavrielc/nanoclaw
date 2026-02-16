@@ -5,9 +5,11 @@
 import type { Memory, MemoryLevel } from './constants.js';
 import {
   searchMemoriesByKeywords,
+  getMemoriesWithEmbeddings,
   logMemoryAccess,
   getMemoriesByGroup,
 } from '../memory-db.js';
+import { bufferToEmbedding, cosineSimilarity } from './embedding.js';
 
 const LEVEL_ORDER: Record<MemoryLevel, number> = {
   L0: 0,
@@ -29,6 +31,24 @@ export interface RecallQuery {
 }
 
 export interface RecallResult {
+  memories: Array<Memory & { score: number }>;
+  total_considered: number;
+  access_denials: number;
+}
+
+export interface SemanticRecallQuery {
+  queryEmbedding: Float32Array | null;
+  query: string; // for keyword fallback
+  accessor_group: string;
+  accessor_is_main: boolean;
+  scope?: string;
+  product_id: string | null;
+  max_level?: MemoryLevel;
+  limit?: number;
+}
+
+export interface SemanticRecallResult {
+  mode: 'semantic' | 'keyword';
   memories: Array<Memory & { score: number }>;
   total_considered: number;
   access_denials: number;
@@ -188,6 +208,109 @@ export function recallRelevantMemory(query: RecallQuery): RecallResult {
   accessible.sort((a, b) => b.score - a.score);
 
   return {
+    memories: accessible.slice(0, limit),
+    total_considered,
+    access_denials,
+  };
+}
+
+/**
+ * Semantic recall — cosine similarity over stored embeddings.
+ * Falls back to keyword search if no query embedding or no embedded memories.
+ */
+export function semanticRecall(query: SemanticRecallQuery): SemanticRecallResult {
+  const limit = query.limit ?? 10;
+
+  // No embedding → keyword fallback
+  if (!query.queryEmbedding) {
+    const kw = recallRelevantMemory({
+      query: query.query,
+      accessor_group: query.accessor_group,
+      accessor_is_main: query.accessor_is_main,
+      scope: query.scope ?? 'COMPANY',
+      product_id: query.product_id,
+      max_level: query.max_level,
+      limit,
+    });
+    return { mode: 'keyword', ...kw };
+  }
+
+  // Fetch memories that have embeddings (L3 excluded by DB query)
+  const candidates = getMemoriesWithEmbeddings({
+    scope: query.scope,
+    productId: query.product_id,
+    maxLevel: query.max_level,
+    limit: limit * 10,
+  });
+
+  // No embedded memories → keyword fallback
+  if (candidates.length === 0) {
+    const kw = recallRelevantMemory({
+      query: query.query,
+      accessor_group: query.accessor_group,
+      accessor_is_main: query.accessor_is_main,
+      scope: query.scope ?? 'COMPANY',
+      product_id: query.product_id,
+      max_level: query.max_level,
+      limit,
+    });
+    return { mode: 'keyword', ...kw };
+  }
+
+  const total_considered = candidates.length;
+  let access_denials = 0;
+  const now = new Date().toISOString();
+  const accessible: Array<Memory & { score: number }> = [];
+
+  for (const mem of candidates) {
+    const memLevel = mem.level as MemoryLevel;
+
+    // L3 audit logging (same pattern as recallRelevantMemory)
+    if (LEVEL_ORDER[memLevel] >= LEVEL_ORDER['L3']) {
+      const granted = canAccess(
+        mem,
+        query.accessor_group,
+        query.accessor_is_main,
+        query.product_id,
+      );
+      logMemoryAccess({
+        memory_id: mem.id,
+        accessor_group: query.accessor_group,
+        access_type: 'semantic_recall',
+        granted: granted ? 1 : 0,
+        reason: granted ? null : 'L3_ACCESS_DENIED',
+        created_at: now,
+      });
+      if (!granted) {
+        access_denials++;
+        continue;
+      }
+    } else if (
+      !canAccess(
+        mem,
+        query.accessor_group,
+        query.accessor_is_main,
+        query.product_id,
+      )
+    ) {
+      access_denials++;
+      continue;
+    }
+
+    if (query.max_level && LEVEL_ORDER[memLevel] > LEVEL_ORDER[query.max_level]) {
+      continue;
+    }
+
+    if (!mem.embedding) continue;
+    const memEmbed = bufferToEmbedding(mem.embedding as Buffer);
+    const score = cosineSimilarity(query.queryEmbedding, memEmbed);
+    accessible.push({ ...mem, score });
+  }
+
+  accessible.sort((a, b) => b.score - a.score);
+
+  return {
+    mode: 'semantic',
     memories: accessible.slice(0, limit),
     total_considered,
     access_denials,

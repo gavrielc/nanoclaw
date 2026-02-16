@@ -11,6 +11,7 @@ import type { GateType as GateTypeEnum } from './governance/gates.js';
 import { checkApprover, checkApproverNotExecutor } from './governance/gates.js';
 import { validateTransition } from './governance/policy.js';
 import { POLICY_VERSION } from './governance/policy-version.js';
+import { enforceGovLimits } from './limits/enforce.js';
 import { logger } from './logger.js';
 
 export interface GovIpcData {
@@ -156,6 +157,13 @@ export async function processGovIpc(
         break;
       }
 
+      // Rate limit check
+      const transitionLimit = enforceGovLimits('gov_transition', sourceGroup);
+      if (!transitionLimit.allowed) {
+        logger.warn({ sourceGroup, code: transitionLimit.code, detail: transitionLimit.detail }, 'gov_transition rate limited');
+        break;
+      }
+
       const task = getGovTaskById(data.taskId);
       if (!task) {
         logger.warn({ taskId: data.taskId }, 'gov_transition task not found');
@@ -262,6 +270,14 @@ export async function processGovIpc(
         logger.warn({ gate_type: data.gate_type }, 'gov_approve invalid gate_type');
         break;
       }
+
+      // Rate limit check
+      const approveLimit = enforceGovLimits('gov_approve', sourceGroup);
+      if (!approveLimit.allowed) {
+        logger.warn({ sourceGroup, code: approveLimit.code, detail: approveLimit.detail }, 'gov_approve rate limited');
+        break;
+      }
+
       const gate = data.gate_type as GateTypeEnum;
 
       const task = getGovTaskById(data.taskId);

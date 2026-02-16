@@ -8,7 +8,7 @@ import { POLICY_VERSION } from './governance/policy-version.js';
 import { storeMemory } from './memory-db.js';
 import { classifyMemory } from './memory/classifier.js';
 import type { MemoryLevel } from './memory/constants.js';
-import { computeEmbedding, embeddingToBuffer } from './memory/embedding.js';
+import { computeEmbedding, embeddingToBuffer, getEmbeddingModel } from './memory/embedding.js';
 import { scanForInjection } from './memory/injection-guard.js';
 import { scanAndSanitize } from './memory/pii-guard.js';
 import { recallRelevantMemory } from './memory/recall.js';
@@ -122,7 +122,8 @@ async function handleMemStore(
   });
 
   // 4. Compute embedding (optional, async — L3 excluded: never sent externally)
-  const embedding = await computeEmbedding(piiResult.sanitized, classification.level);
+  // Passes sourceGroup for rate limit / quota / breaker enforcement
+  const embedding = await computeEmbedding(piiResult.sanitized, classification.level, sourceGroup);
 
   // 5. Store
   const memoryId = requestId;
@@ -142,6 +143,9 @@ async function handleMemStore(
     source_type: 'agent',
     source_ref: data.source_ref ?? null,
     policy_version: POLICY_VERSION,
+    embedding: embedding ? embeddingToBuffer(embedding) : null,
+    embedding_model: embedding ? getEmbeddingModel() : null,
+    embedding_at: embedding ? now : null,
     created_at: now,
     updated_at: now,
   });

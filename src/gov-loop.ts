@@ -55,6 +55,7 @@ import type { GovTask } from './governance/constants.js';
 import { recallRelevantMemory } from './memory/recall.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import { emitOpsEvent } from './ops-events.js';
 import { RegisteredGroup } from './types.js';
 
 export const GOV_POLL_INTERVAL = parseInt(
@@ -83,6 +84,10 @@ export interface GovLoopDeps {
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
   getSessions: () => Record<string, string>;
+  // Optional: multi-node worker dispatch
+  selectWorker?: (group?: string) => { id: string; [key: string]: unknown } | null;
+  dispatchToWorker?: (workerId: string, payload: unknown) => Promise<{ ok: boolean; status: string }>;
+  isTunnelUp?: (workerId: string) => boolean;
 }
 
 let govLoopRunning = false;
@@ -149,6 +154,100 @@ async function dispatchReadyTasks(deps: GovLoopDeps): Promise<void> {
       continue;
     }
 
+    // [Sprint 9] Try remote dispatch if workers are available
+    if (deps.selectWorker) {
+      const worker = deps.selectWorker(task.assigned_group!);
+      if (worker) {
+        const remoteDispatchKey = `${task.id}:READY->DOING:v${task.version}`;
+        const remoteNow = new Date().toISOString();
+
+        const remoteClaimed = tryCreateDispatch({
+          task_id: task.id,
+          from_state: 'READY',
+          to_state: 'DOING',
+          dispatch_key: remoteDispatchKey,
+          group_jid: task.assigned_group!,
+          worker_id: worker.id,
+          status: 'ENQUEUED',
+          created_at: remoteNow,
+          updated_at: remoteNow,
+        });
+
+        if (!remoteClaimed) continue;
+
+        if (!deps.isTunnelUp?.(worker.id)) {
+          logGovActivity({
+            task_id: task.id,
+            action: 'dispatch_deferred',
+            from_state: 'READY',
+            to_state: null,
+            actor: 'system',
+            reason: 'DISPATCH_DEFERRED_TUNNEL_DOWN',
+            created_at: remoteNow,
+          });
+          updateDispatchStatus(remoteDispatchKey, 'FAILED');
+          emitOpsEvent('dispatch:lifecycle', {
+            taskId: task.id, workerId: worker.id, status: 'DEFERRED', reason: 'tunnel_down',
+          });
+          continue;
+        }
+
+        // Build payload for remote worker
+        const group = Object.values(deps.registeredGroups()).find(
+          (g) => g.folder === task.assigned_group,
+        );
+        const isMain = task.assigned_group === MAIN_GROUP_FOLDER;
+        const prompt = buildGovTaskPrompt(task);
+        const sessions = deps.getSessions();
+
+        const remotePayload = {
+          taskId: task.id,
+          groupFolder: task.assigned_group!,
+          prompt,
+          sessionId: sessions[task.assigned_group!],
+          isMain,
+          ipcSecret: '',  // Worker will use its own
+        };
+
+        const result = await deps.dispatchToWorker!(worker.id, remotePayload);
+        if (result.ok) {
+          const updated = updateGovTask(task.id, task.version, { state: 'DOING' });
+          if (updated) {
+            logGovActivity({
+              task_id: task.id,
+              action: 'transition',
+              from_state: 'READY',
+              to_state: 'DOING',
+              actor: 'system',
+              reason: `Auto-dispatched to worker ${worker.id}`,
+              created_at: remoteNow,
+            });
+            updateDispatchStatus(remoteDispatchKey, 'STARTED');
+            emitOpsEvent('dispatch:lifecycle', {
+              taskId: task.id, workerId: worker.id, status: 'STARTED',
+              from: 'READY', to: 'DOING',
+            });
+            logger.info(
+              { taskId: task.id, workerId: worker.id, dispatchKey: remoteDispatchKey },
+              'Gov dispatch: READY -> DOING (remote worker)',
+            );
+          } else {
+            updateDispatchStatus(remoteDispatchKey, 'FAILED');
+            emitOpsEvent('dispatch:lifecycle', {
+              taskId: task.id, workerId: worker.id, status: 'FAILED', reason: 'version_conflict',
+            });
+          }
+        } else {
+          updateDispatchStatus(remoteDispatchKey, 'FAILED');
+          emitOpsEvent('dispatch:lifecycle', {
+            taskId: task.id, workerId: worker.id, status: 'FAILED', reason: result.status,
+          });
+        }
+        continue;
+      }
+    }
+
+    // Fall through to local dispatch
     const groupJid = resolveGroupJid(task.assigned_group, deps);
     if (!groupJid) {
       logger.warn(

@@ -17,6 +17,8 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
+import { recordFailure, recordSuccess } from './limits/breaker.js';
+import { enforceExtCallLimits } from './limits/enforce.js';
 import {
   countPendingExtCalls,
   getCapability,
@@ -402,6 +404,16 @@ async function handleExtCall(
     }
   }
 
+  // Rate limit + quota + breaker enforcement
+  const limitResult = enforceExtCallLimits(sourceGroup, data.provider, action.level);
+  if (!limitResult.allowed) {
+    deny(requestId, sourceGroup, data, now, `Limit denied: ${limitResult.detail} [${limitResult.code}]`);
+    return;
+  }
+  if (limitResult.softWarn) {
+    logger.info({ sourceGroup, provider: data.provider, detail: limitResult.detail }, 'ext_call quota soft warning');
+  }
+
   // Validate params with action's zod schema
   const paramsResult = action.params.safeParse(data.params || {});
   if (!paramsResult.success) {
@@ -456,6 +468,7 @@ async function handleExtCall(
     const durationMs = Date.now() - startTime;
 
     if (result.ok) {
+      recordSuccess(data.provider);
       const response = {
         request_id: requestId,
         status: 'executed' as const,
@@ -474,6 +487,7 @@ async function handleExtCall(
         'ext_call executed successfully',
       );
     } else {
+      recordFailure(data.provider);
       const response = {
         request_id: requestId,
         status: 'failed' as const,
@@ -492,6 +506,7 @@ async function handleExtCall(
       );
     }
   } catch (err) {
+    recordFailure(data.provider!);
     const durationMs = Date.now() - startTime;
     const errMsg = err instanceof Error ? err.message : String(err);
     const response = {

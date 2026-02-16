@@ -1,41 +1,83 @@
 /**
- * Embedding engine — optional, behind EMBEDDING_API_KEY env var.
+ * Embedding engine — optional, behind OPENAI_API_KEY env var.
  * Provides cosine similarity for semantic recall.
  * Falls back to null when embeddings are disabled.
+ *
+ * Env vars:
+ *   OPENAI_API_KEY (or legacy EMBEDDING_API_KEY)
+ *   OPENAI_EMBED_MODEL  (default: text-embedding-3-small)
+ *   EMBED_VECTOR_DIMS   (default: 1536)
  */
 
-export const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || '';
+import { recordFailure, recordSuccess } from '../limits/breaker.js';
+import { enforceEmbedLimits } from '../limits/enforce.js';
+
+// --- Env-driven config (read at call time, not import time) ---
+
+export function getEmbeddingApiKey(): string {
+  return process.env.OPENAI_API_KEY || process.env.EMBEDDING_API_KEY || '';
+}
+export function getEmbeddingModel(): string {
+  return process.env.OPENAI_EMBED_MODEL || 'text-embedding-3-small';
+}
+export function getEmbeddingDims(): number {
+  return parseInt(process.env.EMBED_VECTOR_DIMS || '1536', 10);
+}
+export function embeddingEnabled(): boolean {
+  return getEmbeddingApiKey().length > 0;
+}
+
+/** @deprecated Kept for backward compat in existing tests. Use embeddingEnabled(). */
+export const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '';
 export const EMBEDDING_ENABLED = EMBEDDING_API_KEY.length > 0;
-export const EMBEDDING_DIM = 1536; // text-embedding-3-small default
+export const EMBEDDING_DIM = 1536;
 
 /**
  * Compute embedding for text via OpenAI API.
- * Returns null if embeddings are disabled or if level is L3
- * (L3 content never leaves the host, even in vectorized form).
+ * Returns null if embeddings are disabled, if level is L3
+ * (L3 content never leaves the host, even in vectorized form),
+ * or if rate/quota/breaker limits deny the call (fallback to keyword search).
+ *
+ * @param group - group folder for limit enforcement (optional for backward compat)
  */
 export async function computeEmbedding(
   text: string,
   level?: string,
+  group?: string,
 ): Promise<Float32Array | null> {
-  if (!EMBEDDING_ENABLED) return null;
+  if (!embeddingEnabled()) return null;
   if (level === 'L3') return null; // L3 never sent externally
+
+  // Enforce embed limits (rate limit + quota + breaker)
+  // If denied, return null → caller falls back to keyword search
+  if (group) {
+    const limitResult = enforceEmbedLimits(group, 'openai');
+    if (!limitResult.allowed) {
+      return null;
+    }
+  }
+
+  const apiKey = getEmbeddingApiKey();
+  const model = getEmbeddingModel();
 
   const response = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${EMBEDDING_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'text-embedding-3-small',
+      model,
       input: text,
     }),
   });
 
   if (!response.ok) {
+    if (group) recordFailure('openai');
     return null;
   }
 
+  if (group) recordSuccess('openai');
   const data = (await response.json()) as {
     data: Array<{ embedding: number[] }>;
   };

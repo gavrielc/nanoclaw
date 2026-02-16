@@ -27,6 +27,9 @@ export interface Memory {
   source_type: string;
   source_ref: string | null; // task_id, etc.
   policy_version: string | null;
+  embedding: Buffer | null; // Float32Array serialized as BLOB (L0-L2 only, never L3)
+  embedding_model: string | null; // e.g. 'text-embedding-3-small'
+  embedding_at: string | null; // ISO timestamp when embedding was computed
   created_at: string;
   updated_at: string;
   version: number; // optimistic locking

@@ -2,11 +2,12 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, STORE_DIR } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { createExtAccessSchema } from './ext-broker-db.js';
 import { createGovSchema } from './gov-db.js';
+import { createLimitsSchema } from './limits-db.js';
 import { createMemorySchema } from './memory-db.js';
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
+import { createWorkersSchema } from './worker-db.js';
 import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database.Database;
@@ -115,6 +116,8 @@ export function initDatabase(): void {
   createGovSchema(db);
   createExtAccessSchema(db);
   createMemorySchema(db);
+  createLimitsSchema(db);
+  createWorkersSchema(db);
 
   // Migrate from JSON files if they exist
   migrateJsonState();
@@ -127,6 +130,8 @@ export function _initTestDatabase(): void {
   createGovSchema(db);
   createExtAccessSchema(db);
   createMemorySchema(db);
+  createLimitsSchema(db);
+  createWorkersSchema(db);
 }
 
 /**
