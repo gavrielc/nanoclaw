@@ -78,6 +78,7 @@ Your workspace has a structured memory system:
 - **NEVER store memory in CLAUDE.md.** CLAUDE.md is for identity and instructions only.
 - Use `memory/facts.md` for permanent facts. Use `memory/daily/` for daily event logs.
 - Use `mcp__nanoclaw__memory_search` to search your memory and past conversations before answering questions about past events or user preferences. Don't guess -- search first if unsure.
+- At the end of a conversation where you learned something noteworthy (a preference, decision, action item, or important event), write a brief entry to today's `memory/daily/YYYY-MM-DD.md`. Don't log chitchat — only things worth remembering.
 
 ### Writing to `memory/facts.md`
 
@@ -103,6 +104,8 @@ Distill facts -- don't store raw quotes. "User said they changed their mind abou
 **Capacity:** Max ~50 entries. When full, demote `agent-inferred` entries first, then consolidate.
 
 ### Writing to `memory/daily/YYYY-MM-DD.md`
+
+Proactively write to this file during or at the end of any conversation where something noteworthy happened -- a user preference, a decision made, an action completed, or an important event. Don't wait for compaction; treat this as your primary logging mechanism.
 
 Log important events, decisions, and action items -- not chitchat. Use markdown anchors (## headers) so facts.md can reference specific sections with `#section-anchor`.
 
