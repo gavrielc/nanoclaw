@@ -1,5 +1,5 @@
 import { ASSISTANT_NAME } from './config.js';
-import { Channel, NewMessage } from './types.js';
+import { Channel, NewMessage, RegisteredGroup } from './types.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -21,11 +21,17 @@ export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }
 
-export function formatOutbound(channel: Channel, rawText: string): string {
+export function getAgentName(group: RegisteredGroup): string {
+  // Extract agent name from trigger (e.g., "@OmarOmni" → "OmarOmni")
+  return group.trigger?.replace(/^@/, '') || ASSISTANT_NAME;
+}
+
+export function formatOutbound(channel: Channel, rawText: string, agentName?: string): string {
   const text = stripInternalTags(rawText);
   if (!text) return '';
+  const name = agentName || ASSISTANT_NAME;
   const prefix =
-    channel.prefixAssistantName !== false ? `${ASSISTANT_NAME}: ` : '';
+    channel.prefixAssistantName !== false ? `${name}: ` : '';
   return `${prefix}${text}`;
 }
 
