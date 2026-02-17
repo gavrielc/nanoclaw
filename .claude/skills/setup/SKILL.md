@@ -139,6 +139,7 @@ Run `./.claude/skills/setup/scripts/06-register-channel.sh` with args:
 - `--folder "main"` — always "main" for the first channel
 - `--no-trigger-required` — if personal chat, DM, or solo group
 - `--assistant-name "Name"` — if trigger word differs from "Andy"
+- `--own-number` — if bot has its own dedicated phone number
 
 ## 9. Mount Allowlist
 

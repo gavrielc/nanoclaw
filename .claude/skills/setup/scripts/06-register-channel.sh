@@ -20,6 +20,7 @@ TRIGGER=""
 FOLDER=""
 REQUIRES_TRIGGER="true"
 ASSISTANT_NAME="Andy"
+OWN_NUMBER="false"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
     --folder)           FOLDER="$2"; shift 2 ;;
     --no-trigger-required) REQUIRES_TRIGGER="false"; shift ;;
     --assistant-name)   ASSISTANT_NAME="$2"; shift 2 ;;
+    --own-number)       OWN_NUMBER="true"; shift ;;
     *) shift ;;
   esac
 done
@@ -80,6 +82,19 @@ if [ "$ASSISTANT_NAME" != "Andy" ]; then
   done
 
   NAME_UPDATED="true"
+fi
+
+# Write assistant name and phone config to .env
+ENV_FILE="$PROJECT_ROOT/.env"
+if [ "$ASSISTANT_NAME" != "Andy" ]; then
+  sed -i '' '/^ASSISTANT_NAME=/d' "$ENV_FILE"
+  echo "ASSISTANT_NAME=$ASSISTANT_NAME" >> "$ENV_FILE"
+  log "Set ASSISTANT_NAME=$ASSISTANT_NAME in .env"
+fi
+if [ "$OWN_NUMBER" = "true" ]; then
+  sed -i '' '/^ASSISTANT_HAS_OWN_NUMBER=/d' "$ENV_FILE"
+  echo "ASSISTANT_HAS_OWN_NUMBER=true" >> "$ENV_FILE"
+  log "Set ASSISTANT_HAS_OWN_NUMBER=true in .env"
 fi
 
 cat <<EOF
