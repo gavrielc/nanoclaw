@@ -56,6 +56,18 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
 
+    CREATE TABLE IF NOT EXISTS memory_chunks (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      source_file TEXT NOT NULL,
+      content TEXT NOT NULL,
+      line_start INTEGER,
+      line_end INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chunks_group ON memory_chunks(group_folder);
+
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -74,6 +86,17 @@ function createSchema(database: Database.Database): void {
       requires_trigger INTEGER DEFAULT 1
     );
   `);
+
+  // Create FTS5 virtual table for memory search (separate because virtual tables need special handling)
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE memory_chunks_fts USING fts5(
+        content, group_folder UNINDEXED, chunk_id UNINDEXED
+      );
+    `);
+  } catch {
+    /* table already exists */
+  }
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
   try {
@@ -547,6 +570,104 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Memory search ---
+
+export interface MemoryChunk {
+  id: string;
+  group_folder: string;
+  source_file: string;
+  content: string;
+  line_start: number | null;
+  line_end: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemorySearchResult {
+  content: string;
+  source_file: string;
+  group_folder: string;
+  rank: number;
+}
+
+export function searchMemory(
+  query: string,
+  groupFolder: string,
+  limit: number = 5,
+): MemorySearchResult[] {
+  const sql = `
+    SELECT
+      mc.content,
+      mc.source_file,
+      mc.group_folder,
+      rank
+    FROM memory_chunks_fts fts
+    JOIN memory_chunks mc ON mc.id = fts.chunk_id
+    WHERE memory_chunks_fts MATCH ?
+      AND fts.group_folder = ?
+    ORDER BY rank
+    LIMIT ?
+  `;
+  return db.prepare(sql).all(query, groupFolder, limit) as MemorySearchResult[];
+}
+
+export function upsertMemoryChunk(chunk: MemoryChunk): void {
+  const existing = db
+    .prepare('SELECT id FROM memory_chunks WHERE id = ?')
+    .get(chunk.id) as { id: string } | undefined;
+
+  if (existing) {
+    // Update existing chunk
+    db.prepare(
+      `UPDATE memory_chunks SET content = ?, updated_at = ? WHERE id = ?`,
+    ).run(chunk.content, chunk.updated_at, chunk.id);
+    // Update FTS
+    db.prepare(
+      `UPDATE memory_chunks_fts SET content = ? WHERE chunk_id = ?`,
+    ).run(chunk.content, chunk.id);
+  } else {
+    // Insert new chunk
+    db.prepare(
+      `INSERT INTO memory_chunks (id, group_folder, source_file, content, line_start, line_end, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      chunk.id,
+      chunk.group_folder,
+      chunk.source_file,
+      chunk.content,
+      chunk.line_start,
+      chunk.line_end,
+      chunk.created_at,
+      chunk.updated_at,
+    );
+    // Insert into FTS
+    db.prepare(
+      `INSERT INTO memory_chunks_fts (content, group_folder, chunk_id)
+       VALUES (?, ?, ?)`,
+    ).run(chunk.content, chunk.group_folder, chunk.id);
+  }
+}
+
+export function deleteMemoryChunksByFile(
+  sourceFile: string,
+  groupFolder: string,
+): void {
+  const chunks = db
+    .prepare(
+      'SELECT id FROM memory_chunks WHERE source_file = ? AND group_folder = ?',
+    )
+    .all(sourceFile, groupFolder) as Array<{ id: string }>;
+
+  for (const chunk of chunks) {
+    db.prepare('DELETE FROM memory_chunks_fts WHERE chunk_id = ?').run(
+      chunk.id,
+    );
+  }
+  db.prepare(
+    'DELETE FROM memory_chunks WHERE source_file = ? AND group_folder = ?',
+  ).run(sourceFile, groupFolder);
 }
 
 // --- JSON migration ---

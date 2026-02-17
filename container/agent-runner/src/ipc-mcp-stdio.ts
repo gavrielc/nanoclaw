@@ -274,6 +274,81 @@ Use available_groups.json to find the JID for a group. The folder name should be
   },
 );
 
+server.tool(
+  'memory_search',
+  `Search your memory and past conversations. Returns relevant facts, decisions, and context from previous sessions.
+
+Use this BEFORE answering questions about:
+- Past conversations or events
+- User preferences or decisions
+- Previously discussed topics
+- People, contacts, or relationships mentioned before
+
+Don't guess from context — search first if unsure.`,
+  {
+    query: z.string().describe('What to search for (use keywords, not full sentences)'),
+    limit: z.number().optional().default(5).describe('Max results to return (default 5)'),
+  },
+  async (args) => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestsDir = path.join(IPC_DIR, 'memory_requests');
+    const resultsDir = path.join(IPC_DIR, 'memory_results');
+
+    // Write search request
+    writeIpcFile(requestsDir, {
+      type: 'memory_search',
+      query: args.query,
+      limit: args.limit || 5,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Poll for results (host processes the request and writes result file)
+    const resultPath = path.join(resultsDir, `${requestId}.json`);
+    const timeout = 10_000; // 10 seconds
+    const pollInterval = 200;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+
+          if (!data.results || data.results.length === 0) {
+            return {
+              content: [{ type: 'text' as const, text: `No memories found for "${args.query}".` }],
+            };
+          }
+
+          const formatted = data.results
+            .map(
+              (r: { content: string; source_file: string; rank: number }, i: number) =>
+                `[${i + 1}] (${r.source_file})\n${r.content}`,
+            )
+            .join('\n\n---\n\n');
+
+          return {
+            content: [{ type: 'text' as const, text: `Found ${data.results.length} result(s) for "${args.query}":\n\n${formatted}` }],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error reading search results: ${err instanceof Error ? err.message : String(err)}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Memory search timed out. The host may not be processing requests.' }],
+      isError: true,
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

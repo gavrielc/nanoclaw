@@ -36,12 +36,9 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 ## Memory
 
-The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
+See the Memory System section in global CLAUDE.md for full conventions.
 
-When you learn something important:
-- Create files for structured data (e.g., `customers.md`, `preferences.md`)
-- Split files larger than 500 lines into folders
-- Keep an index in your memory for the files you create
+Your memory lives in `memory/` — use `memory/facts.md` for permanent facts and `memory/daily/` for daily logs. Use `mcp__nanoclaw__memory_search` to search past conversations and facts. Never store memory notes in this CLAUDE.md file.
 
 ## WhatsApp Formatting (and other messaging apps)
 

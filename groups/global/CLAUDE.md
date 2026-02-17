@@ -38,14 +38,55 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
-## Memory
+## Memory System
 
-The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
+Your workspace has a structured memory system:
 
-When you learn something important:
-- Create files for structured data (e.g., `customers.md`, `preferences.md`)
-- Split files larger than 500 lines into folders
-- Keep an index in your memory for the files you create
+```
+/workspace/group/
+  memory/
+    facts.md         ← permanent facts (preferences, contacts, decisions)
+    daily/
+      YYYY-MM-DD.md  ← daily event log (append-only)
+  conversations/     ← archived conversation transcripts
+```
+
+### Rules
+
+- **NEVER store memory in CLAUDE.md.** CLAUDE.md is for identity and instructions only.
+- Use `memory/facts.md` for permanent facts. Use `memory/daily/` for daily event logs.
+- Use `mcp__nanoclaw__memory_search` to search your memory and past conversations before answering questions about past events or user preferences. Don't guess — search first if unsure.
+
+### Writing to `memory/facts.md`
+
+Distill facts — don't store raw quotes. "User said they changed their mind about MongoDB" → update the decision entry.
+
+**Format:**
+```markdown
+- [YYYY-MM-DD] [confidence] Distilled fact
+  source: daily/YYYY-MM-DD.md#section-anchor
+```
+
+**Confidence levels:**
+- `user-stated` — User explicitly said this. Ground truth.
+- `user-confirmed` — Agent asked, user confirmed.
+- `agent-observed` — Pattern noticed across multiple episodes. Include episode count.
+- `agent-inferred` — Single inference from context. May be wrong.
+
+**Conflict handling:**
+- When a fact changes, add `supersedes:` noting the old value and date.
+- If unsure which version is correct, flag both with `⚠️ CONFLICTING:` — don't silently pick one.
+- Higher-confidence sources override lower ones (`user-stated` > `agent-inferred`).
+
+**Capacity:** Max ~50 entries. When full, demote `agent-inferred` entries first, then consolidate.
+
+### Writing to `memory/daily/YYYY-MM-DD.md`
+
+Log important events, decisions, and action items — not chitchat. Use markdown anchors (## headers) so facts.md can reference specific sections with `#section-anchor`.
+
+### Episodic traceability
+
+Daily logs are the evidence base. Before modifying a fact, read the source episode for context. Every fact must include a `source:` line pointing to the daily log episode(s) it was extracted from.
 
 ## Message Formatting
 

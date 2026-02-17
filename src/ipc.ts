@@ -10,7 +10,13 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getTaskById,
+  searchMemory,
+  updateTask,
+} from './db.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -109,6 +115,77 @@ export function startIpcWatcher(deps: IpcDeps): void {
         logger.error(
           { err, sourceGroup },
           'Error reading IPC messages directory',
+        );
+      }
+
+      // Process memory search requests
+      const memoryRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'memory_requests',
+      );
+      try {
+        if (fs.existsSync(memoryRequestsDir)) {
+          const requestFiles = fs
+            .readdirSync(memoryRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of requestFiles) {
+            const filePath = path.join(memoryRequestsDir, file);
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              fs.unlinkSync(filePath);
+
+              if (data.type === 'memory_search' && data.query) {
+                const results = searchMemory(
+                  data.query,
+                  sourceGroup,
+                  data.limit || 5,
+                );
+
+                // Write results to memory_results directory
+                const resultsDir = path.join(
+                  ipcBaseDir,
+                  sourceGroup,
+                  'memory_results',
+                );
+                fs.mkdirSync(resultsDir, { recursive: true });
+                const resultPath = path.join(
+                  resultsDir,
+                  `${data.requestId}.json`,
+                );
+                const tempPath = `${resultPath}.tmp`;
+                fs.writeFileSync(
+                  tempPath,
+                  JSON.stringify({ results, requestId: data.requestId }),
+                );
+                fs.renameSync(tempPath, resultPath);
+
+                logger.debug(
+                  {
+                    sourceGroup,
+                    query: data.query,
+                    resultCount: results.length,
+                  },
+                  'Memory search completed',
+                );
+              }
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing memory search request',
+              );
+              try {
+                fs.unlinkSync(filePath);
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading memory requests directory',
         );
       }
 

@@ -141,6 +141,7 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 
 /**
  * Archive the full transcript to conversations/ before compaction.
+ * Also extract key facts/events into the daily memory log.
  */
 function createPreCompactHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -176,12 +177,74 @@ function createPreCompactHook(): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      // Extract key facts/events into daily memory log
+      try {
+        const extracted = extractMemoryItems(messages);
+        if (extracted.length > 0) {
+          const dailyDir = '/workspace/group/memory/daily';
+          fs.mkdirSync(dailyDir, { recursive: true });
+          const dailyPath = path.join(dailyDir, `${date}.md`);
+
+          const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+          const header = `## ${time} — ${summary || 'Conversation'}\n`;
+          const items = extracted.map(item => `- ${item}`).join('\n');
+          const entry = `\n${header}\n${items}\n`;
+
+          fs.appendFileSync(dailyPath, entry);
+          log(`Extracted ${extracted.length} memory items to ${dailyPath}`);
+        }
+      } catch (memErr) {
+        log(`Failed to extract memory items: ${memErr instanceof Error ? memErr.message : String(memErr)}`);
+      }
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return {};
   };
+}
+
+/**
+ * Best-effort regex extraction of memory-worthy items from a conversation.
+ * Looks for explicit "I'll remember" patterns from the assistant and
+ * preference/decision statements from the user.
+ */
+function extractMemoryItems(messages: ParsedMessage[]): string[] {
+  const items: string[] = [];
+
+  // Patterns indicating the assistant committed to remembering something
+  const assistantRememberPatterns = [
+    /(?:I'll|I will|I'm going to)\s+(?:remember|note|keep in mind|record)\s+(?:that\s+)?(.{10,120})/gi,
+    /(?:Noted|Got it|Understood)[.:]\s*(.{10,120})/gi,
+  ];
+
+  // Patterns indicating user preferences or decisions
+  const userPreferencePatterns = [
+    /(?:I\s+(?:prefer|like|want|need|always|never|don't like|hate))\s+(.{5,120})/gi,
+    /(?:(?:let's|we should|we'll|going to|decided to|decision is to))\s+(.{5,120})/gi,
+    /(?:my\s+(?:name|email|phone|address|birthday)\s+is)\s+(.{3,80})/gi,
+    /(?:(?:call me|I'm called|I go by))\s+(.{2,40})/gi,
+  ];
+
+  for (const msg of messages) {
+    const patterns = msg.role === 'assistant' ? assistantRememberPatterns : userPreferencePatterns;
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(msg.content)) !== null) {
+        const item = match[1].trim().replace(/[.\n]+$/, '');
+        if (item.length >= 5 && !items.includes(item)) {
+          items.push(`[${msg.role}] ${item}`);
+        }
+        if (items.length >= 10) break;
+      }
+      if (items.length >= 10) break;
+    }
+    if (items.length >= 10) break;
+  }
+
+  return items;
 }
 
 // Secrets to strip from Bash tool subprocess environments.
