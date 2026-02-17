@@ -114,6 +114,13 @@ function setupWorkspace(
     }, null, 2) + '\n');
   }
 
+  // Sync fresh OAuth credentials from root's Claude config
+  const rootCreds = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
+  const sessionCreds = path.join(groupSessionsDir, '.credentials.json');
+  if (fs.existsSync(rootCreds)) {
+    fs.copyFileSync(rootCreds, sessionCreds);
+  }
+
   // Sync skills (with per-group filtering)
   const skillsSrc = path.join(projectRoot, 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
