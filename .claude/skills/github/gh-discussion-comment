@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Add a comment to a GitHub Discussion
+# Usage: gh-discussion-comment [owner/repo] [discussion-number] [comment-body]
+
+set -euo pipefail
+
+REPO="${1:-omniaura/quarterplan-dashboard}"
+DISCUSSION_NUM="${2:-}"
+COMMENT="${3:-}"
+
+if [[ -z "$DISCUSSION_NUM" ]] || [[ -z "$COMMENT" ]]; then
+  echo "Error: Discussion number and comment body are required" >&2
+  echo "Usage: gh-discussion-comment [owner/repo] [discussion-number] [comment-body]" >&2
+  exit 1
+fi
+
+IFS='/' read -r OWNER REPO_NAME <<< "$REPO"
+
+# Get discussion ID
+DISCUSSION_ID=$(gh api graphql -f query="
+query {
+  repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+    discussion(number: $DISCUSSION_NUM) {
+      id
+    }
+  }
+}
+" | jq -r '.data.repository.discussion.id')
+
+if [[ -z "$DISCUSSION_ID" || "$DISCUSSION_ID" == "null" ]]; then
+  echo "Error: Discussion #$DISCUSSION_NUM not found" >&2
+  exit 1
+fi
+
+# Add comment
+RESULT=$(gh api graphql -f query="
+mutation {
+  addDiscussionComment(input: {
+    discussionId: \"$DISCUSSION_ID\"
+    body: \"$COMMENT\"
+  }) {
+    comment {
+      id
+      url
+    }
+  }
+}
+")
+
+echo "$RESULT" | jq -r '.data.addDiscussionComment.comment | "Comment added: \(.url)"'
