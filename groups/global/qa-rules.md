@@ -1,6 +1,7 @@
 # Shared Rules (All Agents)
 
 Read this file at session start. These rules apply to every agent in the system.
+Also read: `../global/token-efficiency.md` — mandatory token-saving rules.
 
 ---
 
