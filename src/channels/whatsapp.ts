@@ -17,6 +17,7 @@ import {
 } from '../db.js';
 import { logger } from '../logger.js';
 import { emitOpsEvent } from '../ops-events.js';
+import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -180,12 +181,26 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
-          const content =
-            msg.message?.conversation ||
-            msg.message?.extendedTextMessage?.text ||
-            msg.message?.imageMessage?.caption ||
-            msg.message?.videoMessage?.caption ||
-            '';
+          let content = '';
+          if (isVoiceMessage(msg)) {
+            try {
+              const transcript = await transcribeAudioMessage(msg, this.sock);
+              content = transcript
+                ? `[Voice: ${transcript}]`
+                : '[Voice message - transcription unavailable]';
+              logger.info({ chatJid, length: content.length }, 'Transcribed voice message');
+            } catch (err) {
+              logger.error({ err }, 'Voice transcription error');
+              content = '[Voice message - transcription failed]';
+            }
+          } else {
+            content =
+              msg.message?.conversation ||
+              msg.message?.extendedTextMessage?.text ||
+              msg.message?.imageMessage?.caption ||
+              msg.message?.videoMessage?.caption ||
+              '';
+          }
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
 

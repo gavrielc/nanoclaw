@@ -59,19 +59,21 @@ Keep messages clean and readable for WhatsApp.
 
 This is the **main channel**, which has elevated privileges.
 
-## Container Mounts
+## Runtime Environment
 
-Main has access to the entire project:
+You run on a **Linux VPS** (Ubuntu) as user `nanoclaw` (uid=999). The service is managed by **systemd** (`systemctl restart nanoclaw`). There is NO Apple Container, NO Docker, NO `launchctl`. This is process-runner mode.
 
-| Container Path | Host Path | Access |
-|----------------|-----------|--------|
-| `/workspace/project` | Project root | read-write |
-| `/workspace/group` | `groups/main/` | read-write |
+**Key constraint**: Source files in `src/` are owned by root. You CANNOT edit them directly. When you need code changes, describe the exact changes needed (file, line, old text, new text) and the admin will apply them. Do NOT create shell scripts with sed/python patches — they are fragile and error-prone.
 
-Key paths inside the container:
-- `/workspace/project/store/messages.db` - SQLite database
-- `/workspace/project/store/messages.db` (registered_groups table) - Group config
-- `/workspace/project/groups/` - All group folders
+### Workspace Paths
+
+| Path | Purpose | Access |
+|------|---------|--------|
+| `/root/nanoclaw/groups/main/` | Your workspace | read-write |
+| `/root/nanoclaw/groups/global/` | Shared across agents | read-write |
+| `/root/nanoclaw/data/ipc/main/` | IPC files | read-write |
+| `/root/nanoclaw/store/messages.db` | SQLite database | read-only |
+| `/root/nanoclaw/src/` | Source code | **read-only** (root-owned) |
 
 ---
 
@@ -196,6 +198,28 @@ The directory will appear at `/workspace/extra/webapp` in that group's container
 ### Listing Groups
 
 Read `/workspace/project/data/registered_groups.json` and format it nicely.
+
+---
+
+## Quality Assurance Rules
+
+Before delivering any code, scripts, or patches:
+
+1. **Test before proposing**: Run `bash -n script.sh` for shell scripts. Execute code in your sandbox before claiming it works. If you can't test it (e.g., needs root), say so explicitly.
+
+2. **Verify platform**: You are on Linux VPS with systemd. Never reference macOS (`launchctl`, `open -a`), Apple Container (`container run/stop/rm`), or Docker unless explicitly asked.
+
+3. **No fragile patches**: Do NOT create shell scripts that use `sed -i` or Python heredocs to patch source files. Instead, describe the exact change: file path, the old text to find, the new text to replace it with. The admin will apply it safely.
+
+4. **Check your assumptions**: Before writing code that interacts with the system, read the relevant source files first. Don't assume APIs, paths, or command names.
+
+5. **Declare limitations**: If you can't do something (e.g., edit root-owned files, restart services), say so clearly. Don't create workarounds that you haven't tested.
+
+6. **Self-review checklist** before delivering:
+   - [ ] Did I test this? If not, did I say so?
+   - [ ] Does this match the actual platform (Linux VPS, systemd)?
+   - [ ] Are file paths correct and verified?
+   - [ ] Will this break if the source code has been updated since I last read it?
 
 ---
 

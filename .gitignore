@@ -9,15 +9,21 @@ store/
 data/
 logs/
 
-# Groups - only track base structure and specific CLAUDE.md files
+# Groups - only track base structure and CLAUDE.md files
 groups/*
 !groups/main/
 !groups/global/
+!groups/developer/
+!groups/security/
 groups/main/*
 groups/global/*
+groups/developer/*
+groups/security/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 !groups/global/USER.md
+!groups/developer/CLAUDE.md
+!groups/security/CLAUDE.md
 
 # Secrets
 *.keys.json
