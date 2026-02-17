@@ -43,6 +43,7 @@ import { emitOpsEvent } from './ops-events.js';
 import { setCockpitMessageCallback } from './ops-actions.js';
 import { startOpsHttp } from './ops-http.js';
 import { runPreflight } from './preflight.js';
+import { listAvailableSkills } from './skill-sync.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -254,6 +255,22 @@ async function runAgent(
     availableGroups,
     new Set(Object.keys(registeredGroups)),
   );
+
+  // Write skills snapshot (main only — for skill management tools)
+  if (isMain) {
+    const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+    const skillsSrc = path.join(DATA_DIR, '..', 'container', 'skills');
+    const allSkills = listAvailableSkills(skillsSrc);
+    const groupsInfo = Object.values(registeredGroups).map((g) => ({
+      folder: g.folder,
+      name: g.name,
+      skillsFilter: g.containerConfig?.skillsFilter || null,
+    }));
+    fs.writeFileSync(
+      path.join(groupIpcDir, 'skills_snapshot.json'),
+      JSON.stringify({ availableSkills: allSkills, groups: groupsInfo, generatedAt: new Date().toISOString() }, null, 2),
+    );
+  }
 
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput

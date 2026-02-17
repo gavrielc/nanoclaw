@@ -27,9 +27,15 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export interface SkillsConfig {
+  mode: 'allow' | 'deny';
+  skills: string[]; // skill directory names, e.g. ['agent-browser']
+}
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  skillsFilter?: SkillsConfig; // undefined = all skills (backwards compat)
 }
 
 export interface RegisteredGroup {

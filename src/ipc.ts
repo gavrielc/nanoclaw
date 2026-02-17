@@ -25,7 +25,7 @@ import { processGovIpc } from './gov-ipc.js';
 import { logger } from './logger.js';
 import { processMemoryIpc } from './memory-ipc.js';
 import { emitOpsEvent } from './ops-events.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup, SkillsConfig } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -210,6 +210,9 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For skills_config
+    targetFolder?: string;
+    skillsFilter?: SkillsConfig | null;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -430,6 +433,36 @@ export async function processTaskIpc(
     case 'mem_store':
     case 'mem_recall':
       await processMemoryIpc(data, sourceGroup, isMain);
+      break;
+
+    case 'skills_config':
+      // Main-only: update a group's skill filter
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized skills_config attempt blocked');
+        break;
+      }
+      if (data.targetFolder) {
+        // Find the group entry by folder name
+        const targetEntry = Object.entries(registeredGroups).find(
+          ([, g]) => g.folder === data.targetFolder,
+        );
+        if (!targetEntry) {
+          logger.warn({ targetFolder: data.targetFolder }, 'skills_config: group not found');
+          break;
+        }
+        const [jid, groupData] = targetEntry;
+        const updatedConfig = { ...groupData.containerConfig };
+        if (data.skillsFilter === null || data.skillsFilter === undefined) {
+          delete updatedConfig.skillsFilter;
+        } else {
+          updatedConfig.skillsFilter = data.skillsFilter;
+        }
+        deps.registerGroup(jid, { ...groupData, containerConfig: updatedConfig });
+        logger.info(
+          { targetFolder: data.targetFolder, skillsFilter: data.skillsFilter },
+          'Skills filter updated via IPC',
+        );
+      }
       break;
 
     default:

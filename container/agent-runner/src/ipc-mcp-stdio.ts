@@ -788,6 +788,100 @@ server.tool(
   },
 );
 
+// --- Skill Management Tools ---
+
+server.tool(
+  'skills_list',
+  'List all available skills and per-group skill filters. Reads from a snapshot written by the host at agent spawn time.',
+  {},
+  async () => {
+    const snapshotFile = path.join(IPC_DIR, 'skills_snapshot.json');
+    if (!fs.existsSync(snapshotFile)) {
+      return { content: [{ type: 'text' as const, text: 'No skills snapshot available.' }] };
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(snapshotFile, 'utf-8'));
+      const lines: string[] = [`Available skills: ${(data.availableSkills || []).join(', ')}`];
+
+      for (const g of data.groups || []) {
+        const filter = g.skillsFilter;
+        const filterDesc = filter
+          ? `${filter.mode}: [${filter.skills.join(', ')}]`
+          : 'all skills (no filter)';
+        lines.push(`  ${g.folder} (${g.name}): ${filterDesc}`);
+      }
+
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error reading skills snapshot: ${err instanceof Error ? err.message : String(err)}` }],
+      };
+    }
+  },
+);
+
+server.tool(
+  'skills_set_filter',
+  `Set a skill filter for an agent group. Main only. Takes effect on next agent invocation.
+Mode "allow" = only listed skills are synced. Mode "deny" = all skills EXCEPT listed ones are synced.`,
+  {
+    group_folder: z.string().describe('Target group folder (e.g., "developer", "security")'),
+    mode: z.enum(['allow', 'deny']).describe('allow=whitelist, deny=blacklist'),
+    skills: z.array(z.string()).describe('Skill directory names (e.g., ["agent-browser"])'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can manage skill filters.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'skills_config',
+      targetFolder: args.group_folder,
+      skillsFilter: { mode: args.mode, skills: args.skills },
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Skill filter set for ${args.group_folder}: ${args.mode} [${args.skills.join(', ')}]. Takes effect on next invocation.` }],
+    };
+  },
+);
+
+server.tool(
+  'skills_clear_filter',
+  'Remove the skill filter from an agent group, restoring all skills. Main only. Takes effect on next agent invocation.',
+  {
+    group_folder: z.string().describe('Target group folder'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can manage skill filters.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'skills_config',
+      targetFolder: args.group_folder,
+      skillsFilter: null,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Skill filter cleared for ${args.group_folder}. All skills will be synced on next invocation.` }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

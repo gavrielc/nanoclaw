@@ -9,6 +9,7 @@ import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { syncSkills } from './skill-sync.js';
 import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -113,20 +114,10 @@ function setupWorkspace(
     }, null, 2) + '\n');
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
+  // Sync skills (with per-group filtering)
   const skillsSrc = path.join(projectRoot, 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.mkdirSync(dstDir, { recursive: true });
-      for (const file of fs.readdirSync(srcDir)) {
-        fs.copyFileSync(path.join(srcDir, file), path.join(dstDir, file));
-      }
-    }
-  }
+  syncSkills(skillsSrc, skillsDst, group.containerConfig?.skillsFilter, group.name);
 
   // Additional mounts (extra directories)
   const extraBase = path.join(DATA_DIR, 'extra', group.folder);
