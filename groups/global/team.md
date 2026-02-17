@@ -23,5 +23,25 @@
 
 ## Performance Criteria
 
-Quality, speed, proactivity, adherence to governance, cost-benefit.
-Promotions/demotions tracked here by coordinator.
+Scored weekly by Flux (Sunday 20:00 UTC). Dimensions:
+
+| Dimension | Weight | What it measures |
+|-----------|--------|-----------------|
+| Quality | 30% | Rework rate, first-pass approval |
+| Speed | 25% | Cycle time, throughput |
+| Proactivity | 15% | Early blocker detection, memory contributions |
+| Adherence | 20% | Governance compliance, sacred file usage |
+| Cost-Benefit | 10% | Ext API efficiency, resource usage |
+
+Overall score: weighted average (1-5). Decisions:
+- ≥4.0 + rising trend → **Promote** (after 2 consecutive qualifying reviews)
+- 3.0-3.9 → **Maintain**
+- <2.0 → **Demote** (immediate)
+
+Full review history: `groups/main/memory/topics/performance.md`
+
+## Level History
+
+| Date | Agent | From | To | Reason |
+|------|-------|------|----|--------|
+| 2026-02-17 | All | -- | Initial | System launch |

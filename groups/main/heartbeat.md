@@ -12,6 +12,7 @@ All routines defined in skill: `self-maintenance`
 | 02:30 | Daily | Provider Health | Monitor ext_call failures, auto-fix expired/stuck/unused capabilities |
 | Every 3 days | 3-day | Sacred Files Audit | Review CLAUDE.md, team.md, tools.md, qa-rules.md for all agents |
 | Sunday 03:00 | Weekly | Security Review | Credential scan, vault check, permissions, stale sessions |
+| Sunday 20:00 | Weekly | Performance Review | Evaluate agents, score dimensions, decide promote/maintain/demote |
 | Monday 09:00 | Weekly | Weekly Report | Compile and send status report to main channel |
 | 1st & 15th | Bi-weekly | Memory Consolidation | Curate daily notes → topic files for all agents |
 

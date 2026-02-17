@@ -240,6 +240,10 @@ Follow the **Consolidation** section in `../global/qa-rules.md`:
 • Auto-fixes: {expired revoked, stuck timeouts, unused cleaned}
 • Admin action needed: {list or "none"}
 
+*Performance Review*
+• {Agent}: {overall}/5 {↑/→/↓} — {decision} {reason if promote/demote/warning}
+• {repeat for each agent}
+
 *Memory*
 • Daily notes this week: {count per agent}
 • Last consolidation: {date}
@@ -386,6 +390,189 @@ Log the summary in today's daily note under `## Provider Health`.
 
 ---
 
+## 9. Performance Review
+
+**Schedule**: Weekly (Sunday 20:00 UTC, before Monday weekly report)
+**Purpose**: Evaluate agent performance, decide promotions/demotions, absorb learnings
+
+You are the CRO (Chief Review Officer). Every week you assess each agent's work objectively, using governance data as the primary evidence. Your reviews are fair, data-driven, and action-oriented.
+
+### Step 1: Collect metrics per agent (last 7 days)
+
+For each registered agent (query DB, not hardcoded):
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "SELECT folder, name FROM registered_groups WHERE folder != 'main' ORDER BY folder"
+```
+
+For each agent, run these queries:
+
+#### 1a. Throughput — tasks completed
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "
+  SELECT COUNT(*) FROM gov_tasks
+  WHERE assigned_group = '{folder}'
+    AND state = 'DONE'
+    AND updated_at > datetime('now', '-7 days');
+"
+```
+
+#### 1b. Cycle time — avg DOING→REVIEW duration (hours)
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "
+  SELECT ROUND(AVG(
+    (julianday(r.created_at) - julianday(d.created_at)) * 24
+  ), 1) as avg_hours
+  FROM gov_activities d
+  JOIN gov_activities r ON d.task_id = r.task_id
+  WHERE d.action = 'transition' AND d.to_state = 'DOING'
+    AND r.action = 'transition' AND r.from_state = 'DOING' AND r.to_state = 'REVIEW'
+    AND d.actor = '{folder}'
+    AND d.created_at > datetime('now', '-7 days');
+"
+```
+
+#### 1c. Rework rate — tasks sent back from REVIEW/APPROVAL to DOING
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "
+  SELECT COUNT(DISTINCT task_id) as reworks
+  FROM gov_activities
+  WHERE action = 'transition'
+    AND to_state = 'DOING'
+    AND from_state IN ('REVIEW', 'APPROVAL')
+    AND task_id IN (
+      SELECT id FROM gov_tasks WHERE assigned_group = '{folder}'
+    )
+    AND created_at > datetime('now', '-7 days');
+"
+```
+
+#### 1d. Block rate — tasks moved to BLOCKED by this agent
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "
+  SELECT COUNT(DISTINCT task_id) as blocks
+  FROM gov_activities
+  WHERE action = 'transition'
+    AND to_state = 'BLOCKED'
+    AND actor = '{folder}'
+    AND created_at > datetime('now', '-7 days');
+"
+```
+
+#### 1e. External API efficiency
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "
+  SELECT
+    COUNT(*) as total_calls,
+    SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failures,
+    SUM(CASE WHEN status='denied' THEN 1 ELSE 0 END) as denials
+  FROM ext_calls
+  WHERE group_folder = '{folder}'
+    AND created_at > datetime('now', '-7 days');
+"
+```
+
+#### 1f. Memory contributions
+
+```bash
+sqlite3 /root/nanoclaw/store/messages.db "
+  SELECT COUNT(*) as memories_stored
+  FROM memories
+  WHERE source_ref LIKE '%{folder}%'
+    AND created_at > datetime('now', '-7 days');
+"
+```
+
+### Step 2: Score each dimension (1-5)
+
+| Dimension | What to measure | Score guide |
+|-----------|----------------|-------------|
+| **Quality** | Rework rate, approval-on-first-try rate | 5: 0% rework, 4: <10%, 3: 10-25%, 2: 25-50%, 1: >50% |
+| **Speed** | Cycle time vs task size, throughput | 5: consistently fast, 4: above avg, 3: on-par, 2: slow, 1: stuck |
+| **Proactivity** | Early blocker detection, memory contributions, unsolicited improvements | 5: regularly anticipates, 4: sometimes, 3: does what's asked, 2: passive, 1: ignores signals |
+| **Adherence** | Governance compliance, working.md updates, sacred file usage | 5: exemplary, 4: minor gaps, 3: mostly compliant, 2: frequent violations, 1: ignores governance |
+| **Cost-Benefit** | Ext API usage efficiency, task-to-output ratio | 5: highly efficient, 4: good, 3: normal, 2: wasteful, 1: excessive cost/low output |
+
+**Overall score**: Weighted average → Quality(30%) + Speed(25%) + Proactivity(15%) + Adherence(20%) + Cost-Benefit(10%)
+
+### Step 3: Compare with previous review
+
+Read `memory/topics/performance.md` for the agent's last review. Calculate trend:
+
+| Trend | Condition |
+|-------|-----------|
+| ↑ Rising | Overall improved by ≥0.5 |
+| → Stable | Change < 0.5 |
+| ↓ Declining | Overall dropped by ≥0.5 |
+
+### Step 4: Decision
+
+| Overall Score | Trend | Decision | Action |
+|---------------|-------|----------|--------|
+| ≥4.0 | ↑ Rising | **Promote** | Upgrade level in team.md, note reason |
+| ≥4.0 | → Stable | **Maintain** | Acknowledge excellence |
+| 3.0-3.9 | Any | **Maintain** | Note areas for improvement |
+| 2.0-2.9 | ↓ Declining | **Warning** | Create improvement task, set 2-week deadline |
+| <2.0 | Any | **Demote** | Downgrade level, restrict access, review role |
+| <2.0 | ↓ Declining (2+ weeks) | **Suspend** | Pause dispatches, flag for admin review |
+
+**Level changes**:
+- Observer → Advisor → Operator → Autonomous (only Flux should be Autonomous)
+- Max one level change per review (no jumping Observer→Operator)
+- Demotions are immediate, promotions require 2 consecutive qualifying reviews
+
+### Step 5: Write the review
+
+For each agent, write a review entry. Append to `memory/topics/performance.md`:
+
+```markdown
+### {Agent Name} — Week of {date}
+
+| Dimension | Score | Notes |
+|-----------|-------|-------|
+| Quality | {1-5} | {evidence} |
+| Speed | {1-5} | {evidence} |
+| Proactivity | {1-5} | {evidence} |
+| Adherence | {1-5} | {evidence} |
+| Cost-Benefit | {1-5} | {evidence} |
+| **Overall** | **{weighted}** | **Trend: {↑/→/↓}** |
+
+**Decision**: {Promote/Maintain/Warning/Demote}
+**Action**: {what was done or needs doing}
+**Learnings absorbed**: {key insights from this agent's work this week}
+```
+
+### Step 6: Apply decisions
+
+- **Promote**: Update `groups/global/team.md` level column. Update agent's `CLAUDE.md` if it references level. Store a `store_memory` with tags `["performance", "promotion"]`.
+- **Demote**: Same as promote but downward. Create a governance task for the agent with improvement criteria.
+- **Warning**: Create a governance task: "Improvement Plan: {agent}" assigned to the agent, with specific targets.
+- **Maintain**: No changes. Log the review.
+
+### Step 7: Absorb learnings
+
+After reviewing all agents, reflect:
+
+1. **Cross-agent patterns**: Are multiple agents struggling with the same thing? → systemic issue, not individual
+2. **Best practices**: Did any agent discover a better approach? → propagate via `store_memory(content, tags=["pattern", "best-practice"], level=0)`
+3. **Knowledge gaps**: Is training material missing? → create a skill or update qa-rules.md
+4. **Workload balance**: Is one agent overloaded while another is idle? → redistribute in next sprint
+
+Store a weekly learning summary in daily note under `## Performance Review Learnings`.
+
+### Calibration notes
+
+- **New agents** (first 2 weeks): Score Proactivity and Adherence leniently (3 = baseline). Focus on Quality and Speed.
+- **Low-volume weeks**: If an agent had <3 tasks, metrics are unreliable. Note "insufficient data" and carry forward previous scores.
+- **Blocked tasks**: Don't penalize agents for blocks caused by external dependencies. Only count blocks where the agent could have unblocked themselves.
+
+---
+
 ## Running on demand
 
 Any routine can be triggered manually:
@@ -397,4 +584,5 @@ Any routine can be triggered manually:
 - "Consolidate memory" → execute section 6
 - "Weekly report" → execute section 7
 - "Provider health check" → execute section 8
+- "Performance review" → execute section 9
 - "Full maintenance" → execute all sections in order
