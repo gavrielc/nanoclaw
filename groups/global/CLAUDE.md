@@ -21,7 +21,7 @@ Your output is sent to the user or group.
 
 You also have `mcp__nanoclaw__send_message` which sends a message immediately while you're still working. This is useful when you want to acknowledge a request before starting longer work.
 
-You can send files and images to the chat using `mcp__nanoclaw__send_file`. The file MUST be under `/workspace/group/` (the only host-accessible path). For example, to send a browser screenshot: `agent-browser screenshot /workspace/group/screenshot.png`, then call `send_file` with that path.
+You can send files and images to the chat using `mcp__nanoclaw__send_file`. Just pass the file path (e.g., a screenshot from `agent-browser screenshot`) and it will be uploaded. Files from anywhere in the container are supported.
 
 ### Internal thoughts
 

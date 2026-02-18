@@ -74,15 +74,19 @@ function buildVolumeMounts(
     });
 
     // Main also gets its group folder as the working directory
+    const mainGroupDir = path.join(GROUPS_DIR, group.folder);
+    try { fs.chownSync(mainGroupDir, 1000, 1000); } catch { /* non-root host */ }
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: mainGroupDir,
       containerPath: '/workspace/group',
       readonly: false,
     });
   } else {
     // Other groups only get their own folder
+    const otherGroupDir = path.join(GROUPS_DIR, group.folder);
+    try { fs.chownSync(otherGroupDir, 1000, 1000); } catch { /* non-root host */ }
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: otherGroupDir,
       containerPath: '/workspace/group',
       readonly: false,
     });
