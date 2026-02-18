@@ -134,6 +134,17 @@ function setupWorkspace(
     fs.copyFileSync(rootCreds, sessionCreds);
     fs.chownSync(sessionCreds, agentUid, agentGid);
     fs.chmodSync(sessionCreds, 0o600);
+
+    // IMPORTANT: When systemd-run + runuser is used, HOME is reset to the OS user's actual
+    // home (/home/nanoclaw), not our custom session HOME. The SDK reads credentials from
+    // /home/nanoclaw/.claude/.credentials.json — copy there too.
+    try {
+      const agentOsHomeClaudeDir = path.dirname(AGENT_OS_HOME_CRED);
+      fs.mkdirSync(agentOsHomeClaudeDir, { recursive: true });
+      fs.copyFileSync(rootCreds, AGENT_OS_HOME_CRED);
+      fs.chownSync(AGENT_OS_HOME_CRED, agentUid, agentGid);
+      fs.chmodSync(AGENT_OS_HOME_CRED, 0o600);
+    } catch { /* non-fatal — agent will use session creds if this fails */ }
   }
 
   // Sync skills (with per-group filtering)
@@ -191,8 +202,15 @@ function readSecrets(): Record<string, string> {
 // Claude Code OAuth token endpoint and client ID (from SDK source)
 const CLAUDE_OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const CLAUDE_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-// Refresh 10 minutes before expiry
-const OAUTH_REFRESH_THRESHOLD_MS = 10 * 60 * 1000;
+// Refresh 30 minutes before expiry (generous window for idle periods)
+const OAUTH_REFRESH_THRESHOLD_MS = 30 * 60 * 1000;
+
+// When systemd-run + runuser is used, the agent's HOME is reset to the OS user's home
+// (from /etc/passwd), NOT our custom session HOME. The SDK reads credentials from there.
+// We must keep THIS path fresh — it's the one the agent actually reads.
+const AGENT_OS_HOME_CRED = path.join(
+  '/home', process.env.AGENT_USER || 'nanoclaw', '.claude', '.credentials.json',
+);
 
 interface ClaudeCredentials {
   claudeAiOauth?: {
@@ -318,6 +336,43 @@ function callOAuthRefresh(refreshToken: string): Promise<OAuthTokenResponse> {
   });
 }
 
+/**
+ * Background loop that proactively refreshes OAuth tokens for all known agent sessions.
+ * Runs immediately on startup, then every 20 minutes — independent of agent activity.
+ * This ensures tokens never expire between infrequent heartbeats or idle periods.
+ */
+export function startTokenRefreshLoop(): void {
+  const agentUid = parseInt(process.env.AGENT_UID || '999', 10);
+  const agentGid = parseInt(process.env.AGENT_GID || '987', 10);
+  const sessionsDir = path.join(DATA_DIR, 'sessions');
+  const rootCredFile = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
+
+  async function refreshAll(): Promise<void> {
+    // Refresh root credentials (template for new sessions)
+    await refreshOAuthIfNeeded(rootCredFile, 0, 0);
+
+    // Refresh the OS user's home credentials — the ACTUAL file the agent reads
+    // when systemd-run + runuser overrides HOME to /home/nanoclaw
+    await refreshOAuthIfNeeded(AGENT_OS_HOME_CRED, agentUid, agentGid);
+
+    // Refresh all per-group session credentials (fallback for non-runuser spawns)
+    if (!fs.existsSync(sessionsDir)) return;
+    const groups = fs.readdirSync(sessionsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    for (const groupFolder of groups) {
+      const credFile = path.join(sessionsDir, groupFolder, '.claude', '.credentials.json');
+      await refreshOAuthIfNeeded(credFile, agentUid, agentGid);
+    }
+  }
+
+  refreshAll().catch((err) => logger.warn({ err }, 'Initial token refresh error'));
+  setInterval(() => {
+    refreshAll().catch((err) => logger.warn({ err }, 'Periodic token refresh error'));
+  }, 20 * 60 * 1000).unref();
+}
+
 // --- Rate-limit retry config ---
 const MAX_RATE_LIMIT_RETRIES = 3;
 // Backoff: 30s → 60s → 120s (attempt 1, 2, 3)
@@ -337,11 +392,68 @@ function isRateLimitError(output: ContainerOutput): boolean {
   return RATE_LIMIT_PATTERNS.some((p) => haystack.includes(p));
 }
 
+// Auth error patterns — these appear in output.result (agent text), not output.error
+const AUTH_ERROR_PATTERNS = [
+  '"authentication_error"',
+  'oauth token has expired',
+  'api error: 401',
+];
+
+function isAuthError(output: ContainerOutput): boolean {
+  const haystack = ((output.result ?? '') + ' ' + (output.error ?? '')).toLowerCase();
+  return AUTH_ERROR_PATTERNS.some((p) => haystack.includes(p));
+}
+
 /**
- * Public entry point. Wraps the inner spawn with exponential-backoff retry
- * on rate-limit errors (429 / "usage limit" / "overloaded" from the API).
+ * Force-refresh OAuth token regardless of expiry — reactive measure after a 401.
+ * Bypasses the threshold check in refreshOAuthIfNeeded.
  */
-export async function runContainerAgent(
+async function forceRefreshOAuth(
+  sessionCredFile: string,
+  agentUid: number,
+  agentGid: number,
+): Promise<void> {
+  if (!fs.existsSync(sessionCredFile)) return;
+  let creds: ClaudeCredentials;
+  try {
+    creds = JSON.parse(fs.readFileSync(sessionCredFile, 'utf8')) as ClaudeCredentials;
+  } catch { return; }
+
+  const oauth = creds.claudeAiOauth;
+  if (!oauth?.refreshToken) {
+    logger.warn({ credFile: sessionCredFile }, 'No refresh token — cannot force-refresh OAuth');
+    return;
+  }
+
+  logger.info({ credFile: sessionCredFile }, 'Force-refreshing OAuth token after 401');
+  try {
+    const now = Date.now();
+    const newTokens = await callOAuthRefresh(oauth.refreshToken);
+    creds.claudeAiOauth = {
+      ...oauth,
+      accessToken: newTokens.access_token,
+      refreshToken: newTokens.refresh_token ?? oauth.refreshToken,
+      expiresAt: now + (newTokens.expires_in ?? 3600) * 1000,
+    };
+    const credsJson = JSON.stringify(creds, null, 2);
+    fs.writeFileSync(sessionCredFile, credsJson, { mode: 0o600 });
+    try { fs.chownSync(sessionCredFile, agentUid, agentGid); } catch { /* ignore */ }
+    const rootCredFile = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
+    try {
+      const tmp = `${rootCredFile}.tmp`;
+      fs.writeFileSync(tmp, credsJson, { mode: 0o600 });
+      fs.renameSync(tmp, rootCredFile);
+    } catch { /* ignore */ }
+    logger.info({ newExpiry: new Date(creds.claudeAiOauth!.expiresAt).toISOString() }, 'OAuth force-refresh succeeded');
+  } catch (err) {
+    logger.warn({ err }, 'OAuth force-refresh failed');
+  }
+}
+
+/**
+ * Inner retry loop: exponential-backoff on rate-limit errors only.
+ */
+async function runWithRateLimitRetry(
   group: RegisteredGroup,
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
@@ -369,12 +481,60 @@ export async function runContainerAgent(
     );
   }
 
-  // All retries exhausted
   return {
     status: 'error',
     result: null,
     error: `Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded`,
   };
+}
+
+/**
+ * Public entry point. Wraps the inner spawn with:
+ *   1. Reactive 401 recovery: intercept auth errors from onOutput stream, suppress them,
+ *      force-refresh the token, and retry once (user never sees the error message).
+ *      Falls back to checking output.result for non-streaming callers.
+ *   2. Exponential-backoff retry on rate-limit errors (429 / "usage limit" / etc.)
+ */
+export async function runContainerAgent(
+  group: RegisteredGroup,
+  input: ContainerInput,
+  onProcess: (proc: ChildProcess, containerName: string) => void,
+  onOutput?: (output: ContainerOutput) => Promise<void>,
+): Promise<ContainerOutput> {
+  const agentUid = parseInt(process.env.AGENT_UID || '999', 10);
+  const agentGid = parseInt(process.env.AGENT_GID || '987', 10);
+
+  // Intercept streamed outputs to catch auth errors before they reach the caller.
+  // When auth error is detected we suppress the message (don't call onOutput) and retry.
+  let authErrorInStream = false;
+  const interceptOnOutput = onOutput
+    ? async (o: ContainerOutput) => {
+        if (isAuthError(o)) {
+          authErrorInStream = true;
+          return; // Suppress — caller will retry with fresh token
+        }
+        return onOutput(o);
+      }
+    : undefined;
+
+  // First attempt: run with auth-intercepting wrapper
+  const firstOutput = await runWithRateLimitRetry(group, input, onProcess, interceptOnOutput);
+
+  // Auth error detected (in stream or in result for non-streaming callers)
+  if (authErrorInStream || isAuthError(firstOutput)) {
+    logger.warn(
+      { group: group.name, inStream: authErrorInStream },
+      'Auth 401 — force-refreshing OAuth token and retrying',
+    );
+    // Refresh both paths: OS user home (actual read path) + session (fallback)
+    await forceRefreshOAuth(AGENT_OS_HOME_CRED, agentUid, agentGid);
+    const sessionCredFile = path.join(DATA_DIR, 'sessions', group.folder, '.claude', '.credentials.json');
+    await forceRefreshOAuth(sessionCredFile, agentUid, agentGid);
+    // Retry with original onOutput (un-intercepted — if this fails too, surface the error)
+    return runWithRateLimitRetry(group, input, onProcess, onOutput);
+  }
+
+  return firstOutput;
 }
 
 async function spawnAgentOnce(
@@ -392,9 +552,11 @@ async function spawnAgentOnce(
   const { env: workspaceEnv, groupDir, ipcDir } = setupWorkspace(group, input.isMain, agentUid, agentGid);
 
   // Proactively refresh OAuth credentials before spawning the agent.
-  // The SDK only auto-refreshes while a session is running (not at startup),
-  // so we must ensure the token is fresh before handing it to the agent.
+  // Primary target: the OS user's home (/home/nanoclaw/.claude/) — this is what the agent
+  // actually reads when systemd-run + runuser overrides HOME.
+  // Secondary target: the session-specific path (fallback for non-runuser spawns).
   const sessionCredFile = path.join(DATA_DIR, 'sessions', group.folder, '.claude', '.credentials.json');
+  await refreshOAuthIfNeeded(AGENT_OS_HOME_CRED, agentUid, agentGid);
   await refreshOAuthIfNeeded(sessionCredFile, agentUid, agentGid);
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
@@ -621,12 +783,15 @@ async function spawnAgentOnce(
 
       // Sync credentials back to root so the next session starts with fresh tokens.
       // The SDK may have refreshed the token mid-session; propagate that back.
+      // Primary source: OS user home (/home/nanoclaw/.claude/) — that's what the agent writes.
+      // Fallback: session-specific path.
       // Atomic write (tmp+rename) prevents corrupt credentials if crash mid-write.
       const rootCredFile = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
-      if (fs.existsSync(sessionCredFile)) {
+      const syncSrc = fs.existsSync(AGENT_OS_HOME_CRED) ? AGENT_OS_HOME_CRED : sessionCredFile;
+      if (fs.existsSync(syncSrc)) {
         try {
           const rootCredTmp = `${rootCredFile}.tmp`;
-          fs.copyFileSync(sessionCredFile, rootCredTmp);
+          fs.copyFileSync(syncSrc, rootCredTmp);
           fs.chmodSync(rootCredTmp, 0o600);
           fs.renameSync(rootCredTmp, rootCredFile);
         } catch { /* ignore — root fs */ }

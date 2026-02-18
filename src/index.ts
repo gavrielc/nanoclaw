@@ -15,6 +15,7 @@ import {
   ContainerInput,
   ContainerOutput,
   runContainerAgent,
+  startTokenRefreshLoop,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './process-runner.js';
@@ -641,6 +642,7 @@ async function main(): Promise<void> {
   }
   initDatabase();
   initExtBroker();
+  startTokenRefreshLoop();
   logger.info('Database initialized');
   loadState();
 
