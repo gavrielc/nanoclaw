@@ -236,7 +236,7 @@ export class SlackChannel implements Channel {
 
       do {
         const result = await this.app.client.conversations.list({
-          types: 'public_channel,private_channel,im,mpim',
+          types: 'public_channel,private_channel,im',
           limit: 200,
           cursor,
         });

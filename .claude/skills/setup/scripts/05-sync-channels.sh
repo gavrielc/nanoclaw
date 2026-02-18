@@ -45,7 +45,7 @@ const upsert = db.prepare('INSERT INTO chats (jid, name, last_message_time) VALU
 
 do {
   const url = new URL('https://slack.com/api/conversations.list');
-  url.searchParams.set('types', 'public_channel,private_channel,im,mpim');
+  url.searchParams.set('types', 'public_channel,private_channel,im');
   url.searchParams.set('limit', '200');
   if (cursor) url.searchParams.set('cursor', cursor);
 
