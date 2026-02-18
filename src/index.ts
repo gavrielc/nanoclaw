@@ -165,6 +165,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Patterns that indicate system/auth errors — never send these to WhatsApp
+  const systemErrorPatterns = [
+    /^Failed to authenticate\b/,
+    /^API Error: \d{3}\b/,
+    /authentication_error/,
+    /Invalid (?:API key|bearer token)/,
+    /rate_limit_error/,
+  ];
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -172,6 +181,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+
+      // Suppress system/auth errors — log them but don't send to WhatsApp
+      const isSystemError = systemErrorPatterns.some((p) => p.test(text));
+      if (isSystemError) {
+        logger.error({ group: group.name }, `Suppressed system error (not sent to user): ${text.slice(0, 300)}`);
+        hadError = true;
+        return;
+      }
+
       if (text) {
         await whatsapp.sendMessage(chatJid, text);
         outputSentToUser = true;
