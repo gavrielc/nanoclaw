@@ -248,10 +248,12 @@ async function refreshOAuthIfNeeded(
     fs.writeFileSync(sessionCredFile, credsJson, { mode: 0o600 });
     try { fs.chownSync(sessionCredFile, agentUid, agentGid); } catch { /* ignore */ }
 
-    // Propagate to root ~/.claude/ so future sessions start fresh
+    // Propagate to root ~/.claude/ so future sessions start fresh (atomic write)
     const rootCredFile = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
     try {
-      fs.writeFileSync(rootCredFile, credsJson, { mode: 0o600 });
+      const rootCredTmp = `${rootCredFile}.tmp`;
+      fs.writeFileSync(rootCredTmp, credsJson, { mode: 0o600 });
+      fs.renameSync(rootCredTmp, rootCredFile);
     } catch { /* root fs write may fail if dir doesn't exist */ }
 
     const newExpiry = new Date(creds.claudeAiOauth.expiresAt).toISOString();
@@ -537,11 +539,14 @@ export async function runContainerAgent(
 
       // Sync credentials back to root so the next session starts with fresh tokens.
       // The SDK may have refreshed the token mid-session; propagate that back.
+      // Atomic write (tmp+rename) prevents corrupt credentials if crash mid-write.
       const rootCredFile = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
       if (fs.existsSync(sessionCredFile)) {
         try {
-          fs.copyFileSync(sessionCredFile, rootCredFile);
-          fs.chmodSync(rootCredFile, 0o600);
+          const rootCredTmp = `${rootCredFile}.tmp`;
+          fs.copyFileSync(sessionCredFile, rootCredTmp);
+          fs.chmodSync(rootCredTmp, 0o600);
+          fs.renameSync(rootCredTmp, rootCredFile);
         } catch { /* ignore — root fs */ }
       }
 
@@ -718,7 +723,9 @@ export function writeTasksSnapshot(
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  const tasksTmp = `${tasksFile}.tmp`;
+  fs.writeFileSync(tasksTmp, JSON.stringify(filteredTasks, null, 2));
+  fs.renameSync(tasksTmp, tasksFile);
 }
 
 export function writeGroupsSnapshot(
@@ -733,8 +740,9 @@ export function writeGroupsSnapshot(
   const visibleGroups = isMain ? groups : [];
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
+  const groupsTmp = `${groupsFile}.tmp`;
   fs.writeFileSync(
-    groupsFile,
+    groupsTmp,
     JSON.stringify(
       {
         groups: visibleGroups,
@@ -744,4 +752,5 @@ export function writeGroupsSnapshot(
       2,
     ),
   );
+  fs.renameSync(groupsTmp, groupsFile);
 }
