@@ -5,13 +5,16 @@
  * Spawns agent-runner as a Node.js child process instead of Apple Container.
  * Passes workspace paths via environment variables.
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, execSync } from 'child_process';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
 
 import { syncSkills } from './skill-sync.js';
 import {
+  AGENT_CPU_QUOTA,
+  AGENT_MEMORY_MAX,
+  AGENT_TASKS_MAX,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
@@ -352,23 +355,58 @@ export async function runContainerAgent(
   // Remove CLAUDECODE so child Claude Code doesn't think it's a nested session
   delete childEnv.CLAUDECODE;
 
+  // Detect if systemd-run is available for per-agent cgroup isolation.
+  const hasSystemdRun = fs.existsSync('/usr/bin/systemd-run');
+  const useResourceLimits = hasSystemdRun && (AGENT_MEMORY_MAX || AGENT_CPU_QUOTA);
+
   // Spawn as non-root user if running as root (Claude Code refuses --dangerously-skip-permissions as root)
   const spawnOptions: Parameters<typeof spawn>[2] = {
     stdio: ['pipe', 'pipe', 'pipe'] as const,
     env: childEnv,
-    // Own process group so we can kill the entire tree (agent + claude + bash subprocesses)
-    // via process.kill(-child.pid, signal) on timeout.
+    // Own process group so we can kill the entire tree on timeout.
     detached: true,
   };
   if (process.getuid?.() === 0) {
     spawnOptions.uid = agentUid;
     spawnOptions.gid = agentGid;
-    // HOME stays as /root — the agent user (docker group) has r/w access
-    // to /root/.claude/.credentials.json for OAuth token read/refresh.
+  }
+
+  // Build the command: wrap in systemd-run --scope when resource limits are configured,
+  // giving each agent its own cgroup so one runaway can't starve others.
+  let spawnCmd: string;
+  let spawnArgs: string[];
+
+  if (useResourceLimits) {
+    spawnCmd = '/usr/bin/systemd-run';
+    spawnArgs = [
+      '--scope',
+      '--slice=nanoclaw-agents.slice',
+      `--unit=${processName}`,
+      '--collect',                            // auto-remove unit when done
+      '--quiet',
+    ];
+    if (AGENT_MEMORY_MAX) spawnArgs.push(`--property=MemoryMax=${AGENT_MEMORY_MAX}`);
+    if (AGENT_CPU_QUOTA)  spawnArgs.push(`--property=CPUQuota=${AGENT_CPU_QUOTA}`);
+    if (AGENT_TASKS_MAX)  spawnArgs.push(`--property=TasksMax=${AGENT_TASKS_MAX}`);
+    if (process.getuid?.() === 0) {
+      spawnArgs.push(`--property=User=${agentUid}`, `--property=Group=${agentGid}`);
+      // systemd-run handles uid/gid itself — don't set them on spawnOptions too
+      delete spawnOptions.uid;
+      delete spawnOptions.gid;
+    }
+    spawnArgs.push('--', 'node', entryPoint);
+    logger.info(
+      { group: group.name, processName, memoryMax: AGENT_MEMORY_MAX, cpuQuota: AGENT_CPU_QUOTA },
+      'Spawning agent in systemd scope (resource-limited)',
+    );
+  } else {
+    spawnCmd = 'node';
+    spawnArgs = [entryPoint];
+    logger.info({ group: group.name, processName }, 'Spawning agent process (no resource limits)');
   }
 
   return new Promise((resolve) => {
-    const child = spawn('node', [entryPoint], spawnOptions);
+    const child = spawn(spawnCmd, spawnArgs, spawnOptions);
 
     onProcess(child, processName);
 
@@ -461,17 +499,27 @@ export async function runContainerAgent(
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
+    const killScope = (signal: 'SIGTERM' | 'SIGKILL') => {
+      if (useResourceLimits) {
+        // Kill the entire systemd scope — reaches every process in the cgroup
+        try {
+          execSync(`systemctl kill --signal=${signal} "${processName}.scope"`, { timeout: 5000 });
+          return;
+        } catch { /* scope may have already exited — fall through to process group kill */ }
+      }
+      // Fallback: kill process group (negative PID covers agent-runner + all subprocesses)
+      try { process.kill(-child.pid!, signal); } catch { child.kill(signal); }
+    };
+
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, processName }, 'Process timeout, sending SIGTERM to process group');
-      // Kill the entire process group (negative PID) — this reaches agent-runner,
-      // claude, and any bash/git/curl subprocesses it spawned.
-      try { process.kill(-child.pid!, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
-      // Force kill the group after 15s if SIGTERM doesn't work
+      logger.error({ group: group.name, processName, useResourceLimits }, 'Process timeout — killing');
+      killScope('SIGTERM');
+      // Escalate to SIGKILL after 15s if SIGTERM didn't finish it
       setTimeout(() => {
         if (!child.killed) {
-          logger.warn({ group: group.name, processName }, 'SIGTERM failed, force killing process group');
-          try { process.kill(-child.pid!, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+          logger.warn({ group: group.name, processName }, 'SIGTERM ignored — force killing');
+          killScope('SIGKILL');
         }
       }, 15_000);
     };

@@ -50,6 +50,13 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+// Per-agent resource limits (enforced via systemd-run --scope on Linux).
+// Prevents a runaway agent from starving others.
+// Set to empty string to disable limits.
+export const AGENT_MEMORY_MAX = process.env.AGENT_MEMORY_MAX || '1G';
+export const AGENT_CPU_QUOTA = process.env.AGENT_CPU_QUOTA || '100%'; // 1 core per agent
+export const AGENT_TASKS_MAX = parseInt(process.env.AGENT_TASKS_MAX || '100', 10); // max subprocesses
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
