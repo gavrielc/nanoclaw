@@ -1,7 +1,7 @@
 ---
 name: forge
 description: Agent Factory — create new agents with full structure (soul, sacred files, memory, registration, team integration). Requires explicit owner approval before creation. Also used to modify existing agents.
-allowed-tools: Bash(mkdir:*), Bash(ln:*), Bash(ls:*), Bash(stat:*), Bash(readlink:*), Bash(wc:*), Bash(sqlite3:*), Read, Write, Edit
+allowed-tools: Bash(mkdir:*), Bash(ln:*), Bash(ls:*), Bash(stat:*), Bash(readlink:*), Bash(wc:*), Bash(sqlite3:*), Read, Write, Edit, TodoWrite
 ---
 
 # Forge — Agent Factory
