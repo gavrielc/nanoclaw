@@ -438,6 +438,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Patterns that indicate system/auth errors — never send these to channels
+  // Adopted from [Upstream PR #298] - Prevents infinite loops from auth failures
+  const systemErrorPatterns = [
+    /^Failed to authenticate\b/,
+    /^API Error: \d{3}\b/,
+    /authentication_error/,
+    /Invalid (?:API key|bearer token)/,
+    /rate_limit_error/,
+  ];
+
   // Thread streaming via shared helper
   // Synthetic IDs (synth-*, react-*, notify-*, s3-*) aren't real channel message IDs
   // and will cause Discord/Telegram API failures if passed as reply references.
@@ -478,7 +488,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
         logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-        if (text && channel) {
+
+        // Suppress system/auth errors — log them but don't send to channels
+        // This prevents infinite loops when auth fails (error echoed back → triggers agent → fails again)
+        const isSystemError = systemErrorPatterns.some((p) => p.test(text));
+        if (isSystemError) {
+          logger.error({ group: group.name }, `Suppressed system error (not sent to user): ${text.slice(0, 300)}`);
+          hadError = true;
+          // Skip sending to channel but continue processing
+        } else if (text && channel) {
           const formatted = formatOutbound(channel, text, getAgentName(group));
           if (formatted) {
             await channel.sendMessage(chatJid, formatted, triggeringMessageId || undefined);
