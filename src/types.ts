@@ -50,6 +50,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  thread_ts?: string;
 }
 
 export interface ScheduledTask {
@@ -87,6 +88,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: file upload. Channels that support it implement it.
+  sendFile?(jid: string, filePath: string, filename?: string, title?: string, comment?: string, threadTs?: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

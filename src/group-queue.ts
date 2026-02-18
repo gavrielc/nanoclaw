@@ -22,6 +22,7 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  activeThreadTs: string | null;
 }
 
 export class GroupQueue {
@@ -43,6 +44,7 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        activeThreadTs: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -157,6 +159,16 @@ export class GroupQueue {
     }
   }
 
+  setActiveThread(groupJid: string, threadTs: string | null): void {
+    const state = this.getGroup(groupJid);
+    state.activeThreadTs = threadTs;
+  }
+
+  getActiveThread(groupJid: string): string | null {
+    const state = this.groups.get(groupJid);
+    return state?.activeThreadTs ?? null;
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',
@@ -188,6 +200,7 @@ export class GroupQueue {
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
+      state.activeThreadTs = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -212,6 +225,7 @@ export class GroupQueue {
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
+      state.activeThreadTs = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }

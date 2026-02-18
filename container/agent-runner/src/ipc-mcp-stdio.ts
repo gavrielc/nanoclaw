@@ -63,6 +63,49 @@ server.tool(
 );
 
 server.tool(
+  'send_file',
+  'Send a file or image to the user or group. The file must exist in your workspace (e.g., /workspace/group/screenshot.png). Use this to share screenshots, generated images, documents, or any file you\'ve created.',
+  {
+    file_path: z.string().describe('Path to the file inside the container (e.g., /workspace/group/screenshot.png)'),
+    filename: z.string().optional().describe('Override filename shown to the user'),
+    title: z.string().optional().describe('Title for the file upload'),
+    comment: z.string().optional().describe('Message to include with the file'),
+  },
+  async (args) => {
+    let filePath = args.file_path;
+
+    if (!fs.existsSync(filePath)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${filePath}. Make sure the file exists.` }],
+        isError: true,
+      };
+    }
+
+    // Only /workspace/group/ is host-accessible. Copy files from elsewhere.
+    if (!filePath.startsWith('/workspace/group/')) {
+      const dest = `/workspace/group/${path.basename(filePath)}`;
+      fs.copyFileSync(filePath, dest);
+      filePath = dest;
+    }
+
+    const data: Record<string, string | undefined> = {
+      type: 'send_file',
+      chatJid,
+      filePath,
+      filename: args.filename || undefined,
+      title: args.title || undefined,
+      comment: args.comment || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: `File "${args.file_path}" sent.` }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 

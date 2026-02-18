@@ -187,7 +187,7 @@ function createPreCompactHook(): HookCallback {
 // Secrets to strip from Bash tool subprocess environments.
 // These are needed by claude-code for API auth but should never
 // be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'HUBSPOT_ACCESS_TOKEN', 'STRIPE_SECRET_KEY', 'DD_API_KEY', 'DD_APP_KEY'];
 
 function createSanitizeBashHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -416,6 +416,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      model: 'claude-sonnet-4-6',
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -431,7 +432,10 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__hubspot__*',
+        'mcp__stripe__*',
+        'mcp__datadog__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -446,6 +450,26 @@ async function runQuery(
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
+        },
+        hubspot: {
+          command: 'npx',
+          args: ['-y', '@hubspot/mcp-server'],
+          env: {
+            PRIVATE_APP_ACCESS_TOKEN: sdkEnv.HUBSPOT_ACCESS_TOKEN || '',
+          },
+        },
+        stripe: {
+          command: 'npx',
+          args: ['-y', '@stripe/mcp', `--api-key=${sdkEnv.STRIPE_SECRET_KEY || ''}`],
+        },
+        datadog: {
+          command: 'npx',
+          args: [
+            '-y', 'datadog-mcp-server',
+            `--apiKey=${sdkEnv.DD_API_KEY || ''}`,
+            `--appKey=${sdkEnv.DD_APP_KEY || ''}`,
+            `--site=${sdkEnv.DD_SITE || 'datadoghq.com'}`,
+          ],
         },
       },
       hooks: {

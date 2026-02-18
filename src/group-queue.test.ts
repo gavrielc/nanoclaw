@@ -211,6 +211,32 @@ describe('GroupQueue', () => {
     expect(callCount).toBe(countAfterMaxRetries);
   });
 
+  // --- Active thread tracking ---
+
+  it('tracks active thread per group', () => {
+    expect(queue.getActiveThread('group1@g.us')).toBeNull();
+
+    queue.setActiveThread('group1@g.us', '1234567890.123456');
+    expect(queue.getActiveThread('group1@g.us')).toBe('1234567890.123456');
+
+    queue.setActiveThread('group1@g.us', null);
+    expect(queue.getActiveThread('group1@g.us')).toBeNull();
+  });
+
+  it('resets active thread when container finishes', async () => {
+    const processMessages = vi.fn(async () => {
+      queue.setActiveThread('group1@g.us', '1234567890.123456');
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    // After container finishes, activeThreadTs should be reset
+    expect(queue.getActiveThread('group1@g.us')).toBeNull();
+  });
+
   // --- Waiting groups get drained when slots free up ---
 
   it('drains waiting groups when active slots free up', async () => {

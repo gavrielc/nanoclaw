@@ -108,6 +108,9 @@ function buildVolumeMounts(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+  // Ensure the container's node user (uid 1000) can write to this directory
+  // when the host process runs as root
+  try { fs.chownSync(groupSessionsDir, 1000, 1000); } catch { /* non-root host */ }
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(settingsFile, JSON.stringify({
@@ -153,6 +156,12 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  // Ensure the container's node user (uid 1000) can write to IPC directories
+  try {
+    for (const sub of ['', 'messages', 'tasks', 'input']) {
+      fs.chownSync(path.join(groupIpcDir, sub), 1000, 1000);
+    }
+  } catch { /* non-root host */ }
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -186,7 +195,7 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'HUBSPOT_ACCESS_TOKEN', 'STRIPE_SECRET_KEY', 'DD_API_KEY', 'DD_APP_KEY', 'DD_SITE']);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {

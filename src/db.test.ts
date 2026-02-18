@@ -234,6 +234,61 @@ describe('getNewMessages', () => {
   });
 });
 
+// --- thread_ts round-trip ---
+
+describe('thread_ts', () => {
+  beforeEach(() => {
+    storeChatMetadata('C123', '2024-01-01T00:00:00.000Z');
+  });
+
+  it('stores and retrieves thread_ts via storeMessage', () => {
+    storeMessage({
+      id: 't1',
+      chat_jid: 'C123',
+      sender: 'U1',
+      sender_name: 'Alice',
+      content: 'threaded msg',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      thread_ts: '1704067200.000000',
+    });
+
+    const msgs = getMessagesSince('C123', '2024-01-01T00:00:00.000Z', 'Bot');
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].thread_ts).toBe('1704067200.000000');
+  });
+
+  it('returns null thread_ts for messages without threads', () => {
+    storeMessage({
+      id: 't2',
+      chat_jid: 'C123',
+      sender: 'U1',
+      sender_name: 'Alice',
+      content: 'no thread',
+      timestamp: '2024-01-01T00:00:02.000Z',
+    });
+
+    const msgs = getMessagesSince('C123', '2024-01-01T00:00:00.000Z', 'Bot');
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].thread_ts).toBeNull();
+  });
+
+  it('returns thread_ts via getNewMessages', () => {
+    storeMessage({
+      id: 't3',
+      chat_jid: 'C123',
+      sender: 'U1',
+      sender_name: 'Alice',
+      content: 'threaded',
+      timestamp: '2024-01-01T00:00:03.000Z',
+      thread_ts: '1704067200.111111',
+    });
+
+    const { messages } = getNewMessages(['C123'], '2024-01-01T00:00:00.000Z', 'Bot');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].thread_ts).toBe('1704067200.111111');
+  });
+});
+
 // --- storeChatMetadata ---
 
 describe('storeChatMetadata', () => {

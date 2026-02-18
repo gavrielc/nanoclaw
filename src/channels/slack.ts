@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 import { App, LogLevel } from '@slack/bolt';
 
 import { ASSISTANT_NAME } from '../config.js';
@@ -26,8 +29,9 @@ export class SlackChannel implements Channel {
   private app!: App;
   private connected = false;
   private botUserId = '';
-  private outgoingQueue: Array<{ jid: string; text: string }> = [];
+  private outgoingQueue: Array<{ jid: string; text: string; threadTs?: string }> = [];
   private flushing = false;
+  private activeThread: Map<string, string> = new Map();
   private channelSyncTimerStarted = false;
   private displayNameCache: Map<string, string> = new Map();
 
@@ -58,7 +62,9 @@ export class SlackChannel implements Channel {
     // Handle @mentions in channels
     this.app.event('app_mention', async ({ event }) => {
       if (!event.user) return;
-      await this.handleEvent(event.channel, event.user, event.text, event.ts, true);
+      // Reply in existing thread, or create a new thread under the mention
+      const threadTs = (event as any).thread_ts as string | undefined;
+      await this.handleEvent(event.channel, event.user, event.text, event.ts, true, threadTs || event.ts);
     });
 
     // Handle DMs
@@ -111,6 +117,7 @@ export class SlackChannel implements Channel {
     rawText: string,
     ts: string,
     isMention: boolean,
+    threadTs?: string,
   ): Promise<void> {
     // Strip bot mention from text
     let text = rawText;
@@ -131,6 +138,11 @@ export class SlackChannel implements Channel {
     // Only deliver full message for registered groups
     const groups = this.opts.registeredGroups();
     if (groups[channel]) {
+      // React with 👀 immediately so the user knows the message was seen
+      this.app.client.reactions.add({ channel, name: 'eyes', timestamp: ts }).catch((err) => {
+        logger.debug({ channel, ts, err }, 'Failed to add eyes reaction');
+      });
+
       this.opts.onMessage(channel, {
         id: ts,
         chat_jid: channel,
@@ -140,6 +152,7 @@ export class SlackChannel implements Channel {
         timestamp,
         is_from_me: false,
         is_bot_message: false,
+        thread_ts: threadTs,
       });
     }
   }
@@ -178,12 +191,18 @@ export class SlackChannel implements Channel {
     try {
       // Split long messages on newline boundaries
       const chunks = this.splitMessage(text);
+      const threadTs = this.activeThread.get(jid);
       for (const chunk of chunks) {
-        await this.app.client.chat.postMessage({ channel: jid, text: chunk });
+        await this.app.client.chat.postMessage({
+          channel: jid,
+          text: chunk,
+          ...(threadTs && { thread_ts: threadTs }),
+        });
       }
-      logger.info({ jid, length: text.length, chunks: chunks.length }, 'Message sent');
+      logger.info({ jid, length: text.length, chunks: chunks.length, threadTs }, 'Message sent');
     } catch (err) {
-      this.outgoingQueue.push({ jid, text });
+      const threadTs = this.activeThread.get(jid);
+      this.outgoingQueue.push({ jid, text, threadTs });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send, message queued',
@@ -208,8 +227,46 @@ export class SlackChannel implements Channel {
     }
   }
 
+  setActiveThread(channelJid: string, threadTs?: string): void {
+    if (threadTs) {
+      this.activeThread.set(channelJid, threadTs);
+    } else {
+      this.activeThread.delete(channelJid);
+    }
+  }
+
   async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
     // No-op: Slack API doesn't support bot typing indicators
+  }
+
+  async sendFile(
+    jid: string,
+    filePath: string,
+    filename?: string,
+    title?: string,
+    comment?: string,
+    threadTs?: string,
+  ): Promise<void> {
+    const resolvedThread = threadTs || this.activeThread.get(jid);
+    const actualFilename = filename || path.basename(filePath);
+
+    try {
+      const base = {
+        file: fs.createReadStream(filePath),
+        filename: actualFilename,
+        title: title || actualFilename,
+        initial_comment: comment,
+      };
+      if (resolvedThread) {
+        await this.app.client.files.uploadV2({ ...base, channel_id: jid, thread_ts: resolvedThread });
+      } else {
+        await this.app.client.files.uploadV2({ ...base, channel_id: jid });
+      }
+      logger.info({ jid, filePath: actualFilename, threadTs: resolvedThread }, 'File uploaded');
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to upload file');
+      throw err;
+    }
   }
 
   /**
@@ -296,7 +353,11 @@ export class SlackChannel implements Channel {
         const item = this.outgoingQueue.shift()!;
         const chunks = this.splitMessage(item.text);
         for (const chunk of chunks) {
-          await this.app.client.chat.postMessage({ channel: item.jid, text: chunk });
+          await this.app.client.chat.postMessage({
+            channel: item.jid,
+            text: chunk,
+            ...(item.threadTs && { thread_ts: item.threadTs }),
+          });
         }
         logger.info({ jid: item.jid, length: item.text.length }, 'Queued message sent');
         // Rate limiting between queued sends
