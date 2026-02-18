@@ -29,4 +29,7 @@ groups/global/*
 .idea/
 .vscode/
 
+# Skills system (local per-installation state)
+.nanoclaw/
+
 agents-sdk-docs
