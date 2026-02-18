@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSse, type SseEvent } from '@/lib/use-sse';
 import { ErrorCallout } from './ErrorCallout';
 
@@ -10,6 +10,14 @@ interface Message {
   content: string;
   timestamp: string;
   is_bot_message: boolean;
+  media_data?: string | null;
+}
+
+interface PendingImage {
+  name: string;
+  data: string;      // base64
+  mime_type: string;
+  preview: string;   // object URL for display
 }
 
 interface ChatWindowProps {
@@ -40,8 +48,10 @@ export function ChatWindow({ topicId, group }: ChatWindowProps) {
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [error, setError] = useState('');
   const [currentTopicId, setCurrentTopicId] = useState(topicId);
+  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isAtBottomRef = useRef(true);
   const prevMsgCountRef = useRef(0);
 
@@ -68,10 +78,52 @@ export function ChatWindow({ topicId, group }: ChatWindowProps) {
     });
   }, []);
 
+  // Revoke preview object URL when pendingImage changes (memory cleanup)
+  useEffect(() => {
+    return () => {
+      if (pendingImage?.preview) URL.revokeObjectURL(pendingImage.preview);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingImage?.preview]);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!fileInputRef.current) return;
+    fileInputRef.current.value = '';
+    if (!file) return;
+
+    const isImage = file.type.startsWith('image/');
+    const isTxt = file.type === 'text/plain' || file.name.endsWith('.txt');
+
+    if (isImage) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // result is "data:image/jpeg;base64,XXXX" — extract just the base64 part
+        const base64 = result.split(',')[1];
+        if (!base64) return;
+        const preview = URL.createObjectURL(file);
+        setPendingImage({ name: file.name, data: base64, mime_type: file.type, preview });
+      };
+      reader.readAsDataURL(file);
+    } else if (isTxt) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = reader.result as string;
+        const block = `\n\n<attachment filename="${file.name}">\n${text}\n</attachment>`;
+        setInput((prev) => prev + block);
+      };
+      reader.readAsText(file);
+    } else {
+      setError('Only images (JPEG, PNG, GIF, WebP) and .txt files are supported.');
+    }
+  }, []);
+
   // Load messages when topic changes
   useEffect(() => {
     setCurrentTopicId(topicId);
     setIsAgentTyping(false);
+    setPendingImage(null);
     isAtBottomRef.current = true; // reset on topic switch
     if (!topicId) {
       setMessages([]);
@@ -151,9 +203,11 @@ export function ChatWindow({ topicId, group }: ChatWindowProps) {
     if (!input.trim() || sending) return;
 
     const text = input.trim();
+    const imageToSend = pendingImage;
     setInput('');
     setError('');
     setSending(true);
+    setPendingImage(null);
 
     // Optimistic: add user message immediately
     const optimisticMsg: Message = {
@@ -162,15 +216,22 @@ export function ChatWindow({ topicId, group }: ChatWindowProps) {
       content: text,
       timestamp: new Date().toISOString(),
       is_bot_message: false,
+      media_data: imageToSend
+        ? JSON.stringify([{ type: 'image', name: imageToSend.name, data: imageToSend.data, mime_type: imageToSend.mime_type }])
+        : null,
     };
     setMessages((prev) => [...prev, optimisticMsg]);
 
     try {
-      const result = await writeAction('/api/write/chat/send', {
+      const body: Record<string, unknown> = {
         message: text,
         topic_id: currentTopicId || undefined,
         group,
-      });
+      };
+      if (imageToSend) {
+        body.attachment = { type: 'image', name: imageToSend.name, data: imageToSend.data, mime_type: imageToSend.mime_type };
+      }
+      const result = await writeAction('/api/write/chat/send', body);
       if (!result.ok) {
         setError((result.error as string) || 'Failed to send message');
       } else {
@@ -208,28 +269,48 @@ export function ChatWindow({ topicId, group }: ChatWindowProps) {
             No messages yet. Send a message to start chatting.
           </div>
         )}
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.is_bot_message ? 'justify-start' : 'justify-end'}`}
-          >
+        {messages.map((msg) => {
+          let images: Array<{ name: string; data: string; mime_type: string }> = [];
+          if (msg.media_data) {
+            try {
+              const parsed = JSON.parse(msg.media_data);
+              if (Array.isArray(parsed)) {
+                images = parsed.filter((a) => a.type === 'image');
+              }
+            } catch { /* ignore */ }
+          }
+          return (
             <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                msg.is_bot_message
-                  ? 'bg-zinc-800 text-zinc-100'
-                  : 'bg-blue-700/20 text-blue-100 border border-blue-700/30'
-              }`}
+              key={msg.id}
+              className={`flex ${msg.is_bot_message ? 'justify-start' : 'justify-end'}`}
             >
-              <div className="mb-1 text-xs text-zinc-500">
-                {msg.sender_name}
-                <span className="ml-2">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
-                </span>
+              <div
+                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  msg.is_bot_message
+                    ? 'bg-zinc-800 text-zinc-100'
+                    : 'bg-blue-700/20 text-blue-100 border border-blue-700/30'
+                }`}
+              >
+                <div className="mb-1 text-xs text-zinc-500">
+                  {msg.sender_name}
+                  <span className="ml-2">
+                    {new Date(msg.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+                {images.map((img, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={i}
+                    src={`data:${img.mime_type};base64,${img.data}`}
+                    alt={img.name}
+                    className="mb-2 max-w-full rounded max-h-64 object-contain"
+                  />
+                ))}
+                <div className="whitespace-pre-wrap break-words">{msg.content}</div>
               </div>
-              <div className="whitespace-pre-wrap break-words">{msg.content}</div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {isAgentTyping && (
           <div className="flex justify-start">
             <div className="rounded-lg bg-zinc-800 px-3 py-3">
@@ -253,13 +334,52 @@ export function ChatWindow({ topicId, group }: ChatWindowProps) {
 
       {/* Input */}
       <form onSubmit={handleSend} className="border-t border-zinc-800 p-4">
+        {/* Pending image preview */}
+        {pendingImage && (
+          <div className="mb-2 flex items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={pendingImage.preview}
+              alt={pendingImage.name}
+              className="h-16 w-16 rounded object-cover border border-zinc-600"
+            />
+            <span className="flex-1 truncate text-xs text-zinc-400">{pendingImage.name}</span>
+            <button
+              type="button"
+              onClick={() => setPendingImage(null)}
+              className="text-xs text-zinc-500 hover:text-zinc-200"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className="flex gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp,.txt,text/plain"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          {/* Attach button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            title="Attach image or TXT file"
+            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-2 text-zinc-400 hover:text-zinc-100 disabled:opacity-50"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+          </button>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type a message..."
-            maxLength={4000}
+            maxLength={50000}
             disabled={sending}
             className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-500 disabled:opacity-50"
           />

@@ -695,15 +695,45 @@ async function handleActionChat(
   body: Record<string, unknown>,
   res: http.ServerResponse,
 ): Promise<void> {
-  const { message, topic_id, group } = body;
+  const { message, topic_id, group, attachment } = body;
 
   if (!message || typeof message !== 'string') {
     json(res, 400, { error: 'Missing required field: message' });
     return;
   }
-  if (message.length > 4000) {
-    json(res, 400, { error: 'message exceeds 4000 characters' });
+  // Raised to 50 KB to accommodate TXT file contents embedded in message
+  if (message.length > 50000) {
+    json(res, 400, { error: 'message exceeds 50000 characters' });
     return;
+  }
+
+  // Validate optional image attachment
+  let mediaData: string | null = null;
+  if (attachment !== undefined && attachment !== null) {
+    if (typeof attachment !== 'object' || Array.isArray(attachment)) {
+      json(res, 400, { error: 'attachment must be an object' });
+      return;
+    }
+    const att = attachment as Record<string, unknown>;
+    if (att.type !== 'image') {
+      json(res, 400, { error: 'attachment.type must be "image"' });
+      return;
+    }
+    if (typeof att.data !== 'string' || typeof att.name !== 'string' || typeof att.mime_type !== 'string') {
+      json(res, 400, { error: 'attachment must have string fields: data, name, mime_type' });
+      return;
+    }
+    const validMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validMimeTypes.includes(att.mime_type as string)) {
+      json(res, 400, { error: `attachment.mime_type must be one of: ${validMimeTypes.join(', ')}` });
+      return;
+    }
+    // Cap base64 image at ~5 MB (≈6.7 MB base64)
+    if ((att.data as string).length > 7_000_000) {
+      json(res, 400, { error: 'attachment.data exceeds 5 MB' });
+      return;
+    }
+    mediaData = JSON.stringify([{ type: 'image', name: att.name, data: att.data, mime_type: att.mime_type }]);
   }
 
   const groupFolder = (typeof group === 'string' && group) ? group : 'main';
@@ -748,6 +778,7 @@ async function handleActionChat(
     timestamp: now,
     is_from_me: false,
     is_bot_message: false,
+    media_data: mediaData,
   });
 
   updateTopicActivity(topicId);

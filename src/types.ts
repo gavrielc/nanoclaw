@@ -56,6 +56,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  media_data?: string | null;
 }
 
 export interface ScheduledTask {

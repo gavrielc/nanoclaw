@@ -394,12 +394,12 @@ function handleMessages(
   let sql: string;
   let args: unknown[];
   if (before) {
-    sql = `SELECT id, sender_name, content, timestamp, is_bot_message
+    sql = `SELECT id, sender_name, content, timestamp, is_bot_message, media_data
            FROM messages WHERE chat_jid = ? AND timestamp < ?
            ORDER BY timestamp DESC LIMIT ?`;
     args = [chatJid, before, limit];
   } else {
-    sql = `SELECT id, sender_name, content, timestamp, is_bot_message
+    sql = `SELECT id, sender_name, content, timestamp, is_bot_message, media_data
            FROM messages WHERE chat_jid = ?
            ORDER BY timestamp DESC LIMIT ?`;
     args = [chatJid, limit];
@@ -411,6 +411,7 @@ function handleMessages(
     content: string;
     timestamp: string;
     is_bot_message: number;
+    media_data: string | null;
   }>;
 
   // Reverse to chronological order (oldest first)
@@ -423,6 +424,7 @@ function handleMessages(
       content: r.content,
       timestamp: r.timestamp,
       is_bot_message: r.is_bot_message === 1,
+      media_data: r.media_data || null,
     })),
     group_jid: chatJid,
     topic_id: topicId || undefined,

@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  attachments?: Array<{ type: 'image'; name: string; data: string; mime_type: string }>;
 }
 
 interface ContainerOutput {
@@ -47,9 +48,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -78,6 +83,23 @@ class MessageStream {
     this.queue.push({
       type: 'user',
       message: { role: 'user', content: text },
+      parent_tool_use_id: null,
+      session_id: '',
+    });
+    this.waiting?.();
+  }
+
+  pushMultimodal(text: string, images: Array<{ data: string; mime_type: string; name: string }>): void {
+    const content: ContentBlock[] = [
+      ...images.map((img): ContentBlock => ({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mime_type, data: img.data },
+      })),
+      { type: 'text', text },
+    ];
+    this.queue.push({
+      type: 'user',
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -550,9 +572,14 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
   onSessionUpdate?: (newId: string) => void,
+  images?: Array<{ data: string; mime_type: string; name: string }>,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(prompt);
+  if (images && images.length > 0) {
+    stream.pushMultimodal(prompt, images);
+  } else {
+    stream.push(prompt);
+  }
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -735,15 +762,22 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
+  // Images are only passed on the first query (the initial message)
+  const initialImages = containerInput.attachments?.filter((a) => a.type === 'image');
+
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let isFirstQuery = true;
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
+      const queryImages = isFirstQuery && initialImages?.length ? initialImages : undefined;
+      isFirstQuery = false;
+
       let queryResult: Awaited<ReturnType<typeof runQuery>>;
       try {
-        queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, onSessionUpdate);
+        queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, onSessionUpdate, queryImages);
       } catch (queryErr) {
         const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
         // If resume fails with auth/session error, retry with a fresh session
@@ -751,7 +785,7 @@ async function main(): Promise<void> {
           log(`Session resume failed (${msg}), retrying with fresh session...`);
           sessionId = undefined;
           resumeAt = undefined;
-          queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, onSessionUpdate);
+          queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, onSessionUpdate, queryImages);
         } else {
           throw queryErr;
         }

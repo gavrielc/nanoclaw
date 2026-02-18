@@ -38,6 +38,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  attachments?: Array<{ type: 'image'; name: string; data: string; mime_type: string }>;
 }
 
 export interface ContainerOutput {

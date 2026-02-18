@@ -12,6 +12,7 @@ import {
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import {
+  ContainerInput,
   ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
@@ -84,6 +85,19 @@ function saveState(): void {
     'last_agent_timestamp',
     JSON.stringify(lastAgentTimestamp),
   );
+}
+
+type ImageAttachment = { type: 'image'; name: string; data: string; mime_type: string };
+
+/** Extract image attachments from a message's media_data JSON string. */
+function extractImageAttachments(mediaData: string | null | undefined): ImageAttachment[] {
+  if (!mediaData) return [];
+  try {
+    const parsed = JSON.parse(mediaData) as Array<{ type: string; name: string; data: string; mime_type: string }>;
+    return parsed.filter((a) => a.type === 'image') as ImageAttachment[];
+  } catch {
+    return [];
+  }
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -227,6 +241,7 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   sessionKeyOverride?: string,
+  attachments?: ImageAttachment[],
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionKey = sessionKeyOverride || group.folder;
@@ -297,6 +312,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        attachments,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
@@ -369,21 +385,27 @@ function processCockpitTopic(
 
   const prompt = formatMessages(pendingMessages);
 
-  // Try piping to active container first
-  if (queue.sendMessage(virtualJid, prompt)) {
+  // Check if the latest message has an image attachment (skip pipe path — images need fresh spawn)
+  const lastMsg = pendingMessages[pendingMessages.length - 1];
+  const lastMsgAttachments = extractImageAttachments(lastMsg.media_data);
+  const hasImageAttachment = lastMsgAttachments.length > 0;
+
+  // Try piping to active container first (only when no image — pipe is text-only)
+  if (!hasImageAttachment && queue.sendMessage(virtualJid, prompt)) {
     logger.debug({ topicId, count: pendingMessages.length }, 'Piped cockpit message to active container');
     lastAgentTimestamp[virtualJid] = pendingMessages[pendingMessages.length - 1].timestamp;
     saveState();
     return;
   }
 
-  // No active container — use enqueueTask with a custom function
+  // No active container (or has image) — use enqueueTask with a custom function
   const taskId = `cockpit-${topicId}-${Date.now()}`;
   queue.enqueueTask(virtualJid, taskId, async () => {
     const msgs = getMessagesSince(virtualJid, lastAgentTimestamp[virtualJid] || '', ASSISTANT_NAME);
     if (msgs.length === 0) return;
 
     const msgPrompt = formatMessages(msgs);
+    const msgAttachments = extractImageAttachments(msgs[msgs.length - 1].media_data);
     const previousCursor = lastAgentTimestamp[virtualJid] || '';
     lastAgentTimestamp[virtualJid] = msgs[msgs.length - 1].timestamp;
     saveState();
@@ -430,6 +452,7 @@ function processCockpitTopic(
         }
       },
       sessionKey,
+      msgAttachments.length > 0 ? msgAttachments : undefined,
     );
 
     if (idleTimer) clearTimeout(idleTimer);
