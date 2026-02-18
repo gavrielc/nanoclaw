@@ -428,7 +428,7 @@ for (const channel of channels) {
 Messages are routed based on JID format:
 - `@g.us` or `@s.whatsapp.net` → WhatsAppChannel
 - Numeric IDs like `"1234567890"` → DiscordChannel
-- `chat:123456` → TelegramChannel
+- `tg:123456` → TelegramChannel
 
 ---
 
