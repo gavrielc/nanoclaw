@@ -191,14 +191,15 @@ function buildVolumeMounts(
   });
 
   // Mount downloaded files directory (read-only) for agent access to user-uploaded files
+  // Always create the directory so the bind mount exists even for containers
+  // started before the first file upload
   const filesDir = path.join(DATA_DIR, 'files');
-  if (fs.existsSync(filesDir)) {
-    mounts.push({
-      hostPath: filesDir,
-      containerPath: '/workspace/files',
-      readonly: true,
-    });
-  }
+  fs.mkdirSync(filesDir, { recursive: true });
+  mounts.push({
+    hostPath: filesDir,
+    containerPath: '/workspace/files',
+    readonly: true,
+  });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
