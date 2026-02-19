@@ -12,7 +12,9 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
       name TEXT,
-      last_message_time TEXT
+      last_message_time TEXT,
+      channel TEXT,
+      is_group INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
@@ -96,6 +98,23 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add channel and is_group columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE chats ADD COLUMN channel TEXT`,
+    );
+    database.exec(
+      `ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`,
+    );
+    // Backfill from JID patterns
+    database.exec(`UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`);
+    database.exec(`UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`);
+    database.exec(`UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`);
+    database.exec(`UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`);
+  } catch {
+    /* columns already exist */
+  }
 }
 
 export function initDatabase(): void {
@@ -123,26 +142,35 @@ export function storeChatMetadata(
   chatJid: string,
   timestamp: string,
   name?: string,
+  channel?: string,
+  isGroup?: boolean,
 ): void {
+  const ch = channel ?? null;
+  const group = isGroup === undefined ? null : isGroup ? 1 : 0;
+
   if (name) {
     // Update with name, preserving existing timestamp if newer
     db.prepare(
       `
-      INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
+      INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
         name = excluded.name,
-        last_message_time = MAX(last_message_time, excluded.last_message_time)
+        last_message_time = MAX(last_message_time, excluded.last_message_time),
+        channel = COALESCE(excluded.channel, channel),
+        is_group = COALESCE(excluded.is_group, is_group)
     `,
-    ).run(chatJid, name, timestamp);
+    ).run(chatJid, name, timestamp, ch, group);
   } else {
     // Update timestamp only, preserve existing name if any
     db.prepare(
       `
-      INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
+      INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
-        last_message_time = MAX(last_message_time, excluded.last_message_time)
+        last_message_time = MAX(last_message_time, excluded.last_message_time),
+        channel = COALESCE(excluded.channel, channel),
+        is_group = COALESCE(excluded.is_group, is_group)
     `,
-    ).run(chatJid, chatJid, timestamp);
+    ).run(chatJid, chatJid, timestamp, ch, group);
   }
 }
 
@@ -164,6 +192,8 @@ export interface ChatInfo {
   jid: string;
   name: string;
   last_message_time: string;
+  channel: string;
+  is_group: number;
 }
 
 /**
@@ -173,7 +203,7 @@ export function getAllChats(): ChatInfo[] {
   return db
     .prepare(
       `
-    SELECT jid, name, last_message_time
+    SELECT jid, name, last_message_time, channel, is_group
     FROM chats
     ORDER BY last_message_time DESC
   `,

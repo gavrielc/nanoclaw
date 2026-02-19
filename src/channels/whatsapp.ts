@@ -158,7 +158,8 @@ export class WhatsAppChannel implements Channel {
         ).toISOString();
 
         // Always notify about chat metadata for group discovery
-        this.opts.onChatMetadata(chatJid, timestamp);
+        const isGroup = chatJid.endsWith('@g.us');
+        this.opts.onChatMetadata(chatJid, timestamp, undefined, 'whatsapp', isGroup);
 
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
