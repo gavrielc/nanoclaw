@@ -5,7 +5,10 @@ import { readEnvFile } from './env.js';
 // Read config values from .env (falls back to process.env).
 // Secrets are NOT read here — they stay on disk and are loaded only
 // where needed (container-runner.ts) to avoid leaking to child processes.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
