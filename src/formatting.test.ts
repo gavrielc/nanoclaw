@@ -132,6 +132,7 @@ describe('TRIGGER_PATTERN', () => {
   });
 
   it('matches with leading whitespace after trim', () => {
+    // The actual usage trims before testing: TRIGGER_PATTERN.test(m.content.trim())
     expect(TRIGGER_PATTERN.test(`@${name} hey`.trim())).toBe(true);
   });
 });
