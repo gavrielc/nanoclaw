@@ -14,7 +14,7 @@ Host (macOS)                          Container (Linux VM)
 ─────────────────────────────────────────────────────────────
 src/container-runner.ts               container/agent-runner/
     │                                      │
-    │ spawns Apple Container               │ runs Claude Agent SDK
+    │ spawns container                      │ runs Claude Agent SDK
     │ with volume mounts                   │ with MCP servers
     │                                      │
     ├── data/env/env ──────────────> /workspace/env-dir/env
@@ -80,7 +80,7 @@ cat .env  # Should show one of:
 
 ### 2. Environment Variables Not Passing
 
-**Apple Container Bug:** Environment variables passed via `-e` are lost when using `-i` (interactive/piped stdin).
+**Runtime note:** Environment variables passed via `-e` may be lost when using `-i` (interactive/piped stdin).
 
 **Workaround:** The system extracts only authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `.env` and mounts them for sourcing inside the container. Other env vars are not exposed.
 
@@ -94,9 +94,9 @@ echo '{}' | container run -i \
 
 ### 3. Mount Issues
 
-**Apple Container quirks:**
+**Container mount notes:**
 - Only mounts directories, not individual files
-- `-v` syntax does NOT support `:ro` suffix - use `--mount` for readonly:
+- `-v` syntax may NOT support `:ro` suffix - use `--mount` for readonly:
   ```bash
   # Readonly: use --mount
   --mount "type=bind,source=/path,target=/container/path,readonly"
@@ -326,7 +326,7 @@ echo -e "\n1. Authentication configured?"
 echo -e "\n2. Env file copied for container?"
 [ -f data/env/env ] && echo "OK" || echo "MISSING - will be created on first run"
 
-echo -e "\n3. Apple Container system running?"
+echo -e "\n3. Container runtime running?"
 container system status &>/dev/null && echo "OK" || echo "NOT RUNNING - NanoClaw should auto-start it; check logs"
 
 echo -e "\n4. Container image exists?"
