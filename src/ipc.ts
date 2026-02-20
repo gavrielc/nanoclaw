@@ -12,6 +12,7 @@ import {
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { logger } from './logger.js';
+import { isShabbatOrYomTov } from './shabbat.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -41,6 +42,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
   fs.mkdirSync(ipcBaseDir, { recursive: true });
 
   const processIpcFiles = async () => {
+    if (isShabbatOrYomTov()) {
+      logger.debug('Shabbat/Yom Tov active, skipping IPC processing');
+      setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
+      return;
+    }
+
     // Scan all group IPC directories (identity determined by directory)
     let groupFolders: string[];
     try {
