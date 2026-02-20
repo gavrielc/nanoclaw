@@ -22,13 +22,17 @@ NanoClaw gives you the same core functionality in a codebase you can understand 
 
 ## Quick Start
 
+**With Claude Code (recommended):**
 ```bash
 git clone https://github.com/qwibitai/nanoclaw.git
 cd nanoclaw
 claude
 ```
-
 Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+
+**Without Claude Code:** See [docs/SETUP-MANUAL.md](docs/SETUP-MANUAL.md) for step-by-step manual setup.
+
+**Local CLIs:** Use Codex or Cursor Agent instead of API tokens. Set `AGENT_BACKEND=codex` or `AGENT_BACKEND=cursor-agent` in `.env`. See [docs/CLI-ADAPTER.md](docs/CLI-ADAPTER.md).
 
 ## Philosophy
 

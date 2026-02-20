@@ -17,7 +17,12 @@ import {
 } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
-import { CONTAINER_RUNTIME_BIN, readonlyMountArgs, stopContainer } from './container-runtime.js';
+import {
+  CONTAINER_RUNTIME_BIN,
+  isLocalRunnerMode,
+  readonlyMountArgs,
+  stopContainer,
+} from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -33,6 +38,21 @@ function getHomeDir(): string {
     );
   }
   return home;
+}
+
+function getConfiguredAgentBackend(): string {
+  const env = readEnvFile(['AGENT_BACKEND']);
+  return process.env.AGENT_BACKEND || env.AGENT_BACKEND || 'sdk';
+}
+
+function isRunnerHotReloadEnabled(): boolean {
+  const env = readEnvFile(['NANOCLAW_RUNNER_HOT_RELOAD']);
+  const value =
+    process.env.NANOCLAW_RUNNER_HOT_RELOAD ||
+    env.NANOCLAW_RUNNER_HOT_RELOAD;
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
 export interface ContainerInput {
@@ -148,6 +168,24 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // For Codex CLI backend, mount host Codex auth/config so containerized
+  // codex can use login-based auth without API keys.
+  if (getConfiguredAgentBackend() === 'codex') {
+    const codexDir = path.join(homeDir, '.codex');
+    if (fs.existsSync(codexDir)) {
+      mounts.push({
+        hostPath: codexDir,
+        containerPath: '/home/node/.codex',
+        readonly: false,
+      });
+    } else {
+      logger.warn(
+        { codexDir },
+        'Codex backend enabled but host ~/.codex not found',
+      );
+    }
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
@@ -160,14 +198,22 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Mount agent-runner source from host — recompiled on container startup.
-  // Bypasses sticky build cache for code changes.
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
-  mounts.push({
-    hostPath: agentRunnerSrc,
-    containerPath: '/app/src',
-    readonly: true,
-  });
+  // Optional hot-reload mode: mount host source and let container entrypoint
+  // recompile on each run. Disabled by default for faster and more reliable
+  // startup on constrained hosts.
+  if (isRunnerHotReloadEnabled()) {
+    const agentRunnerSrc = path.join(
+      projectRoot,
+      'container',
+      'agent-runner',
+      'src',
+    );
+    mounts.push({
+      hostPath: agentRunnerSrc,
+      containerPath: '/app/src',
+      readonly: true,
+    });
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -182,12 +228,34 @@ function buildVolumeMounts(
   return mounts;
 }
 
-/**
- * Read allowed secrets from .env for passing to the container via stdin.
- * Secrets are never written to disk or mounted as files.
- */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+  ]);
+}
+
+const ADAPTER_ENV_KEYS = [
+  'AGENT_BACKEND',
+  'AGENT_CLI_CMD',
+  'AGENT_CLI_ARGS',
+  'AGENT_CLI_OUTPUT_FORMAT',
+  'CONTAINER_TIMEOUT',
+  'NANOCLAW_RUNNER_HOT_RELOAD',
+];
+
+function readAdapterEnv(): Record<string, string> {
+  const fromFile = readEnvFile(ADAPTER_ENV_KEYS);
+  const result: Record<string, string> = {};
+  for (const key of ADAPTER_ENV_KEYS) {
+    const value = fromFile[key] ?? process.env[key];
+    if (value != null && value !== '') result[key] = value;
+  }
+  return result;
+}
+
+function getAgentBackend(): string {
+  return readAdapterEnv().AGENT_BACKEND || 'sdk';
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
@@ -211,9 +279,40 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
     }
   }
 
+  for (const [key, value] of Object.entries(readAdapterEnv())) {
+    args.push('-e', `${key}=${value}`);
+  }
+
   args.push(CONTAINER_IMAGE);
 
   return args;
+}
+
+function buildLocalRunnerArgs(): string[] {
+  const runnerPath = path.join(
+    process.cwd(),
+    'container',
+    'agent-runner',
+    'dist',
+    'index.js',
+  );
+  return [runnerPath];
+}
+
+function buildLocalRunnerEnv(
+  group: RegisteredGroup,
+  input: ContainerInput,
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...readAdapterEnv(),
+    NANOCLAW_CHAT_JID: input.chatJid,
+    NANOCLAW_GROUP_FOLDER: group.folder,
+    NANOCLAW_IS_MAIN: input.isMain ? '1' : '0',
+    NANOCLAW_IPC_DIR: path.join(DATA_DIR, 'ipc', group.folder),
+    NANOCLAW_GROUP_DIR: path.join(GROUPS_DIR, group.folder),
+    NANOCLAW_GLOBAL_DIR: path.join(GROUPS_DIR, 'global'),
+  };
 }
 
 export async function runContainerAgent(
@@ -229,18 +328,25 @@ export async function runContainerAgent(
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const localRunner = isLocalRunnerMode();
+  const containerName = localRunner
+    ? `nanoclaw-local-${safeName}-${Date.now()}`
+    : `nanoclaw-${safeName}-${Date.now()}`;
+  const spawnCommand = localRunner ? 'node' : CONTAINER_RUNTIME_BIN;
+  const containerArgs = localRunner
+    ? buildLocalRunnerArgs()
+    : buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
       group: group.name,
       containerName,
+      localRunner,
       mounts: mounts.map(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      runnerCommand: [spawnCommand, ...containerArgs].join(' '),
     },
     'Container mount configuration',
   );
@@ -251,17 +357,23 @@ export async function runContainerAgent(
       containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
+      localRunner,
     },
-    'Spawning container agent',
+    'Spawning agent runner',
   );
 
   const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const container = spawn(spawnCommand, containerArgs, localRunner
+      ? {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: buildLocalRunnerEnv(group, input),
+        }
+      : {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
 
     onProcess(container, containerName);
 
@@ -270,8 +382,11 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
+    // Pass SDK secrets via stdin only when SDK backend is active.
+    // Codex CLI mode should not rely on API-token-based auth.
+    if (getAgentBackend() === 'sdk') {
+      input.secrets = readSecrets();
+    }
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
     // Remove secrets from input so they don't appear in logs
@@ -365,6 +480,14 @@ export async function runContainerAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
+      if (localRunner) {
+        logger.error(
+          { group: group.name, containerName },
+          'Local runner timeout, force killing process',
+        );
+        container.kill('SIGKILL');
+        return;
+      }
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
       exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
         if (err) {
