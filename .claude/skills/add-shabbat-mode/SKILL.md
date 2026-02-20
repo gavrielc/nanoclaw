@@ -7,6 +7,15 @@ description: "Pause all activity during Shabbat and Yom Tov"
 
 This skill pauses all NanoClaw outbound activity during Shabbat and Yom Tov. Messages received during these times are stored in the database but not processed. After Shabbat/Yom Tov ends, the message loop picks up queued messages on its next poll cycle.
 
+## Timing Reference
+
+- **Candle lighting** (licht benchen): always **18 minutes before shkiya** (sunset). This is when Shabbat/Yom Tov begins in practice.
+- **Shkiya** (sunset): the halachic start boundary used by this system. The restricted window begins at shkiya, not at candle lighting.
+- **Tzeis hakokhavim** (nightfall): calculated at 8.5 degrees below horizon.
+- **Resume time**: tzeis + configurable buffer (default 18 minutes) on Motzei Shabbat/Yom Tov.
+
+Note: the system activates at shkiya rather than candle lighting because candle lighting is a preparation for Shabbat, while the halachic prohibition begins at shkiya. This means the system pauses 18 minutes *after* the household has already lit candles.
+
 ## Phase 1: Pre-flight
 
 ### Check if already applied
