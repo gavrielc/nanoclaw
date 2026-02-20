@@ -78,8 +78,27 @@ EOF
     BUILD_CMD="docker build"
     RUN_CMD="docker"
     ;;
+  podman)
+    if ! command -v podman >/dev/null 2>&1 || ! podman info >/dev/null 2>&1; then
+      log "Podman runtime not available or not running"
+      cat <<EOF
+=== NANOCLAW SETUP: SETUP_CONTAINER ===
+RUNTIME: podman
+IMAGE: $IMAGE
+BUILD_OK: false
+TEST_OK: false
+STATUS: failed
+ERROR: runtime_not_available
+LOG: logs/setup.log
+=== END ===
+EOF
+      exit 2
+    fi
+    BUILD_CMD="podman build"
+    RUN_CMD="podman"
+    ;;
   *)
-    log "Unknown runtime: $RUNTIME"
+    log "Unknown runtime specified: $RUNTIME"
     cat <<EOF
 === NANOCLAW SETUP: SETUP_CONTAINER ===
 RUNTIME: $RUNTIME
