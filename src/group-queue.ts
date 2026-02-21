@@ -17,6 +17,7 @@ const BASE_RETRY_MS = 5000;
 interface GroupState {
   active: boolean;
   idleWaiting: boolean;
+  isTaskContainer: boolean;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -39,6 +40,7 @@ export class GroupQueue {
       state = {
         active: false,
         idleWaiting: false,
+        isTaskContainer: false,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -142,7 +144,8 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder) return false;
+    if (!state.active || !state.groupFolder || state.isTaskContainer) return false;
+    state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -181,6 +184,7 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.active = true;
     state.idleWaiting = false;
+    state.isTaskContainer = false;
     state.pendingMessages = false;
     this.activeCount++;
 
@@ -215,6 +219,7 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.active = true;
     state.idleWaiting = false;
+    state.isTaskContainer = true;
     this.activeCount++;
 
     logger.debug(
@@ -228,6 +233,7 @@ export class GroupQueue {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
       state.active = false;
+      state.isTaskContainer = false;
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
