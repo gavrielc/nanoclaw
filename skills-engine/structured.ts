@@ -192,5 +192,5 @@ export function mergeDockerComposeServices(
 }
 
 export function runNpmInstall(): void {
-  execSync('npm install', { stdio: 'inherit', cwd: process.cwd() });
+  execSync('npm install --legacy-peer-deps', { stdio: 'inherit', cwd: process.cwd() });
 }

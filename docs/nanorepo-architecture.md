@@ -2,7 +2,7 @@
 
 ## What Skills Are For
 
-NanoClaw's core is intentionally minimal. Skills are how users extend it — adding features, integrations, cross-platform compatibility, or replacing internals entirely. Examples: add a Telegram or WhatsApp channel, swap the underlying agent runtime, integrate a vector database, add authentication providers, enable multi-language support. Each skill modifies the actual codebase — injecting routes, middleware, config blocks, dependencies — rather than working through a plugin API or runtime hooks.
+NanoClaw's core is intentionally minimal. Skills are how users extend it: adding channels, integrations, cross-platform support, or replacing internals entirely. Examples: add Telegram alongside WhatsApp, switch from Apple Container to Docker, add Gmail integration, add voice message transcription. Each skill modifies the actual codebase, adding channel handlers, updating the message router, changing container configuration, and adding dependencies, rather than working through a plugin API or runtime hooks.
 
 ## Why This Architecture
 

@@ -141,13 +141,13 @@ WhatsApp (baileys) --> SQLite --> 轮询循环 --> 容器 (Claude Agent SDK) -->
 
 因为我用 WhatsApp。fork 这个项目然后运行一个技能来改变它。正是这个项目的核心理念。
 
-**为什么是 Apple Container 而不是 Docker？**
+**为什么是 Docker？**
 
-在 macOS 上，Apple Container 轻巧、快速，并为 Apple 芯片优化。但 Docker 也完全支持——在 `/setup` 期间，你可以选择使用哪个运行时。在 Linux 上，会自动使用 Docker。
+Docker 提供跨平台支持（macOS 和 Linux）和成熟的生态系统。在 macOS 上，你可以选择通过 `/convert-to-apple-container` 切换到 Apple Container 以获得更轻量的原生运行时。
 
 **我可以在 Linux 上运行吗？**
 
-可以。运行 `/setup`，它会自动配置 Docker 作为容器运行时。感谢 [@dotsetgreg](https://github.com/dotsetgreg) 贡献了 `/convert-to-docker` 技能。
+可以。Docker 是默认的容器运行时，在 macOS 和 Linux 上都可以使用。只需运行 `/setup`。
 
 **这个安全吗？**
 

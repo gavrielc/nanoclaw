@@ -40,7 +40,7 @@ Refactored from single WhatsApp channel to multi-channel architecture using the 
 - The `runAgent` function is completely unchanged
 - State management (loadState/saveState) is unchanged
 - Recovery logic is unchanged
-- Apple Container check is unchanged (ensureContainerSystemRunning)
+- Container runtime check is unchanged (ensureContainerSystemRunning)
 
 ## Must-keep
 - The `escapeXml` and `formatMessages` re-exports
