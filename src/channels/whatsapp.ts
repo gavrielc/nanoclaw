@@ -10,13 +10,14 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, STORE_DIR } from '../config.js';
+import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, GROUPS_DIR, STORE_DIR } from '../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { downloadAndSaveMedia, getMediaInfo } from '../whatsapp-media.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -163,8 +164,9 @@ export class WhatsAppChannel implements Channel {
 
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
-        if (groups[chatJid]) {
-          const content =
+        const group = groups[chatJid];
+        if (group) {
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
@@ -172,6 +174,14 @@ export class WhatsAppChannel implements Channel {
             '';
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
+
+          // Download media if present
+          if (getMediaInfo(msg)) {
+            const result = await downloadAndSaveMedia(msg, group.folder, GROUPS_DIR);
+            if (result) {
+              content = `[media: ${result.containerPath}]\n${content}`;
+            }
+          }
 
           const fromMe = msg.key.fromMe || false;
           // Detect bot messages: with own number, fromMe is reliable
