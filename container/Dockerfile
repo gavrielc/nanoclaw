@@ -29,8 +29,8 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install agent-browser, claude-code, and codex CLI (for AGENT_BACKEND=codex)
+RUN npm install -g agent-browser @anthropic-ai/claude-code @openai/codex
 
 # Create app directory
 WORKDIR /app
@@ -53,7 +53,9 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 # Create entrypoint script
 # Secrets are passed via stdin JSON — temp file is deleted immediately after Node reads it
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Default path uses prebuilt dist for lower startup latency and memory usage.
+# Set NANOCLAW_RUNNER_HOT_RELOAD=1 to recompile /app/src on each run.
+RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nif [ \"${NANOCLAW_RUNNER_HOT_RELOAD:-0}\" = \"1\" ]; then\n  cd /app\n  npx tsc --outDir /tmp/dist 2>&1 >&2\n  ln -sf /app/node_modules /tmp/dist/node_modules\n  chmod -R a-w /tmp/dist\n  exec node /tmp/dist/index.js < /tmp/input.json\nfi\nexec node /app/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node

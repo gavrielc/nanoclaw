@@ -130,7 +130,13 @@ EOF
   linux)
     UNIT_DIR="$HOME_PATH/.config/systemd/user"
     UNIT_PATH="$UNIT_DIR/nanoclaw.service"
+    WRAPPER="$PROJECT_PATH/scripts/run-with-docker.sh"
     mkdir -p "$UNIT_DIR"
+    mkdir -p "$PROJECT_PATH/scripts"
+    if [ ! -x "$WRAPPER" ]; then
+      printf '#!/bin/bash\nset -e\nROOT="$(cd "$(dirname "$0")/.." && pwd)"\nNODE="${NANOCLAW_NODE:-$(command -v node)}"\nexec sg docker -c "exec $NODE $ROOT/dist/index.js"\n' > "$WRAPPER"
+      chmod +x "$WRAPPER"
+    fi
     log "Generating systemd unit at $UNIT_PATH"
 
     cat > "$UNIT_PATH" <<UNITEOF
@@ -140,12 +146,14 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${NODE_PATH} ${PROJECT_PATH}/dist/index.js
+ExecStart=${WRAPPER}
 WorkingDirectory=${PROJECT_PATH}
 Restart=always
 RestartSec=5
 Environment=HOME=${HOME_PATH}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME_PATH}/.local/bin
+Environment=PATH=$(dirname ${NODE_PATH}):/usr/local/bin:/usr/bin:/bin:${HOME_PATH}/.local/bin
+Environment=NANOCLAW_NODE=${NODE_PATH}
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
 StandardOutput=append:${PROJECT_PATH}/logs/nanoclaw.log
 StandardError=append:${PROJECT_PATH}/logs/nanoclaw.error.log
 

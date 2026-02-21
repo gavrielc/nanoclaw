@@ -6,6 +6,24 @@ import { PassThrough } from 'stream';
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
+const readEnvFileMock = vi.hoisted(() =>
+  vi.fn((keys: string[]) => {
+    const result: Record<string, string> = {};
+    for (const key of keys) {
+      if (key === 'AGENT_BACKEND' && process.env.AGENT_BACKEND) {
+        result[key] = process.env.AGENT_BACKEND;
+      }
+      if (key === 'CLAUDE_CODE_OAUTH_TOKEN') {
+        result[key] = 'oauth-token';
+      }
+      if (key === 'ANTHROPIC_API_KEY') {
+        result[key] = 'anthropic-token';
+      }
+    }
+    return result;
+  }),
+);
+
 // Mock config
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
@@ -24,6 +42,11 @@ vi.mock('./logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+// Mock env file loader
+vi.mock('./env.js', () => ({
+  readEnvFile: readEnvFileMock,
 }));
 
 // Mock fs
@@ -107,10 +130,12 @@ describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
+    delete process.env.AGENT_BACKEND;
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    delete process.env.AGENT_BACKEND;
   });
 
   it('timeout after output resolves as success', async () => {
@@ -198,5 +223,74 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('does not inject SDK secrets when AGENT_BACKEND=codex', async () => {
+    process.env.AGENT_BACKEND = 'codex';
+    let stdinPayload = '';
+    fakeProc.stdin.on('data', (chunk: Buffer) => {
+      stdinPayload += chunk.toString();
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const parsed = JSON.parse(stdinPayload);
+    expect(parsed.secrets).toBeUndefined();
+  });
+
+  it('does not inject SDK secrets when AGENT_BACKEND=cursor-agent', async () => {
+    process.env.AGENT_BACKEND = 'cursor-agent';
+    let stdinPayload = '';
+    fakeProc.stdin.on('data', (chunk: Buffer) => {
+      stdinPayload += chunk.toString();
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const parsed = JSON.parse(stdinPayload);
+    expect(parsed.secrets).toBeUndefined();
+  });
+
+  it('injects SDK secrets when AGENT_BACKEND=sdk', async () => {
+    process.env.AGENT_BACKEND = 'sdk';
+    let stdinPayload = '';
+    fakeProc.stdin.on('data', (chunk: Buffer) => {
+      stdinPayload += chunk.toString();
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const parsed = JSON.parse(stdinPayload);
+    expect(parsed.secrets).toEqual({
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+      ANTHROPIC_API_KEY: 'anthropic-token',
+    });
   });
 });
