@@ -16,6 +16,7 @@ const BASE_RETRY_MS = 5000;
 
 interface GroupState {
   active: boolean;
+  idleWaiting: boolean;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -37,6 +38,7 @@ export class GroupQueue {
     if (!state) {
       state = {
         active: false,
+        idleWaiting: false,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -92,6 +94,9 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
+      if (state.idleWaiting) {
+        this.closeStdin(groupJid);
+      }
       logger.debug({ groupJid, taskId }, 'Container active, task queued');
       return;
     }
@@ -117,6 +122,18 @@ export class GroupQueue {
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+  }
+
+  /**
+   * Mark the container as idle-waiting (finished work, waiting for IPC input).
+   * If tasks are pending, preempt the idle container immediately.
+   */
+  notifyIdle(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.idleWaiting = true;
+    if (state.pendingTasks.length > 0) {
+      this.closeStdin(groupJid);
+    }
   }
 
   /**
@@ -163,6 +180,7 @@ export class GroupQueue {
   ): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
+    state.idleWaiting = false;
     state.pendingMessages = false;
     this.activeCount++;
 
@@ -196,6 +214,7 @@ export class GroupQueue {
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
+    state.idleWaiting = false;
     this.activeCount++;
 
     logger.debug(

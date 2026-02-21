@@ -121,6 +121,9 @@ async function runTask(
           // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
         }
+        if (!streamedOutput.result && streamedOutput.status === 'success') {
+          deps.queue.notifyIdle(task.chat_jid);
+        }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
         }
