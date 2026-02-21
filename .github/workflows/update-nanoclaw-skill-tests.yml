@@ -1,0 +1,23 @@
+name: Update NanoClaw Skill Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.claude/skills/update-nanoclaw/**'
+      - '.github/workflows/update-nanoclaw-skill-tests.yml'
+
+jobs:
+  update-nanoclaw-skill-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax check
+        run: |
+          for f in .claude/skills/update-nanoclaw/scripts/*.sh .claude/skills/update-nanoclaw/test-sandbox.sh; do
+            bash -n "$f"
+          done
+
+      - name: Run scenario tests
+        run: bash .claude/skills/update-nanoclaw/scripts/run-tests.sh
