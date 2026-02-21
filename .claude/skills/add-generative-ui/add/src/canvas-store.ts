@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 
 import pkg from 'fast-json-patch';
-const { applyPatch } = pkg;
 import type { Operation } from 'fast-json-patch';
 
-import { DATA_DIR } from '../../../../src/config.js';
+import { DATA_DIR } from './config.js';
+
+const { applyPatch } = pkg;
 
 export interface CanvasState {
   groupFolder: string;
@@ -61,6 +62,10 @@ export class CanvasStore {
 
   applyEventsFromJsonl(groupFolder: string, eventsJsonl: string): CanvasState {
     const events = parseCanvasEventsJsonl(eventsJsonl);
+    return this.applyEvents(groupFolder, events);
+  }
+
+  applyEvents(groupFolder: string, events: CanvasEvent[]): CanvasState {
     if (events.length === 0) {
       throw new CanvasEventError('No canvas events found in request body', 0);
     }

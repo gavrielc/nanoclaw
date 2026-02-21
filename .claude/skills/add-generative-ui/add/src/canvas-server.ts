@@ -3,8 +3,8 @@ import http, { IncomingMessage, ServerResponse } from 'http';
 import path from 'path';
 
 import { CanvasEventError, CanvasStore } from './canvas-store.js';
-import { logger } from '../../../../src/logger.js';
-import { RegisteredGroup } from '../../../../src/types.js';
+import { logger } from './logger.js';
+import { RegisteredGroup } from './types.js';
 
 interface GroupEntry {
   jid: string;
@@ -75,6 +75,28 @@ export class CanvasServer {
     return address.port;
   }
 
+  canvasUrl(): string {
+    const port = this.getPort() ?? this.port;
+    return `http://${this.host}:${port}/canvas`;
+  }
+
+  applyEvents(groupFolder: string, eventsJsonl: string): {
+    group: GroupEntry;
+    state: ReturnType<CanvasStore['getState']>;
+    canvasUrl: string;
+  } {
+    const group = this.findGroupByFolder(groupFolder);
+    if (!group) {
+      throw new CanvasEventError(`Unknown group folder: ${groupFolder}`, 0);
+    }
+    const state = this.canvasStore.applyEventsFromJsonl(groupFolder, eventsJsonl);
+    return {
+      group,
+      state,
+      canvasUrl: this.canvasUrl(),
+    };
+  }
+
   private async handleRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -104,7 +126,9 @@ export class CanvasServer {
           ? 'application/javascript; charset=utf-8'
           : extension === '.css'
             ? 'text/css; charset=utf-8'
-            : 'application/octet-stream';
+            : extension === '.html'
+              ? 'text/html; charset=utf-8'
+              : 'application/octet-stream';
 
       this.serveStaticFile(relative, contentType, res);
       return;
@@ -132,6 +156,7 @@ export class CanvasServer {
       this.sendJson(res, 200, {
         group,
         ...state,
+        canvasUrl: this.canvasUrl(),
       });
       return;
     }
@@ -153,6 +178,7 @@ export class CanvasServer {
         this.sendJson(res, 200, {
           group,
           ...state,
+          canvasUrl: this.canvasUrl(),
         });
       } catch (err) {
         if (err instanceof CanvasEventError) {

@@ -4,9 +4,9 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { CanvasServer } from '../../../../src/canvas-server.js';
-import { CanvasStore } from '../../../../src/canvas-store.js';
-import { RegisteredGroup } from '../../../../src/types.js';
+import { CanvasServer } from './canvas-server.js';
+import { CanvasStore } from './canvas-store.js';
+import { RegisteredGroup } from './types.js';
 
 const describeSocket =
   process.env.NANOCLAW_SOCKET_TESTS === '1' ? describe : describe.skip;
