@@ -92,7 +92,8 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
+      this.closeStdin(groupJid);
+      logger.debug({ groupJid, taskId }, 'Container active, task queued and close signal sent');
       return;
     }
 
