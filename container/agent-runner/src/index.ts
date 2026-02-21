@@ -20,7 +20,7 @@ import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
-  prompt: string;
+  prompt: string | object[];
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
@@ -49,7 +49,7 @@ interface SessionsIndex {
 
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | object[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -67,7 +67,7 @@ class MessageStream {
   private waiting: (() => void) | null = null;
   private done = false;
 
-  push(text: string): void {
+  push(text: string | object[]): void {
     this.queue.push({
       type: 'user',
       message: { role: 'user', content: text },
@@ -297,20 +297,20 @@ function shouldClose(): boolean {
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
-function drainIpcInput(): string[] {
+function drainIpcInput(): (string | object[])[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs.readdirSync(IPC_INPUT_DIR)
       .filter(f => f.endsWith('.json'))
       .sort();
 
-    const messages: string[] = [];
+    const messages: (string | object[])[] = [];
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
+        if (data.type === 'message' && data.text != null) {
           messages.push(data.text);
         }
       } catch (err) {
@@ -354,7 +354,7 @@ function waitForIpcMessage(): Promise<string | null> {
  * Also pipes IPC messages into the stream during the query.
  */
 async function runQuery(
-  prompt: string,
+  prompt: string | object[],
   sessionId: string | undefined,
   mcpServerPath: string,
   containerInput: ContainerInput,
