@@ -19,6 +19,7 @@ import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { CONTAINER_RUNTIME_BIN, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { inferChannelFromJid, tracePromptEvent } from './prompt-trace.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -254,6 +255,19 @@ export async function runContainerAgent(
     },
     'Spawning container agent',
   );
+  tracePromptEvent({
+    event: 'runner_input_prompt',
+    direction: 'internal',
+    groupFolder: group.folder,
+    chatJid: input.chatJid,
+    channel: inferChannelFromJid(input.chatJid),
+    sessionId: input.sessionId,
+    payload: input.prompt,
+    meta: {
+      isMain: input.isMain,
+      isScheduledTask: !!input.isScheduledTask,
+    },
+  });
 
   const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
@@ -318,6 +332,20 @@ export async function runContainerAgent(
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
+            tracePromptEvent({
+              event: 'runner_stream_output',
+              direction: 'internal',
+              groupFolder: group.folder,
+              chatJid: input.chatJid,
+              channel: inferChannelFromJid(input.chatJid),
+              sessionId: parsed.newSessionId || newSessionId || input.sessionId,
+              payload: parsed.result,
+              meta: {
+                status: parsed.status,
+                hasResult: parsed.result != null,
+                error: parsed.error,
+              },
+            });
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
@@ -325,6 +353,18 @@ export async function runContainerAgent(
             // so idle timers start even for "silent" query completions.
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
+            tracePromptEvent({
+              event: 'runner_stream_parse_error',
+              direction: 'internal',
+              groupFolder: group.folder,
+              chatJid: input.chatJid,
+              channel: inferChannelFromJid(input.chatJid),
+              sessionId: newSessionId || input.sessionId,
+              payload: jsonStr,
+              meta: {
+                error: err instanceof Error ? err.message : String(err),
+              },
+            });
             logger.warn(
               { group: group.name, error: err },
               'Failed to parse streamed output chunk',
@@ -387,6 +427,20 @@ export async function runContainerAgent(
       const duration = Date.now() - startTime;
 
       if (timedOut) {
+        tracePromptEvent({
+          event: 'runner_timeout',
+          direction: 'internal',
+          groupFolder: group.folder,
+          chatJid: input.chatJid,
+          channel: inferChannelFromJid(input.chatJid),
+          sessionId: newSessionId || input.sessionId,
+          meta: {
+            durationMs: duration,
+            configTimeoutMs: configTimeout,
+            exitCode: code,
+            hadStreamingOutput,
+          },
+        });
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const timeoutLog = path.join(logsDir, `container-${ts}.log`);
         fs.writeFileSync(timeoutLog, [
@@ -488,6 +542,19 @@ export async function runContainerAgent(
       logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
 
       if (code !== 0) {
+        tracePromptEvent({
+          event: 'runner_exit_error',
+          direction: 'internal',
+          groupFolder: group.folder,
+          chatJid: input.chatJid,
+          channel: inferChannelFromJid(input.chatJid),
+          sessionId: newSessionId || input.sessionId,
+          payload: stderr.slice(-2000),
+          meta: {
+            exitCode: code,
+            durationMs: duration,
+          },
+        });
         logger.error(
           {
             group: group.name,
@@ -542,6 +609,19 @@ export async function runContainerAgent(
         }
 
         const output: ContainerOutput = JSON.parse(jsonLine);
+        tracePromptEvent({
+          event: 'runner_output_legacy',
+          direction: 'internal',
+          groupFolder: group.folder,
+          chatJid: input.chatJid,
+          channel: inferChannelFromJid(input.chatJid),
+          sessionId: output.newSessionId || input.sessionId,
+          payload: output.result,
+          meta: {
+            status: output.status,
+            error: output.error,
+          },
+        });
 
         logger.info(
           {
@@ -555,6 +635,18 @@ export async function runContainerAgent(
 
         resolve(output);
       } catch (err) {
+        tracePromptEvent({
+          event: 'runner_output_parse_error',
+          direction: 'internal',
+          groupFolder: group.folder,
+          chatJid: input.chatJid,
+          channel: inferChannelFromJid(input.chatJid),
+          sessionId: newSessionId || input.sessionId,
+          payload: stdout.slice(-2000),
+          meta: {
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
         logger.error(
           {
             group: group.name,
@@ -575,6 +667,17 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      tracePromptEvent({
+        event: 'runner_spawn_error',
+        direction: 'internal',
+        groupFolder: group.folder,
+        chatJid: input.chatJid,
+        channel: inferChannelFromJid(input.chatJid),
+        sessionId: input.sessionId,
+        meta: {
+          error: err.message,
+        },
+      });
       logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
