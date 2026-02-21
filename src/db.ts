@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog, User } from './types.js';
 
 let db: Database.Database;
 
@@ -97,6 +97,22 @@ function createSchema(database: Database.Database): void {
     ).run(`${ASSISTANT_NAME}:%`);
   } catch {
     /* column already exists */
+  }
+
+  // Add users table if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        role TEXT NOT NULL DEFAULT 'member',
+        created_at TEXT NOT NULL
+      )
+    `);
+  } catch {
+    /* table already exists */
   }
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
@@ -579,6 +595,35 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- User accessors ---
+
+export function createUser(user: User): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO users (id, name, phone, email, role, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(user.id, user.name, user.phone, user.email, user.role, user.created_at);
+}
+
+export function getUserByPhone(phone: string): User | undefined {
+  return db
+    .prepare('SELECT * FROM users WHERE phone = ?')
+    .get(phone) as User | undefined;
+}
+
+export function getUserByEmail(email: string): User | undefined {
+  return db
+    .prepare('SELECT * FROM users WHERE email = ?')
+    .get(email) as User | undefined;
+}
+
+export function getAllUsers(): User[] {
+  return db.prepare('SELECT * FROM users ORDER BY created_at').all() as User[];
+}
+
+export function deleteUser(id: string): void {
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
 }
 
 // --- JSON migration ---
