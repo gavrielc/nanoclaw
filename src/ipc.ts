@@ -30,6 +30,7 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 const MAX_IPC_FILE_BYTES = 1024 * 1024; // 1 MiB safety cap
+const IPC_READ_CHUNK_BYTES = 64 * 1024;
 
 function listIpcJsonFiles(dir: string): string[] {
   return fs
@@ -57,11 +58,37 @@ export function readIpcJsonFile(filePath: string): unknown {
     if (stat.size > MAX_IPC_FILE_BYTES) {
       throw new Error(`IPC file exceeds ${MAX_IPC_FILE_BYTES} bytes`);
     }
-    const raw = fs.readFileSync(fd, 'utf-8');
+    const raw = readUtf8WithLimit(fd, MAX_IPC_FILE_BYTES);
     return JSON.parse(raw);
   } finally {
     fs.closeSync(fd);
   }
+}
+
+function readUtf8WithLimit(fd: number, maxBytes: number): string {
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  while (true) {
+    const remaining = maxBytes + 1 - total;
+    if (remaining <= 0) {
+      throw new Error(`IPC file exceeds ${maxBytes} bytes`);
+    }
+
+    const toRead = Math.min(IPC_READ_CHUNK_BYTES, remaining);
+    const buf = Buffer.allocUnsafe(toRead);
+    const bytesRead = fs.readSync(fd, buf, 0, toRead, null);
+    if (bytesRead === 0) break;
+
+    total += bytesRead;
+    if (total > maxBytes) {
+      throw new Error(`IPC file exceeds ${maxBytes} bytes`);
+    }
+
+    chunks.push(bytesRead === toRead ? buf : buf.subarray(0, bytesRead));
+  }
+
+  return Buffer.concat(chunks, total).toString('utf-8');
 }
 
 function quarantineIpcFile(

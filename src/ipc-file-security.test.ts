@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { readIpcJsonFile } from './ipc.js';
 
@@ -57,5 +57,26 @@ describe('readIpcJsonFile security', () => {
     fs.writeFileSync(file, payload);
 
     expect(() => readIpcJsonFile(file)).toThrow(/exceeds/i);
+  });
+
+  it('rejects file growth during read even if stat checks passed', () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, 'racy.json');
+    fs.writeFileSync(file, JSON.stringify({ msg: 'start' }));
+
+    const originalReadSync = fs.readSync.bind(fs);
+    let grew = false;
+    const readSyncSpy = vi.spyOn(fs, 'readSync').mockImplementation(
+      ((...args: unknown[]): number => {
+        if (!grew) {
+          grew = true;
+          fs.appendFileSync(file, 'x'.repeat(1024 * 1024));
+        }
+        return originalReadSync(...(args as Parameters<typeof fs.readSync>));
+      }) as typeof fs.readSync,
+    );
+
+    expect(() => readIpcJsonFile(file)).toThrow(/exceeds/i);
+    readSyncSpy.mockRestore();
   });
 });
