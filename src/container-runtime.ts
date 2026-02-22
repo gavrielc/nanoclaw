@@ -6,8 +6,34 @@ import { execSync } from 'child_process';
 
 import { logger } from './logger.js';
 
-/** The container runtime binary name. */
-export const CONTAINER_RUNTIME_BIN = 'docker';
+/** The container runtime binary name — docker if available, otherwise podman. */
+function detectContainerRuntime(): string {
+  try {
+    execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+    return 'docker';
+  } catch {
+    // docker not available or not running
+  }
+  try {
+    execSync('podman info', { stdio: 'pipe', timeout: 5000 });
+    return 'podman';
+  } catch {
+    // podman not available either
+  }
+  return 'docker'; // default, will fail at ensureContainerRuntimeRunning with a clear error
+}
+
+export const CONTAINER_RUNTIME_BIN = detectContainerRuntime();
+
+/**
+ * Returns extra `run` args required by the detected runtime.
+ * Currently no runtime requires extra args beyond the standard flags.
+ * Podman rootless write-access is handled by making bind-mounted state
+ * directories world-writable on the host (see mkdirForContainer).
+ */
+export function extraRunArgs(): string[] {
+  return [];
+}
 
 /** Returns CLI args for a readonly bind mount. */
 export function readonlyMountArgs(hostPath: string, containerPath: string): string[] {
@@ -39,10 +65,10 @@ export function ensureContainerRuntimeRunning(): void {
       '║  Agents cannot run without a container runtime. To fix:        ║',
     );
     console.error(
-      '║  1. Ensure Docker is installed and running                     ║',
+      '║  1. Ensure Docker or Podman is installed and running           ║',
     );
     console.error(
-      '║  2. Run: docker info                                           ║',
+      '║  2. Run: docker info  OR  podman info                         ║',
     );
     console.error(
       '║  3. Restart NanoClaw                                           ║',

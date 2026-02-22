@@ -59,6 +59,20 @@ else
   log "Docker: not found"
 fi
 
+# Check Podman
+PODMAN="not_found"
+if command -v podman >/dev/null 2>&1; then
+  if podman info >/dev/null 2>&1; then
+    PODMAN="running"
+    log "Podman: running"
+  else
+    PODMAN="installed_not_running"
+    log "Podman: installed but not running"
+  fi
+else
+  log "Podman: not found"
+fi
+
 # Check existing config
 HAS_ENV="false"
 if [ -f "$PROJECT_ROOT/.env" ]; then
@@ -94,6 +108,7 @@ NODE_VERSION: $NODE_VERSION
 NODE_OK: $NODE_OK
 APPLE_CONTAINER: $APPLE_CONTAINER
 DOCKER: $DOCKER
+PODMAN: $PODMAN
 HAS_ENV: $HAS_ENV
 HAS_AUTH: $HAS_AUTH
 HAS_REGISTERED_GROUPS: $HAS_REGISTERED_GROUPS

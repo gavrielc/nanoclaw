@@ -17,7 +17,7 @@ import {
 } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
-import { CONTAINER_RUNTIME_BIN, readonlyMountArgs, stopContainer } from './container-runtime.js';
+import { CONTAINER_RUNTIME_BIN, extraRunArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -56,6 +56,20 @@ interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
+}
+
+/**
+ * Create a directory and, when using rootless Podman, make it world-writable.
+ * In rootless Podman the container's node user (UID 1000) maps to a subuid-offset
+ * host UID (e.g. 100999), so it cannot write to directories owned by the host user
+ * unless the directory is world-writable. This only affects container-internal state
+ * directories (sessions, IPC, group workspace) which contain no sensitive data.
+ */
+function mkdirForContainer(dirPath: string): void {
+  fs.mkdirSync(dirPath, { recursive: true });
+  if (CONTAINER_RUNTIME_BIN === 'podman') {
+    fs.chmodSync(dirPath, 0o777);
+  }
 }
 
 function buildVolumeMounts(
@@ -108,7 +122,7 @@ function buildVolumeMounts(
     group.folder,
     '.claude',
   );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  mkdirForContainer(groupSessionsDir);
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(settingsFile, JSON.stringify({
@@ -146,9 +160,9 @@ function buildVolumeMounts(
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  mkdirForContainer(path.join(groupIpcDir, 'messages'));
+  mkdirForContainer(path.join(groupIpcDir, 'tasks'));
+  mkdirForContainer(path.join(groupIpcDir, 'input'));
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -186,11 +200,12 @@ function readSecrets(): Record<string, string> {
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const args: string[] = ['run', '-i', '--rm', '--name', containerName, ...extraRunArgs()];
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
-  // or when getuid is unavailable (native Windows without WSL).
+  // when getuid is unavailable (native Windows without WSL), or when Podman is
+  // in use (extraRunArgs() already injects --user 0:0 for rootless Podman).
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
@@ -220,7 +235,7 @@ export async function runContainerAgent(
   const startTime = Date.now();
 
   const groupDir = path.join(GROUPS_DIR, group.folder);
-  fs.mkdirSync(groupDir, { recursive: true });
+  mkdirForContainer(groupDir);
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
@@ -251,7 +266,7 @@ export async function runContainerAgent(
   );
 
   const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
-  fs.mkdirSync(logsDir, { recursive: true });
+  mkdirForContainer(logsDir);
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
