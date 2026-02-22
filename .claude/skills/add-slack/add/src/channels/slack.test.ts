@@ -117,7 +117,7 @@ function createMessageEvent(overrides: {
     channel: overrides.channel ?? 'C0123456789',
     channel_type: overrides.channelType ?? 'channel',
     user: overrides.user ?? 'U_USER_456',
-    text: overrides.text ?? 'Hello everyone',
+    text: 'text' in overrides ? overrides.text : 'Hello everyone',
     ts: overrides.ts ?? '1704067200.000000',
     thread_ts: overrides.threadTs,
     subtype: overrides.subtype,
