@@ -14,9 +14,17 @@
  * same room can also feed each other into a loop.
  *
  * This guard replaces that implicit downstream drop with an explicit one at
- * the bridge boundary: bot-authored inbound is DROPPED by default, with a
- * debug log — the safe default every Slack install wants. Human-authored
+ * the bridge boundary: bot-authored inbound is DROPPED by default, with an
+ * info log — the safe default every Slack install wants. Human-authored
  * messages are never touched.
+ *
+ * A person's message can carry a `bot_id` too: Slack stamps the posting app's
+ * on anything sent through its API with that person's user token. In a DM the
+ * guard asks the adapter who wrote it (see `setSlackAuthorIsBotResolver`): a
+ * person's account passes as that person, marked `sentViaApp`, and never
+ * reaches the policy's human observer, so an automation posting as a person
+ * cannot reset a hop counter. A bot account, an unknown or failed lookup, and
+ * every room that is not a DM keep the bot rule.
  *
  * Extension seam: an optional admission policy (`setBotInboundPolicy`) can
  * selectively admit bot traffic under its own rules — e.g. the
@@ -124,9 +132,11 @@ const authorIsBotResolvers = new Map<string, SlackAuthorIsBotResolver>();
 
 /**
  * Resolve ambiguous Slack authors through the adapter's user directory.
- * Some delegated file uploads carry both a human `user` and an app `bot_id`,
- * which Chat SDK currently serializes as `isBot: true` for the human user.
- * Missing lookups and errors stay bot-authored so the guard fails closed.
+ * Some delegated file uploads, and every message a person sends through an app
+ * with their user token, carry both a human `user` and an app `bot_id`, which
+ * Chat SDK currently serializes as `isBot: true` for the human user. Asked in
+ * DMs only. Missing lookups and errors stay bot-authored so the guard fails
+ * closed.
  */
 export function setSlackAuthorIsBotResolver(instanceKey: string, resolver: SlackAuthorIsBotResolver | null): void {
   if (resolver) authorIsBotResolvers.set(instanceKey, resolver);
@@ -161,10 +171,15 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
     ...setup,
     async onInbound(platformId: string, threadId: string | null, message: InboundMessage) {
       let bot = botAuthorOf(message);
-      const resolveAuthorIsBot = bot && /^[UW]/.test(bot.botId) && authorIsBotResolvers.get(instanceKey);
+      let sentViaApp = false;
+      const resolveAuthorIsBot =
+        bot && message.isGroup === false && /^[UW]/.test(bot.botId) && authorIsBotResolvers.get(instanceKey);
       if (bot && resolveAuthorIsBot) {
         try {
-          if ((await resolveAuthorIsBot(bot.botId)) === false) bot = null;
+          if ((await resolveAuthorIsBot(bot.botId)) === false) {
+            bot = null;
+            sentViaApp = true;
+          }
         } catch (err) {
           log.warn('slack-a2a-guard: author lookup failed — keeping bot classification', {
             instanceKey,
@@ -172,6 +187,13 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
             err,
           });
         }
+      }
+
+      if (sentViaApp) {
+        // A person wrote it and an app carried it: delivered as that person,
+        // marked, and kept from the policy's human observer.
+        (message.content as Record<string, unknown>).sentViaApp = true;
+        return setup.onInbound(platformId, threadId, message);
       }
 
       if (!bot) {
@@ -192,7 +214,7 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
       }
 
       if (!botInboundPolicy) {
-        log.debug('slack-a2a-guard: bot-authored inbound dropped — no admission policy installed', {
+        log.info('slack-a2a-guard: bot-authored inbound dropped — no admission policy installed', {
           instanceKey,
           platformId,
           botId: bot.botId,
@@ -215,7 +237,7 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
       }
 
       if (decision.action !== 'admit') {
-        log.debug('slack-a2a-guard: bot-authored inbound dropped by policy', {
+        log.info('slack-a2a-guard: bot-authored inbound dropped by policy', {
           instanceKey,
           platformId,
           botId: bot.botId,
