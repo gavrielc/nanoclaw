@@ -174,6 +174,10 @@ describe('wrapSlackBotGuard — default (no admission policy)', () => {
       expect.stringContaining('keeping bot classification'),
       expect.objectContaining({ instanceKey: 'slack', platformId: 'slack:D1' }),
     );
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining('bot-authored inbound dropped'),
+      expect.objectContaining({ botId: 'U123', authorLookup: 'failed' }),
+    );
   });
 
   it('keeps the bot rule for a person-via-app message outside a DM, without asking', async () => {
@@ -198,7 +202,7 @@ describe('wrapSlackBotGuard — default (no admission policy)', () => {
     expect(calls).toHaveLength(0);
     expect(log.info).toHaveBeenCalledWith(
       expect.stringContaining('bot-authored inbound dropped'),
-      expect.objectContaining({ botId: 'U0AGENT', platformId: 'slack:D1' }),
+      expect.objectContaining({ botId: 'U0AGENT', platformId: 'slack:D1', authorLookup: 'bot' }),
     );
   });
 
@@ -210,6 +214,10 @@ describe('wrapSlackBotGuard — default (no admission policy)', () => {
     await wrapped.onInbound('slack:D1', null, inDm(botMessage('U123')));
 
     expect(calls).toHaveLength(0);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining('bot-authored inbound dropped'),
+      expect.objectContaining({ botId: 'U123', authorLookup: 'unknown' }),
+    );
   });
 
   it('never asks about a bot id (B…) or another bridge instance', async () => {

@@ -15,8 +15,8 @@
  *
  * This guard replaces that implicit downstream drop with an explicit one at
  * the bridge boundary: bot-authored inbound is DROPPED by default, with an
- * info log — the safe default every Slack install wants. Human-authored
- * messages are never touched.
+ * info log — the safe default every Slack install wants. Messages a person
+ * types pass through unchanged.
  *
  * A person's message can carry a `bot_id` too: Slack stamps the posting app's
  * on anything sent through its API with that person's user token. In a DM the
@@ -170,17 +170,16 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
   return {
     ...setup,
     async onInbound(platformId: string, threadId: string | null, message: InboundMessage) {
-      let bot = botAuthorOf(message);
-      let sentViaApp = false;
+      const bot = botAuthorOf(message);
+      let authorLookup: 'person' | 'bot' | 'unknown' | 'failed' | undefined;
       const resolveAuthorIsBot =
         bot && message.isGroup === false && /^[UW]/.test(bot.botId) && authorIsBotResolvers.get(instanceKey);
       if (bot && resolveAuthorIsBot) {
         try {
-          if ((await resolveAuthorIsBot(bot.botId)) === false) {
-            bot = null;
-            sentViaApp = true;
-          }
+          const isBot = await resolveAuthorIsBot(bot.botId);
+          authorLookup = isBot === false ? 'person' : isBot ? 'bot' : 'unknown';
         } catch (err) {
+          authorLookup = 'failed';
           log.warn('slack-a2a-guard: author lookup failed — keeping bot classification', {
             instanceKey,
             platformId,
@@ -189,7 +188,7 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
         }
       }
 
-      if (sentViaApp) {
+      if (authorLookup === 'person') {
         // A person wrote it and an app carried it: delivered as that person,
         // marked, and kept from the policy's human observer.
         (message.content as Record<string, unknown>).sentViaApp = true;
@@ -218,6 +217,7 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
           instanceKey,
           platformId,
           botId: bot.botId,
+          authorLookup,
         });
         return;
       }
@@ -242,6 +242,7 @@ export function wrapSlackBotGuard(setup: ChannelSetup, instanceKey: string): Cha
           platformId,
           botId: bot.botId,
           reason: decision.reason,
+          authorLookup,
         });
         return;
       }

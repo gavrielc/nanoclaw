@@ -128,6 +128,16 @@ export async function resolveSlackConversation(
   }
 }
 
+/**
+ * The bot guard's DM author check: whether a Slack user is a bot, from the
+ * adapter's cached users.info. Null when the lookup finds no one, so the
+ * guard keeps the bot rule and the message stays dropped.
+ */
+export async function slackAuthorIsBot(slackAdapter: SlackAdapter, userId: string): Promise<boolean | null> {
+  const user = await slackAdapter.getUser(userId);
+  return user?.isBot ?? null;
+}
+
 /** Construction knobs for one Slack bot identity. */
 export interface SlackBridgeOptions {
   /**
@@ -175,10 +185,7 @@ export function createSlackBridge(options: SlackBridgeOptions = {}): ChannelAdap
     appToken,
     mode: appToken ? 'socket' : 'webhook',
   });
-  setSlackAuthorIsBotResolver(options.instanceKey ?? 'slack', async (userId) => {
-    const user = await slackAdapter.getUser(userId);
-    return user?.isBot ?? null;
-  });
+  setSlackAuthorIsBotResolver(options.instanceKey ?? 'slack', (userId) => slackAuthorIsBot(slackAdapter, userId));
   const bridge = createChatSdkBridge({
     adapter: slackAdapter,
     extractRawText: extractSlackRawText,
