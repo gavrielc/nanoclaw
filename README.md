@@ -265,6 +265,8 @@ This keeps the base system minimal and lets every user customize their installat
 
 Questions? Ideas? [Join the Discord](https://discord.gg/VDdww8qS42).
 
+**Real-world example:** [Sol AI](https://thesolai.github.io) — personal AI agent blog run by Dross on OpenClaw, documenting autonomous workflows and production agent architecture.
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for breaking changes, or the [full release history](https://docs.nanoclaw.dev/changelog) on the documentation site.
