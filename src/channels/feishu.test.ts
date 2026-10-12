@@ -3168,6 +3168,22 @@ describe('FeishuChannel', () => {
       });
     });
 
+    it('跑过工具但 steps 已折叠成只剩 💭 旁白时，仍转完成卡片而非删除', async () => {
+      injectProgressCard('msg_card_5', [{ title: '💭 先拉一遍状态' }]);
+      (channel as any).progressCards.get(jid).allSteps.push({
+        title: '⚙️ Bash: ssh xigou ls',
+        detail: undefined,
+      });
+      mockPatch.mockResolvedValueOnce({});
+
+      await channel.cleanupProgressCard(jid);
+
+      expect(mockPatch).toHaveBeenCalledWith(
+        expect.objectContaining({ path: { message_id: 'msg_card_5' } }),
+      );
+      expect(mockMessageDelete).not.toHaveBeenCalled();
+    });
+
     it('无 messageId 时静默返回不调 API', async () => {
       injectProgressCard('', [{ title: '⚙️ Bash: ls' }]);
 

@@ -26,10 +26,17 @@ const MAX_SPEAK_CHARS = 1024; // 单条播报上限，太长 TTS 念不动也没
 // qwen3.7-max 默认开思考时摘要要 23-32s（必超时降级），关思考后 1.5s 出结果、质量更好。
 // 超时给足 15s 兜底偶发慢。
 const SUMMARIZE_TIMEOUT_MS = 15000;
-// 摘要专用模型（可 env 覆盖）。默认 qwen3.7-max 并关闭思考（enable_thinking=false）：
-// 实测非流式 1.7s、流式首字 0.5s，文案比 qwen-turbo 更准更干净、无残留符号。
+// 摘要专用模型（.env / env 可覆盖）。默认 qwen3.8-max 并关闭思考（enable_thinking=false）：
+// 2026-10-12 实测关思考非流式 1.0s（3.7-max 1.25s），文案一致。
 // 关思考是关键——开思考会慢到 20s+ 必超时降级发原文。
-const VOICE_SUMMARY_MODEL = process.env.VOICE_SUMMARY_MODEL || 'qwen3.7-max';
+// 注意 .env 不会注入 process.env，必须走 readEnvFile 才生效。
+function voiceSummaryModel(): string {
+  return (
+    readEnvFile(['VOICE_SUMMARY_MODEL']).VOICE_SUMMARY_MODEL ||
+    process.env.VOICE_SUMMARY_MODEL ||
+    'qwen3.8-max'
+  );
+}
 const PUSH_TIMEOUT_MS = 3000;
 // 灰度/回滚开关：VOICE_SUMMARY_VERSION=off 跳过 LLM 直接播原文截断，默认 v3
 // 运行时读 env 而非模块级 const，方便热切换和测试
@@ -295,7 +302,7 @@ async function summarizeForSpeech(
       : text;
     const response = await client.chat.completions.create(
       {
-        model: VOICE_SUMMARY_MODEL,
+        model: voiceSummaryModel(),
         messages: [
           { role: 'system', content: prompt },
           { role: 'user', content: userContent },

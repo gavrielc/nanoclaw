@@ -1694,8 +1694,10 @@ export class FeishuChannel implements Channel {
     }
 
     try {
+      // 用 allSteps（全量记录）判断：steps 已被 turn_end 折叠，跑过工具的卡片
+      // 可能只剩一行 💭 旁白，按 steps 判会把用户看过的过程卡误删成"撤回"
       const hasVisibleProcess =
-        progressEntry.steps.some((s) => !s.title.startsWith('💭')) ||
+        progressEntry.allSteps.some((s) => !s.title.startsWith('💭')) ||
         !!progressEntry.thinkingText;
       if (!hasVisibleProcess) {
         if (progressEntry.sessionId) deleteSession(progressEntry.sessionId);
