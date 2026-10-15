@@ -388,8 +388,8 @@ describe('add-dial-tool: registering the host credential with OneCLI', () => {
   it('stores the key through the script and captures only its secret id', () => {
     const d = directives.find((x) => x.kind === 'run' && x.body.join('\n') === CMD.credential)!;
     expect(d.attrs.capture).toBe('dial_secret');
-    expect(new RegExp(d.attrs.validate!).test('sec-1')).toBe(true);
-    expect(new RegExp(d.attrs.validate!).test('sk_live key')).toBe(false);
+    expect(new RegExp(String(d.attrs.validate)).test('sec-1')).toBe(true);
+    expect(new RegExp(String(d.attrs.validate)).test('sk_live key')).toBe(false);
     expect(CMD.credential).toContain('pnpm exec tsx .claude/skills/add-dial-tool/scripts/dial-secret.ts');
     expect(CMD.credential).not.toMatch(/--value|apiKey|auth\.v1\.json/);
   });
