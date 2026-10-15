@@ -207,8 +207,8 @@ export interface DeclineAndNotifyInput {
   dedupeKey?: string;
   /** Override the sender-facing decline copy. */
   declineText?: string;
-  /** Override the owner-facing FYI copy. */
-  fyiText?: string;
+  /** Override the owner-facing FYI copy; null sends no FYI. */
+  fyiText?: string | null;
 }
 
 /**
@@ -273,6 +273,10 @@ export async function declineAndNotify(input: DeclineAndNotifyInput): Promise<vo
     );
   } catch (err) {
     log.warn('decline_notify: decline delivery failed', { messagingGroupId, err });
+  }
+  if (input.fyiText === null) {
+    log.info('decline_notify handled — owner FYI not requested', { messagingGroupId, senderIdentity });
+    return;
   }
 
   // (b) Owner FYI — informational one-liner through the same approver-DM

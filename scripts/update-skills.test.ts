@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { detectInstalledSkills, refreshInstalledSkills } from './update-skills.js';
 
@@ -53,6 +53,15 @@ describe('installed skill detection', () => {
 });
 
 describe('registry refresh end to end', () => {
+  // A registry override in the caller's environment would redirect these fixtures.
+  beforeEach(() => {
+    vi.stubEnv('NANOCLAW_REGISTRY_REMOTE', undefined);
+    vi.stubEnv('NANOCLAW_CHANNELS_REMOTE', undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('uses the container-pinned Bun through pnpm when Bun is unavailable on the host', async () => {
     const root = temp('nanoclaw-skills-bun-fallback-');
     write(root, 'src/channels/index.ts', "import './cli.js';\n");
@@ -128,6 +137,49 @@ describe('registry refresh end to end', () => {
     expect(report.remotes).toEqual({ channels: 'upstream' });
     expect(report.skills).toMatchObject([{ name: 'demo', status: 'refreshed' }]);
     expect(fs.readFileSync(path.join(install, 'src/channels/demo.ts'), 'utf8')).toContain('upstream-current');
+  });
+
+  it('refreshes an included gateway skill that detection cannot see, code only', async () => {
+    const root = temp('nanoclaw-skills-gateway-');
+    write(root, 'src/gateway-providers/installed.ts', '// barrel\n');
+    write(root, '.claude/skills/add-demo-gw/payload/demo-gw.ts', 'export const v = 2;\n');
+    write(root, 'src/gateway-providers/demo-gw.ts', 'export const v = 1;\n');
+    write(
+      root,
+      '.claude/skills/add-demo-gw/SKILL.md',
+      [
+        '# Apply',
+        '```nc:copy',
+        'payload/demo-gw.ts -> src/gateway-providers/demo-gw.ts',
+        '```',
+        '```nc:append to:src/gateway-providers/installed.ts',
+        "import './demo-gw.js';",
+        '```',
+        '```nc:dep manager:pnpm',
+        'demo-sdk@1.0.0',
+        '```',
+        '```nc:run effect:external',
+        'echo setup',
+        '```',
+      ].join('\n'),
+    );
+    const commands: string[] = [];
+    const gateway = { name: 'demo-gw', skillName: 'add-demo-gw', kind: 'gateway' as const };
+
+    const report = await refreshInstalledSkills(root, ['add-demo-gw'], {
+      include: [gateway],
+      exec: (command) => {
+        commands.push(command);
+      },
+    });
+
+    expect(report.success, JSON.stringify(report, null, 2)).toBe(true);
+    expect(report.skills).toMatchObject([{ ...gateway, status: 'refreshed' }]);
+    expect(fs.readFileSync(path.join(root, 'src/gateway-providers/demo-gw.ts'), 'utf8')).toContain('v = 2');
+    expect(fs.readFileSync(path.join(root, 'src/gateway-providers/installed.ts'), 'utf8')).toContain(
+      "import './demo-gw.js';",
+    );
+    expect(commands).toEqual(['pnpm add demo-sdk@1.0.0']);
   });
 
   it('returns a blocking structured failure for prose-only installed skills', async () => {

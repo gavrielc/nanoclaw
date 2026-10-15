@@ -42,8 +42,8 @@ export const REJECT_WITH_REASON_VALUE = 'reject_with_reason';
 /**
  * Three-button approval UI. Plain Reject is the instant fast path; "Reject with
  * reason…" opts into the reason-capture flow. Shared by every module approval
- * (create_agent, install_packages, add_mcp_server); OneCLI credential cards
- * keep their own two-button set in onecli-approvals.ts.
+ * (create_agent, install_packages, add_mcp_server). Gateway approvals use the
+ * core gateway coordinator's two-button decision flow.
  */
 const APPROVAL_OPTIONS: RawOption[] = [
   { label: 'Approve', selectedLabel: '✅ Approved', value: 'approve', style: 'primary' },
@@ -188,6 +188,14 @@ function channelTypeOf(userId: string): string {
   return idx < 0 ? '' : userId.slice(0, idx);
 }
 
+/**
+ * A card joins the requester's thread only when it lands in the requester's own
+ * chat; a thread id from any other chat means nothing in the approver's DM.
+ */
+export function approvalCardThread(session: Session, target: MessagingGroup): string | null {
+  return session.messaging_group_id === target.id ? session.thread_id : null;
+}
+
 // ── Request API ──
 
 /** Send a system chat to the agent's session. Used by callers and by the response handler. */
@@ -270,7 +278,7 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
       await adapter.deliver(
         target.messagingGroup.channel_type,
         target.messagingGroup.platform_id,
-        null,
+        approvalCardThread(session, target.messagingGroup),
         'chat-sdk',
         JSON.stringify({
           type: 'ask_question',
