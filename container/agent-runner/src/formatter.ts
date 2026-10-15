@@ -451,6 +451,8 @@ export function extractAttachments(messages: MessageInRow[]): PromptAttachment[]
       // provider; the prompt text still describes it, so skip it here.
       if (!a.localPath && !a.url) continue;
       out.push({
+        // The host stages a message's files under `inbox/<message id>/`.
+        sourceMessageId: msg.id,
         // `name` first: the host validates and rewrites it (session-manager
         // extractAttachmentFiles), while `filename` arrives raw from the
         // channel — same precedence formatAttachments uses.

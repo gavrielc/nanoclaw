@@ -42,7 +42,13 @@ describe('extractAttachments', () => {
       attachments: [{ type: 'image', name: 'cat.png', mimeType: 'image/png', localPath: 'inbox/m1/cat.png' }],
     });
     expect(extractAttachments(getPendingMessages())).toEqual([
-      { filename: 'cat.png', mime: 'image/png', path: '/workspace/inbox/m1/cat.png', url: undefined },
+      {
+        sourceMessageId: 'm1',
+        filename: 'cat.png',
+        mime: 'image/png',
+        path: '/workspace/inbox/m1/cat.png',
+        url: undefined,
+      },
     ]);
   });
 
@@ -60,16 +66,22 @@ describe('extractAttachments', () => {
       text: 'b',
       attachments: [{ name: 'b.pdf', mimeType: 'application/pdf', localPath: 'inbox/m2/b.pdf' }],
     });
-    expect(extractAttachments(getPendingMessages()).map((a) => a.path)).toEqual([
-      '/workspace/inbox/m1/a.png',
-      '/workspace/inbox/m2/b.pdf',
+    expect(extractAttachments(getPendingMessages()).map((a) => [a.sourceMessageId, a.path])).toEqual([
+      ['m1', '/workspace/inbox/m1/a.png'],
+      ['m2', '/workspace/inbox/m2/b.pdf'],
     ]);
   });
 
   it('keeps a url-only attachment (no staged file) so the provider can decide', () => {
     insertChat('m1', { text: 'link', attachments: [{ name: 'remote.png', url: 'https://example.test/remote.png' }] });
     expect(extractAttachments(getPendingMessages())).toEqual([
-      { filename: 'remote.png', mime: undefined, path: undefined, url: 'https://example.test/remote.png' },
+      {
+        sourceMessageId: 'm1',
+        filename: 'remote.png',
+        mime: undefined,
+        path: undefined,
+        url: 'https://example.test/remote.png',
+      },
     ]);
   });
 
@@ -88,6 +100,7 @@ describe('extractAttachments', () => {
     });
     expect(extractAttachments(getPendingMessages())).toEqual([
       {
+        sourceMessageId: 'm1',
         filename: 'host-sanitized.png',
         mime: 'image/png',
         path: '/workspace/inbox/m1/host-sanitized.png',
@@ -102,7 +115,13 @@ describe('extractAttachments', () => {
       attachments: [{ name: 'doc.pdf', mime: 'application/pdf', localPath: 'inbox/m1/doc.pdf' }],
     });
     expect(extractAttachments(getPendingMessages())).toEqual([
-      { filename: 'doc.pdf', mime: 'application/pdf', path: '/workspace/inbox/m1/doc.pdf', url: undefined },
+      {
+        sourceMessageId: 'm1',
+        filename: 'doc.pdf',
+        mime: 'application/pdf',
+        path: '/workspace/inbox/m1/doc.pdf',
+        url: undefined,
+      },
     ]);
   });
 
@@ -127,7 +146,13 @@ describe('extractAttachments', () => {
       attachments = extractAttachments(getPendingMessages());
     }).not.toThrow();
     expect(attachments).toEqual([
-      { filename: 'cat.png', mime: 'image/png', path: '/workspace/inbox/m1/cat.png', url: undefined },
+      {
+        sourceMessageId: 'm1',
+        filename: 'cat.png',
+        mime: 'image/png',
+        path: '/workspace/inbox/m1/cat.png',
+        url: undefined,
+      },
     ]);
   });
 

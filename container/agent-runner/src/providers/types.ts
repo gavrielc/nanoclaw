@@ -103,6 +103,11 @@ export interface ProviderOptions {
  * real file part, so a provider that ignores it loses nothing.
  */
 export interface PromptAttachment {
+  /**
+   * Id of the inbound message that carried it. The host stages files under
+   * `inbox/<id>/`, so a provider can check that `path` belongs to this message.
+   */
+  sourceMessageId: string;
   /** Display name, when the channel gave one. */
   filename?: string;
   /** MIME type as reported by the channel. Absent for adapters that omit it. */
