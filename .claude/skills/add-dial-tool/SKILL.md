@@ -196,7 +196,8 @@ this adds Dial as a layer on top of it; on one that builds its own it rebuilds:
 
 Read the API key from the host auth file — the single source of truth, written
 by `dial auth login` / `dial auth verify-otp` — and store it in the OneCLI vault
-of the gateway NanoClaw uses, for `api.getdial.ai`, through
+of the gateway the `onecli` CLI writes to (the one the check above read), for
+`api.getdial.ai`, through
 [scripts/dial-secret.ts](scripts/dial-secret.ts). It always writes the value:
 an existing "Dial API" secret may hold a previous account's key (re-onboarding,
 switching accounts, or rotating the key). The existing entry is updated in place,
@@ -216,17 +217,17 @@ group id, created on the group's first spawn. For each agent group of this
 install: a **chosen** group gets the Dial secret attached, and a chosen group
 that has never spawned gets its OneCLI agent created now, holding the Dial key
 (NanoClaw adds its model credential on its first spawn; if the group spawns
-meanwhile, its agent is read back instead). Every other group, and OneCLI's own
-default agent, has the Dial secret detached, which re-narrows an upgraded install
-where the 1.44 conversion gave the key to every agent; a group with no OneCLI
-agent is left without one. Attaching and detaching are idempotent and touch only this secret,
-so each agent's other grants stay. Agents of another install on the same gateway
-are left alone. It runs even when an earlier step such as the image build failed, so
+meanwhile, its agent is read back instead). Every other group has the Dial
+secret detached first, so a failed attach never leaves an unchosen group holding
+the key; this also re-narrows an upgraded install where the 1.44 conversion gave
+the key to every agent. A group with no OneCLI agent is left without one. Attaching and detaching are idempotent and touch only this secret,
+so each agent's other grants stay. Agents that are not this install's groups
+(another install's, or OneCLI's default agent) are left alone. It runs even when an earlier step such as the image build failed, so
 a replaced key is never left attached to nobody. The step prints `allowed:` or
 `withheld:` per group:
 
 ```nc:run effect:external
-A=$(printf '%s' '{{dial_scope}}' | tr -d ' '); S='{{dial_secret}}'; G=$(ncl groups list --json --limit 100000) || { echo "could not list agent groups — is the NanoClaw host running?" >&2; exit 1; }; AG=$(onecli agents list --max 0) || { echo "could not list OneCLI agents" >&2; exit 1; }; for aid in $(printf '%s' "$AG" | jq -r '.data[] | select(.isDefault == true) | .id'); do onecli agents grants detach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not detach the Dial secret from OneCLI's default agent" >&2; exit 1; }; done; printf '%s' "$G" | jq -r '.data[] | "\(.id)\t\(.name)"' | while IFS="$(printf '\t')" read -r gid gname; do aid=$(printf '%s' "$AG" | jq -r --arg g "$gid" '.data[] | select(.identifier==$g) | .id'); case ",$A," in *,all,*|*,"$gid",*) [ -n "$aid" ] || aid=$(onecli agents create --name "$gname" --identifier "$gid" 2>/dev/null | jq -r '.id // empty'); [ -n "$aid" ] || aid=$(onecli agents list --max 0 | jq -r --arg g "$gid" '.data[] | select(.identifier==$g) | .id'); [ -n "$aid" ] || { echo "could not create an OneCLI agent for $gname ($gid)" >&2; exit 1; }; onecli agents grants attach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not attach the Dial secret to $gname ($gid)" >&2; exit 1; }; echo "allowed:$gid";; *) if [ -n "$aid" ]; then onecli agents grants detach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not detach the Dial secret from $gname ($gid)" >&2; exit 1; }; fi; echo "withheld:$gid";; esac; done
+A=$(printf '%s' '{{dial_scope}}' | tr -d ' '); S='{{dial_secret}}'; G=$(ncl groups list --json --limit 100000) || { echo "could not list agent groups — is the NanoClaw host running?" >&2; exit 1; }; AG=$(onecli agents list --max 0) || { echo "could not list OneCLI agents" >&2; exit 1; }; L=$(printf '%s' "$G" | jq -r '.data[] | "\(.id)\t\(.name)"'); printf '%s\n' "$L" | while IFS="$(printf '\t')" read -r gid gname; do [ -n "$gid" ] || continue; case ",$A," in *,all,*|*,"$gid",*) ;; *) aid=$(printf '%s' "$AG" | jq -r --arg g "$gid" '.data[] | select(.identifier==$g) | .id'); if [ -n "$aid" ]; then onecli agents grants detach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not detach the Dial secret from $gname ($gid)" >&2; exit 1; }; fi; echo "withheld:$gid";; esac; done || exit 1; printf '%s\n' "$L" | while IFS="$(printf '\t')" read -r gid gname; do [ -n "$gid" ] || continue; case ",$A," in *,all,*|*,"$gid",*) aid=$(printf '%s' "$AG" | jq -r --arg g "$gid" '.data[] | select(.identifier==$g) | .id'); [ -n "$aid" ] || aid=$(onecli agents create --name "$gname" --identifier "$gid" 2>/dev/null | jq -r '.id // empty'); [ -n "$aid" ] || aid=$(onecli agents list --max 0 | jq -r --arg g "$gid" '.data[] | select(.identifier==$g) | .id'); [ -n "$aid" ] || { echo "could not create an OneCLI agent for $gname ($gid)" >&2; exit 1; }; onecli agents grants attach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not attach the Dial secret to $gname ($gid)" >&2; exit 1; }; echo "allowed:$gid";; esac; done
 ```
 
 ## Hand the tool to running agents
@@ -282,7 +283,8 @@ Re-run this skill: it rewrites the secret with the key the host is signed in
 with and attaches it to the agents you choose.
 
 **An agent you left out can still use Dial.** It holds the key from before: an
-agent of another install on the same gateway is never touched. Detach it by hand with
+agent that is not one of this install's groups (another install on the same
+gateway, or OneCLI's default agent) is never touched. Detach it by hand with
 `onecli agents grants detach-secret --id <agent-id> --secret-id <dial-secret-id>`.
 
 **`dial: command not found` inside a container.** The image predates the manifest

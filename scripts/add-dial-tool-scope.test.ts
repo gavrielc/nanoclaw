@@ -221,9 +221,7 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(stdout).toContain('withheld:ag-support');
     expect(held()['oc-sales']).toEqual(['sec-anthropic', 'sec-dial']);
     expect(agentIds()).not.toContain('oc-ag-support');
-    expect(callLines().filter((l) => l.includes('oc-default'))).toEqual([
-      'onecli agents grants detach-secret --id oc-default --secret-id sec-dial',
-    ]);
+    expect(callLines().some((l) => l.includes('oc-default'))).toBe(false);
   });
 
   it('creates the OneCLI agent for a chosen group that never ran, holding the key (not empty)', () => {
@@ -263,19 +261,25 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     const { status } = scope('ag-sales');
     expect(status).toBe(0);
     expect(held()).toEqual({
-      'oc-default': [],
+      'oc-default': ['sec-dial'],
       'oc-sales': ['sec-anthropic', 'sec-dial'],
       'oc-support': ['sec-anthropic'],
     });
   });
 
-  it('detaches the key from unchosen groups and OneCLI’s default agent, never from another install’s agents', () => {
+  it('detaches the key from unchosen groups, never from OneCLI’s default agent or another install’s agents', () => {
     fs.rmSync(root, { recursive: true, force: true });
     setup({
       agents: [
         ...DEFAULT_AGENTS,
         { id: 'oc-support', identifier: 'ag-support', name: 'Support', secretMode: 'selective' },
-        { id: 'oc-foreign', identifier: 'ag-other-install', name: 'Elsewhere', secretMode: 'selective' },
+        {
+          id: 'oc-foreign',
+          identifier: 'ag-other-install',
+          name: 'Elsewhere',
+          secretMode: 'selective',
+          isDefault: true,
+        },
       ],
       grants: {
         'oc-default': ['sec-dial'],
@@ -287,12 +291,31 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     const { status } = scope('ag-sales');
     expect(status).toBe(0);
     expect(held()).toMatchObject({
-      'oc-default': [],
+      'oc-default': ['sec-dial'],
       'oc-sales': ['sec-dial'],
       'oc-support': [],
       'oc-foreign': ['sec-dial'],
     });
-    expect(callLines().some((l) => l.includes('oc-foreign'))).toBe(false);
+    expect(callLines().some((l) => l.includes('oc-foreign') || l.includes('oc-default'))).toBe(false);
+  });
+
+  it('withholds from unchosen groups before attaching, so a failed attach leaves no unchosen group with the key', () => {
+    fs.rmSync(root, { recursive: true, force: true });
+    setup({
+      agents: [
+        ...DEFAULT_AGENTS,
+        { id: 'oc-support', identifier: 'ag-support', name: 'Support', secretMode: 'selective' },
+      ],
+      grants: { 'oc-sales': ['sec-dial'], 'oc-support': ['sec-dial'] },
+    });
+    const real = fs.readFileSync(path.join(bin, 'onecli'), 'utf8').split('\n').slice(2).join('\n');
+    writeStub(
+      'onecli',
+      `if [ "$1 $2 $3" = "agents grants attach-secret" ]; then echo "agent limit reached" >&2; exit 1; fi\n${real}`,
+    );
+    const { status } = scope('ag-sales');
+    expect(status).not.toBe(0);
+    expect(held()['oc-support']).toEqual([]);
   });
 
   it('reads back the agent of a chosen group that spawned meanwhile (create answers 409) and carries on', () => {
