@@ -25,7 +25,8 @@ rm -rf container/skills/dial-cli
 ## 3. Remove the OneCLI credential
 
 Deleting the Dial secret revokes it for every agent, because its grants go with
-it; no agent's other grants are touched. This deletes every Dial secret the skill
+it; no agent's other grants are touched. On a gateway shared with another
+install, that install loses Dial too. This deletes every Dial secret the skill
 wrote (a name containing "dial", scoped to `api.getdial.ai`):
 
 ```bash

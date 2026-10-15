@@ -53,7 +53,7 @@ const CMD = {
   installCli: one(isRun('external', 'npm install -g @getdial/cli')),
   login: one(isRun('external', 'dial auth login {{owner_email}}')),
   verifyOtp: one(isRun('external', 'dial auth verify-otp --code')),
-  credential: one(isRun('external', 'onecli secrets create')),
+  credential: one(isRun('external', 'dial-secret.ts')),
   attach: one(isRun('external', 'grants attach-secret')),
 };
 
@@ -62,7 +62,7 @@ let bin: string;
 let state: string;
 let calls: string;
 
-type OcAgent = { id: string; identifier: string; name: string; secretMode: 'all' | 'selective' };
+type OcAgent = { id: string; identifier: string; name: string; secretMode: 'all' | 'selective'; isDefault?: boolean };
 
 const GROUPS = [
   { id: 'ag-sales', name: 'Sales' },
@@ -71,7 +71,7 @@ const GROUPS = [
 // OneCLI knows Sales already (holding its model key); Support has no OneCLI
 // agent yet (never spawned). Tests override per case.
 const DEFAULT_AGENTS: OcAgent[] = [
-  { id: 'oc-default', identifier: 'default', name: 'Default Agent', secretMode: 'selective' },
+  { id: 'oc-default', identifier: 'default', name: 'Default Agent', secretMode: 'selective', isDefault: true },
   { id: 'oc-sales', identifier: 'ag-sales', name: 'Sales', secretMode: 'selective' },
 ];
 const DIAL = { id: 'sec-dial', name: 'Dial API', hostPattern: 'api.getdial.ai' };
@@ -157,6 +157,7 @@ function sh(
     .replaceAll('{{dial_agents}}', agents)
     .replaceAll('{{dial_scope}}', agents.replaceAll(' ', ''))
     .replaceAll('{{onecli_gateway}}', '1.45.0')
+    .replaceAll('{{dial_secret}}', 'sec-dial')
     .replaceAll('{{dial_ua}}', 'nanoclaw/test')
     .replaceAll('{{owner_email}}', 'operator@example.com')
     .replaceAll('{{otp}}', '123456');
@@ -183,10 +184,7 @@ function sh(
 }
 
 /** The checked selection, then the credential and attach steps, as the document orders them. */
-function scope(
-  agents: string,
-  steps = [CMD.credential, CMD.attach],
-): { stdout: string; stderr: string; status: number } {
+function scope(agents: string, steps = [CMD.attach]): { stdout: string; stderr: string; status: number } {
   const guard = sh(CMD.scopeGuard, agents);
   if (guard.status !== 0) return guard;
   const checked = guard.stdout.trim();
@@ -221,29 +219,31 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(status).toBe(0);
     expect(stdout).toContain('allowed:ag-sales');
     expect(stdout).toContain('withheld:ag-support');
-    expect(held()['oc-sales']).toEqual(['sec-anthropic', 'sec-new']);
+    expect(held()['oc-sales']).toEqual(['sec-anthropic', 'sec-dial']);
     expect(agentIds()).not.toContain('oc-ag-support');
-    expect(callLines().some((l) => l.includes('oc-default'))).toBe(false);
+    expect(callLines().filter((l) => l.includes('oc-default'))).toEqual([
+      'onecli agents grants detach-secret --id oc-default --secret-id sec-dial',
+    ]);
   });
 
   it('creates the OneCLI agent for a chosen group that never ran, holding the key (not empty)', () => {
     const { status } = scope('ag-support');
     expect(status).toBe(0);
     expect(callLines()).toContain('onecli agents create --name Support --identifier ag-support');
-    expect(held()['oc-ag-support']).toEqual(['sec-new']);
+    expect(held()['oc-ag-support']).toEqual(['sec-dial']);
     expect(held()['oc-sales']).toEqual(['sec-anthropic']);
   });
 
   it('`all` gives every current group the key; `none` gives it to nobody and creates nothing', () => {
     expect(scope('all').status).toBe(0);
-    expect(held()['oc-sales']).toContain('sec-new');
-    expect(held()['oc-ag-support']).toEqual(['sec-new']);
+    expect(held()['oc-sales']).toContain('sec-dial');
+    expect(held()['oc-ag-support']).toEqual(['sec-dial']);
     fs.rmSync(root, { recursive: true, force: true });
     setup();
     const { stdout, status } = scope('none');
     expect(status).toBe(0);
     expect(stdout).not.toContain('allowed:');
-    expect(Object.values(held()).flat()).not.toContain('sec-new');
+    expect(Object.values(held()).flat()).not.toContain('sec-dial');
     expect(callLines().some((l) => l.startsWith('onecli agents create'))).toBe(false);
   });
 
@@ -262,11 +262,14 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     });
     const { status } = scope('ag-sales');
     expect(status).toBe(0);
-    expect(held()['oc-sales']).toEqual(['sec-anthropic', 'sec-new']);
-    expect(held()['oc-support']).toEqual(['sec-anthropic']);
+    expect(held()).toEqual({
+      'oc-default': [],
+      'oc-sales': ['sec-anthropic', 'sec-dial'],
+      'oc-support': ['sec-anthropic'],
+    });
   });
 
-  it('detaches the key from unchosen groups even when the secret itself is kept, and never touches other agents', () => {
+  it('detaches the key from unchosen groups and OneCLI’s default agent, never from another install’s agents', () => {
     fs.rmSync(root, { recursive: true, force: true });
     setup({
       agents: [
@@ -274,12 +277,41 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
         { id: 'oc-support', identifier: 'ag-support', name: 'Support', secretMode: 'selective' },
         { id: 'oc-foreign', identifier: 'ag-other-install', name: 'Elsewhere', secretMode: 'selective' },
       ],
-      grants: { 'oc-sales': ['sec-dial'], 'oc-support': ['sec-dial'], 'oc-foreign': ['sec-dial'] },
+      grants: {
+        'oc-default': ['sec-dial'],
+        'oc-sales': ['sec-dial'],
+        'oc-support': ['sec-dial'],
+        'oc-foreign': ['sec-dial'],
+      },
     });
-    const { status } = scope('ag-sales', [CMD.attach]);
+    const { status } = scope('ag-sales');
     expect(status).toBe(0);
-    expect(held()).toMatchObject({ 'oc-sales': ['sec-dial'], 'oc-support': [], 'oc-foreign': ['sec-dial'] });
-    expect(callLines().some((l) => l.includes('oc-foreign') || l.includes('oc-default'))).toBe(false);
+    expect(held()).toMatchObject({
+      'oc-default': [],
+      'oc-sales': ['sec-dial'],
+      'oc-support': [],
+      'oc-foreign': ['sec-dial'],
+    });
+    expect(callLines().some((l) => l.includes('oc-foreign'))).toBe(false);
+  });
+
+  it('reads back the agent of a chosen group that spawned meanwhile (create answers 409) and carries on', () => {
+    const real = fs.readFileSync(path.join(bin, 'onecli'), 'utf8').split('\n').slice(2).join('\n');
+    // The host creates the agent first; the skill's create then fails as a duplicate.
+    writeStub(
+      'onecli',
+      `if [ "$1 $2" = "agents create" ]; then jq '.data += [{"id":"oc-host-made","identifier":"ag-support","name":"Support","secretMode":"selective"}]' "$STATE/agents.json" > "$STATE/t" && mv "$STATE/t" "$STATE/agents.json"; echo '{"error":"An agent with this identifier already exists"}' >&2; exit 1; fi\n${real}`,
+    );
+    const { status, stdout } = scope('ag-sales,ag-support');
+    expect(status).toBe(0);
+    expect(stdout).toContain('allowed:ag-support');
+    expect(held()['oc-host-made']).toEqual(['sec-dial']);
+  });
+
+  it('expands `all` to the groups that exist at selection, and to `none` when there are none', () => {
+    expect(sh(CMD.scopeGuard, 'all').stdout.trim()).toBe('ag-sales,ag-support');
+    writeStub('ncl', `echo '{"ok":true,"data":[]}'`);
+    expect(sh(CMD.scopeGuard, 'all').stdout.trim()).toBe('none');
   });
 
   it('refuses an unknown agent id instead of guessing', () => {
@@ -307,28 +339,8 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
   it('tolerates spaces in the answer', () => {
     const { status } = scope('ag-sales, ag-support ,ag-sales');
     expect(status).toBe(0);
-    expect(held()['oc-sales']).toContain('sec-new');
-    expect(held()['oc-ag-support']).toEqual(['sec-new']);
-  });
-
-  it.each([
-    ['no Dial secret', []],
-    ['two Dial secrets', [DIAL, { id: 'sec-dial-2', name: 'Dial API', hostPattern: 'api.getdial.ai' }]],
-  ])('refuses to attach with %s in the vault', (_name, secrets) => {
-    fs.rmSync(root, { recursive: true, force: true });
-    setup({ secrets });
-    const { status, stderr } = scope('ag-sales', [CMD.attach]);
-    expect(status).not.toBe(0);
-    expect(stderr).toContain('expected exactly one Dial secret');
-    expect(callLines().some((l) => l.includes('attach-secret') || l.includes('detach-secret'))).toBe(false);
-  });
-
-  it('attaches the Dial-named secret when another secret shares the Dial host', () => {
-    fs.rmSync(root, { recursive: true, force: true });
-    setup({ secrets: [DIAL, { id: 'sec-foreign', name: 'Elsewhere key', hostPattern: 'api.getdial.ai' }] });
-    expect(scope('ag-sales', [CMD.attach]).status).toBe(0);
     expect(held()['oc-sales']).toContain('sec-dial');
-    expect(Object.values(held()).flat()).not.toContain('sec-foreign');
+    expect(held()['oc-ag-support']).toEqual(['sec-dial']);
   });
 
   it('every install, sign-in and credential step depends on the checked selection and the gateway guard', () => {
@@ -342,63 +354,21 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(at(CMD.scopeGuard)).toBeLessThan(at(CMD.installCli));
     expect(at(CMD.installCli)).toBeLessThan(at(CMD.credential));
     expect(at(CMD.credential)).toBeLessThan(at(CMD.attach));
-    // The attach step waits on the gateway guard's capture like the credential step.
-    expect(CMD.attach).toContain('{{onecli_gateway}}');
+    // The attach step uses only the id the credential step captured, so it waits on that step.
+    expect(CMD.attach).toContain("S='{{dial_secret}}'");
+    expect(CMD.attach).not.toMatch(/secrets (list|delete|create)/);
   });
 });
 
 describe('add-dial-tool: registering the host credential with OneCLI', () => {
-  it('replaces every api.getdial.ai secret (delete, then create from the temp file) — `secrets update` takes the value only on argv', () => {
-    fs.rmSync(root, { recursive: true, force: true });
-    setup({
-      secrets: [
-        DIAL,
-        { id: 'sec-dial-old', name: 'Old Dial', hostPattern: 'api.getdial.ai' },
-        { id: 'sec-notes', name: 'Dialogue notes', hostPattern: 'notes.example.com' },
-        { id: 'sec-foreign', name: 'Elsewhere key', hostPattern: 'api.getdial.ai' },
-      ],
-    });
-    const { status, stdout } = sh(CMD.credential);
-    expect(status).toBe(0);
-    const lines = callLines();
-    expect(lines).toContain('onecli secrets delete --id sec-dial');
-    expect(lines).toContain('onecli secrets delete --id sec-dial-old');
-    expect(lines).not.toContain('onecli secrets delete --id sec-notes');
-    expect(lines).not.toContain('onecli secrets delete --id sec-foreign');
-    const create = lines.find((l) => l.startsWith('onecli secrets create'));
-    expect(create).toMatch(
-      /^onecli secrets create --name Dial API --type generic --file \S+ --host-pattern api\.getdial\.ai --header-name Authorization --value-format Bearer \{value\}$/,
-    );
-    expect(lines.indexOf('onecli secrets delete --id sec-dial')).toBeLessThan(lines.indexOf(create!));
-    expect(lines.some((l) => l.startsWith('onecli secrets update'))).toBe(false);
-    expect(lines.some((l) => /--value(\s|=)/.test(l))).toBe(false);
-    // The key reaches OneCLI through the temp file, never argv or stdout, and the file is gone after.
-    expect(fs.readFileSync(path.join(state, 'key-seen'), 'utf8')).toBe('sk_test\n');
-    expect(create).not.toContain('sk_test');
-    expect(stdout).not.toContain('sk_test');
-    const tmp = (create ?? '').match(/--file (\S+)/)?.[1] ?? '';
-    expect(fs.existsSync(tmp)).toBe(false);
-  });
-
-  it('creates the secret with header injection when the vault has none, attached to no agent', () => {
-    fs.rmSync(root, { recursive: true, force: true });
-    setup({ secrets: [] });
-    const { status } = sh(CMD.credential);
-    expect(status).toBe(0);
-    const create = callLines().find((l) => l.startsWith('onecli secrets create'));
-    expect(create).toMatch(
-      /^onecli secrets create --name Dial API --type generic --file \S+ --host-pattern api\.getdial\.ai --header-name Authorization --value-format Bearer \{value\}$/,
-    );
-    expect(fs.readFileSync(path.join(state, 'key-seen'), 'utf8')).toBe('sk_test\n');
-    expect(Object.values(held()).flat()).not.toContain('sec-new');
-  });
-
-  it('fails loudly when the host has no Dial key, touching nothing', () => {
-    fs.rmSync(root, { recursive: true, force: true });
-    setup({ authKey: null });
-    const { status } = sh(CMD.credential);
-    expect(status).not.toBe(0);
-    expect(callLines().some((l) => l.startsWith('onecli secrets'))).toBe(false);
+  // What the script writes is tested where it lives: .claude/skills/add-dial-tool/scripts/dial-secret.test.ts.
+  it('stores the key through the script and captures only its secret id', () => {
+    const d = directives.find((x) => x.kind === 'run' && x.body.join('\n') === CMD.credential)!;
+    expect(d.attrs.capture).toBe('dial_secret');
+    expect(new RegExp(d.attrs.validate!).test('sec-1')).toBe(true);
+    expect(new RegExp(d.attrs.validate!).test('sk_live key')).toBe(false);
+    expect(CMD.credential).toContain('pnpm exec tsx .claude/skills/add-dial-tool/scripts/dial-secret.ts');
+    expect(CMD.credential).not.toMatch(/--value|apiKey|auth\.v1\.json/);
   });
 });
 
@@ -518,7 +488,9 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
           if (c.includes('dial doctor')) return '{"auth":{"signedIn":false}}';
           if (c.includes('(.data|length)==0')) return 'ag-1 (Sales)';
           if (c.includes('package.json')) return 'nanoclaw/2.2.0';
-          return exec(c);
+          const out = exec(c);
+          if (out === undefined && c.includes('dial-secret.ts')) return 'sec-1';
+          return out;
         },
         execStream: async () => ({ ok: true, fields: {} }),
       });
@@ -530,7 +502,7 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
   const writes = (ran: string[]) =>
     ran.filter(
       (c) =>
-        c.includes('onecli secrets create') ||
+        c.includes('dial-secret.ts') ||
         c.includes('grants attach-secret') ||
         c.includes('dial auth') ||
         c.includes('npm install'),
@@ -565,10 +537,23 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
       if (c.includes('container/build.sh')) throw new Error('docker build failed');
       return undefined;
     });
-    const key = ran.findIndex((c) => c.includes('onecli secrets create'));
+    const key = ran.findIndex((c) => c.includes('dial-secret.ts'));
     const attach = ran.findIndex((c) => c.includes('grants attach-secret'));
     expect(key).toBeGreaterThan(-1);
     expect(attach).toBeGreaterThan(key);
+    expect(ran[attach]).toContain("S='sec-1'");
+  });
+
+  it('never attaches when storing the key fails, so no other key is attached', async () => {
+    const { ran, res } = await apply((c) => {
+      if (c.includes('/api/health')) return '1.45.0';
+      if (c.includes('unknown agent group')) return 'all';
+      if (c.includes('dial-secret.ts')) throw new Error('Multiple Dial API credentials exist');
+      return undefined;
+    });
+    expect(ran.some((c) => c.includes('dial-secret.ts'))).toBe(true);
+    expect(ran.some((c) => c.includes('grants attach-secret'))).toBe(false);
+    expect(res.agentTasks.length).toBeGreaterThan(0);
   });
 
   it('runs every step, in order, when the guards pass: the key is written before it is attached', async () => {
@@ -580,7 +565,7 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
     const seen = writes(ran);
     expect(seen.some((c) => c.includes('npm install'))).toBe(true);
     expect(seen.some((c) => c.includes('dial auth login operator@example.com'))).toBe(true);
-    const key = seen.findIndex((c) => c.includes('onecli secrets create'));
+    const key = seen.findIndex((c) => c.includes('dial-secret.ts'));
     const attach = seen.findIndex((c) => c.includes('grants attach-secret'));
     expect(key).toBeGreaterThan(-1);
     expect(key).toBeLessThan(attach);
