@@ -98,6 +98,11 @@ describe('buildAttachmentFileParts', () => {
     expect(buildAttachmentFileParts([noId, noName, noPath, urlOnly], inspect, generous)).toEqual([]);
   });
 
+  it('falls back to the extension when mime is not a string', () => {
+    const odd = { ...attachment('cat.png', undefined), mime: {} as unknown as string };
+    expect(buildAttachmentFileParts([odd], inspect, generous).map((part) => part.mime)).toEqual(['image/png']);
+  });
+
   it('enforces count and actual total-byte limits', () => {
     const files = [attachment('cat.png', 'image/png'), attachment('second.png', 'image/png')];
     expect(buildAttachmentFileParts(files, inspect, { maxCount: 1, maxBytes: 10_000 })).toHaveLength(1);

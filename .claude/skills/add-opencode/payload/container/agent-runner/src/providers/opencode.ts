@@ -150,7 +150,7 @@ const ATTACHMENT_MIME_BY_EXT: Record<string, string> = {
 };
 
 function attachmentMime(att: OpenCodePromptAttachment): string | undefined {
-  if (att.mime) return att.mime;
+  if (typeof att.mime === 'string' && att.mime) return att.mime;
   const name = att.path || att.filename || '';
   const dot = name.lastIndexOf('.');
   return dot < 0 ? undefined : ATTACHMENT_MIME_BY_EXT[name.slice(dot).toLowerCase()];

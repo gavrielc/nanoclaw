@@ -156,6 +156,25 @@ describe('extractAttachments', () => {
     ]);
   });
 
+  it('drops non-string fields so a provider never sees a malformed value', () => {
+    insertChat('m1', {
+      text: 'odd types',
+      attachments: [
+        { name: 42, filename: 'cat.png', mimeType: {}, localPath: 'inbox/m1/cat.png', url: ['x'] },
+        { name: 'ghost.png', localPath: { evil: true } },
+      ],
+    });
+    expect(extractAttachments(getPendingMessages())).toEqual([
+      {
+        sourceMessageId: 'm1',
+        filename: 'cat.png',
+        mime: undefined,
+        path: '/workspace/inbox/m1/cat.png',
+        url: undefined,
+      },
+    ]);
+  });
+
   it('ignores an attachments field that is not an array', () => {
     insertChat('m1', { text: 'bad shape', attachments: { name: 'cat.png' } });
     expect(extractAttachments(getPendingMessages())).toEqual([]);

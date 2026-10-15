@@ -447,23 +447,30 @@ export function extractAttachments(messages: MessageInRow[]): PromptAttachment[]
       // Channel payloads are unvalidated JSON — a null or scalar element would
       // otherwise throw on property access and take the whole batch with it.
       if (!a || typeof a !== 'object') continue;
+      const localPath = nonEmptyString(a.localPath);
+      const url = nonEmptyString(a.url);
       // An entry with neither a staged file nor a URL is unfetchable for every
       // provider; the prompt text still describes it, so skip it here.
-      if (!a.localPath && !a.url) continue;
+      if (!localPath && !url) continue;
       out.push({
         // The host stages a message's files under `inbox/<message id>/`.
         sourceMessageId: msg.id,
         // `name` first: the host validates and rewrites it (session-manager
         // extractAttachmentFiles), while `filename` arrives raw from the
         // channel — same precedence formatAttachments uses.
-        filename: a.name || a.filename || undefined,
-        mime: a.mimeType || a.mime || undefined,
-        path: a.localPath ? `/workspace/${a.localPath}` : undefined,
-        url: a.url || undefined,
+        filename: nonEmptyString(a.name) ?? nonEmptyString(a.filename),
+        mime: nonEmptyString(a.mimeType) ?? nonEmptyString(a.mime),
+        path: localPath ? `/workspace/${localPath}` : undefined,
+        url,
       });
     }
   }
   return out;
+}
+
+/** Channel JSON is unvalidated: keep a field only when it is a real string. */
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
