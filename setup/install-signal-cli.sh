@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-VERSION="0.14.3"
+VERSION="0.14.9"
 INSTALL_DIR="${HOME}/.local/bin"
 
 emit_status() {
@@ -50,7 +50,7 @@ fi
 URL="https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}-Linux-native.tar.gz"
 TARBALL=$(mktemp -t signal-cli.XXXXXX.tar.gz)
 
-log "Downloading signal-cli v${VERSION} (~96MB)…"
+log "Downloading signal-cli v${VERSION} (~111MB)…"
 if ! curl -fLsS -o "${TARBALL}" "${URL}"; then
   rm -f "${TARBALL}"
   emit_status failed "download_failed"
