@@ -430,7 +430,8 @@ describe('runChannelSkill adapter (Option A)', () => {
   //
   // The engine reads `.claude/skills/add-<channel>/SKILL.md` relative to cwd, so
   // the fixture skills here live in the temp root and run from there, as real
-  // setup does. Writing them under the checkout raced skill-pins' scan of it.
+  // setup does. Never write them under the checkout: other test files scan
+  // `.claude/skills` in parallel.
   const repoCwd = process.cwd();
   afterEach(() => process.chdir(repoCwd));
   const wireChannel = 'wiretest';
@@ -636,12 +637,16 @@ it('background Slack setup refuses to report ready when a required companion is 
     writeFileSync(join(root, '.env'), '');
     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
     const wire = vi.fn(async () => true);
+    const cmds: string[] = [];
     await expect(runChannelSkill('slack', 'User', {
       projectRoot: root, agentName: 'Nova', role: 'owner', requireCompanions: true,
       inputs: { connection: 'provisioned', bot_token: 'xoxb-test', app_token: 'xapp-test', owner_handle: 'U123456789' },
-      exec: async command => command.includes('auth.test') ? '@bot in Test' : command.includes('conversations.open') ? 'slack:D123456789' : '',
+      exec: async command => (cmds.push(command), command.includes('auth.test') ? '@bot in Test' : command.includes('conversations.open') ? 'slack:D123456789' : ''),
       resolveRemote: () => 'origin', wire,
     })).rejects.toThrow('companion installation needs attention');
+    // The companion check throws even when no skill ran, so pin that the real
+    // add-slack (read relative to cwd, the checkout) actually ran first.
+    expect(cmds.some((c) => c.includes('auth.test'))).toBe(true);
     expect(wire).not.toHaveBeenCalled();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
