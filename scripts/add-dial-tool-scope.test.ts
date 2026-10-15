@@ -53,8 +53,8 @@ const CMD = {
   installCli: one(isRun('external', 'npm install -g @getdial/cli')),
   login: one(isRun('external', 'dial auth login {{owner_email}}')),
   verifyOtp: one(isRun('external', 'dial auth verify-otp --code')),
-  credential: one(isRun('external', 'onecli secrets')),
-  attach: one(isRun('wire', 'grants attach-secret')),
+  credential: one(isRun('external', 'onecli secrets create')),
+  attach: one(isRun('external', 'grants attach-secret')),
 };
 
 let root: string;
@@ -323,6 +323,14 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(callLines().some((l) => l.includes('attach-secret') || l.includes('detach-secret'))).toBe(false);
   });
 
+  it('attaches the Dial-named secret when another secret shares the Dial host', () => {
+    fs.rmSync(root, { recursive: true, force: true });
+    setup({ secrets: [DIAL, { id: 'sec-foreign', name: 'Elsewhere key', hostPattern: 'api.getdial.ai' }] });
+    expect(scope('ag-sales', [CMD.attach]).status).toBe(0);
+    expect(held()['oc-sales']).toContain('sec-dial');
+    expect(Object.values(held()).flat()).not.toContain('sec-foreign');
+  });
+
   it('every install, sign-in and credential step depends on the checked selection and the gateway guard', () => {
     for (const cmd of [CMD.installCli, CMD.login, CMD.verifyOtp, CMD.credential]) {
       expect(cmd).toContain('{{dial_scope}}');
@@ -334,6 +342,8 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(at(CMD.scopeGuard)).toBeLessThan(at(CMD.installCli));
     expect(at(CMD.installCli)).toBeLessThan(at(CMD.credential));
     expect(at(CMD.credential)).toBeLessThan(at(CMD.attach));
+    // The attach step waits on the gateway guard's capture like the credential step.
+    expect(CMD.attach).toContain('{{onecli_gateway}}');
   });
 });
 
@@ -345,6 +355,7 @@ describe('add-dial-tool: registering the host credential with OneCLI', () => {
         DIAL,
         { id: 'sec-dial-old', name: 'Old Dial', hostPattern: 'api.getdial.ai' },
         { id: 'sec-notes', name: 'Dialogue notes', hostPattern: 'notes.example.com' },
+        { id: 'sec-foreign', name: 'Elsewhere key', hostPattern: 'api.getdial.ai' },
       ],
     });
     const { status, stdout } = sh(CMD.credential);
@@ -353,6 +364,7 @@ describe('add-dial-tool: registering the host credential with OneCLI', () => {
     expect(lines).toContain('onecli secrets delete --id sec-dial');
     expect(lines).toContain('onecli secrets delete --id sec-dial-old');
     expect(lines).not.toContain('onecli secrets delete --id sec-notes');
+    expect(lines).not.toContain('onecli secrets delete --id sec-foreign');
     const create = lines.find((l) => l.startsWith('onecli secrets create'));
     expect(create).toMatch(
       /^onecli secrets create --name Dial API --type generic --file \S+ --host-pattern api\.getdial\.ai --header-name Authorization --value-format Bearer \{value\}$/,
@@ -448,6 +460,19 @@ describe('add-dial-tool: OneCLI gateway guard', () => {
     expect(guard(health('1.45.0')).status).not.toBe(0);
   });
 
+  it('stops when the onecli CLI has no grants commands (CLI older than 2.9), before anything is written', () => {
+    const real = fs.readFileSync(path.join(bin, 'onecli'), 'utf8');
+    writeStub(
+      'onecli',
+      'if [ "$1 $2" = "agents grants" ]; then echo "unexpected argument grants" >&2; exit 80; fi\n' +
+        real.split('\n').slice(2).join('\n'),
+    );
+    const r = guard(health('1.45.0'));
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain("no 'agents grants'");
+  });
+
   it('stops on a missing version, invalid JSON, a failed transfer, or an unreachable gateway', () => {
     expect(guard(health()).status).not.toBe(0);
     expect(guard(`${health('1.45.0')}garbage`).status).not.toBe(0);
@@ -533,16 +558,17 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
     expect(res.agentTasks.length).toBeGreaterThan(0);
   });
 
-  it('never attaches when the credential step fails', async () => {
-    const { ran, res } = await apply((c) => {
+  it('attaches the new key even when the image build failed, so a replaced key is never left on nobody', async () => {
+    const { ran } = await apply((c) => {
       if (c.includes('/api/health')) return '1.45.0';
       if (c.includes('unknown agent group')) return 'all';
-      if (c.includes('onecli secrets create')) throw new Error('could not remove the previous Dial secret');
+      if (c.includes('container/build.sh')) throw new Error('docker build failed');
       return undefined;
     });
-    expect(ran.some((c) => c.includes('onecli secrets create'))).toBe(true);
-    expect(ran.some((c) => c.includes('grants attach-secret'))).toBe(false);
-    expect(res.agentTasks.length).toBeGreaterThan(0);
+    const key = ran.findIndex((c) => c.includes('onecli secrets create'));
+    const attach = ran.findIndex((c) => c.includes('grants attach-secret'));
+    expect(key).toBeGreaterThan(-1);
+    expect(attach).toBeGreaterThan(key);
   });
 
   it('runs every step, in order, when the guards pass: the key is written before it is attached', async () => {
