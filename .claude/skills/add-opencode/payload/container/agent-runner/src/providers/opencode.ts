@@ -120,9 +120,10 @@ export function spawnOpencodeServer(
 }
 
 /**
- * The shared attachment contract carries only host-staged files, bound to the
- * source message whose inbox owns them. Remote URLs remain prompt text and are
- * never fetched implicitly.
+ * Only host-staged files bound to the source message whose inbox owns them
+ * become media. Remote URLs remain prompt text and are never fetched implicitly.
+ * Every field is optional and checked at runtime: an entry missing one stays
+ * prompt text instead of failing the turn.
  *
  * Attachments are ALSO described inline in the prompt text the formatter
  * produces, and that text rendering stays the contract every provider relies
@@ -130,10 +131,11 @@ export function spawnOpencodeServer(
  * structured attachment arrives, the provider behaves exactly as it did before.
  */
 interface OpenCodePromptAttachment {
-  sourceMessageId: string;
-  filename: string;
-  path: string;
+  sourceMessageId?: string;
+  filename?: string;
+  path?: string;
   mime?: string;
+  url?: string;
 }
 
 /** Extension → MIME fallback, for adapters that report no `mimeType`. */
@@ -198,8 +200,9 @@ function isPathInside(parent: string, child: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function isSafeComponent(value: string): boolean {
+function isSafeComponent(value: unknown): value is string {
   return (
+    typeof value === 'string' &&
     value.length > 0 &&
     value !== '.' &&
     value !== '..' &&
@@ -239,23 +242,24 @@ export function buildAttachmentFileParts(
       log(`Native attachment count limit reached (${limits.maxCount}); remaining files stay prompt text only`);
       break;
     }
-    if (!isSafeComponent(att.sourceMessageId) || !isSafeComponent(att.filename)) continue;
-    const expectedRoot = `/workspace/inbox/${att.sourceMessageId}`;
-    const expectedPath = `${expectedRoot}/${att.filename}`;
-    if (path.resolve(att.path) !== expectedPath) {
-      log(`Attachment path is not bound to its source message, not sent as media: ${att.filename}`);
+    const { sourceMessageId, filename, path: filePath } = att;
+    if (!isSafeComponent(sourceMessageId) || !isSafeComponent(filename) || typeof filePath !== 'string') continue;
+    const expectedRoot = `/workspace/inbox/${sourceMessageId}`;
+    const expectedPath = `${expectedRoot}/${filename}`;
+    if (path.resolve(filePath) !== expectedPath) {
+      log(`Attachment path is not bound to its source message, not sent as media: ${filename}`);
       continue;
     }
     const mime = attachmentMime(att);
     if (!mime) continue;
     if (!mime.startsWith('image/') && mime !== 'application/pdf') continue;
-    const info = inspect(att.path);
-    if (!info || !isPathInside(expectedRoot, info.realPath) || path.basename(info.realPath) !== att.filename) {
-      log(`Attachment has no safe regular file, not sent as media: ${att.filename}`);
+    const info = inspect(filePath);
+    if (!info || !isPathInside(expectedRoot, info.realPath) || path.basename(info.realPath) !== filename) {
+      log(`Attachment has no safe regular file, not sent as media: ${filename}`);
       continue;
     }
     if (info.size < 0 || totalBytes + info.size > limits.maxBytes) {
-      log(`Native attachment byte limit reached (${limits.maxBytes}); ${att.filename} stays prompt text only`);
+      log(`Native attachment byte limit reached (${limits.maxBytes}); ${filename} stays prompt text only`);
       continue;
     }
     totalBytes += info.size;
@@ -265,7 +269,7 @@ export function buildAttachmentFileParts(
     parts.push({
       type: 'file',
       mime,
-      filename: `${att.sourceMessageId}--${att.filename}`,
+      filename: `${sourceMessageId}--${filename}`,
       url: pathToFileURL(info.realPath).href,
     });
   }
@@ -727,7 +731,7 @@ export class OpenCodeProvider implements AgentProvider {
     const pending: Array<{ text: string; attachments?: OpenCodePromptAttachment[] }> = [
       {
         text: input.prompt,
-        attachments: (input as QueryInput & { attachments?: OpenCodePromptAttachment[] }).attachments,
+        attachments: input.attachments,
       },
     ];
     let waiting: (() => void) | undefined;

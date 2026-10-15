@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { getPendingMessages } from '../db/messages-in.js';
+import { extractAttachments } from '../formatter.js';
+import { closeSessionDb, getInboundDb, initTestSessionDb } from '../mailbox/sqlite/connection.js';
 import {
   buildAttachmentFileParts,
   buildPromptParts,
@@ -87,6 +90,14 @@ describe('buildAttachmentFileParts', () => {
     ).toEqual([]);
   });
 
+  it('keeps an entry missing its source id, name, or path as prompt text instead of throwing', () => {
+    const { sourceMessageId: _id, ...noId } = attachment('cat.png', 'image/png');
+    const { filename: _name, ...noName } = attachment('cat.png', 'image/png');
+    const { path: _path, ...noPath } = attachment('cat.png', 'image/png');
+    const urlOnly = { sourceMessageId: 'msg-1', filename: 'remote.png', url: 'https://example.test/remote.png' };
+    expect(buildAttachmentFileParts([noId, noName, noPath, urlOnly], inspect, generous)).toEqual([]);
+  });
+
   it('enforces count and actual total-byte limits', () => {
     const files = [attachment('cat.png', 'image/png'), attachment('second.png', 'image/png')];
     expect(buildAttachmentFileParts(files, inspect, { maxCount: 1, maxBytes: 10_000 })).toHaveLength(1);
@@ -125,5 +136,48 @@ describe('buildPromptParts', () => {
     expect(buildPromptParts('just words', undefined, inspect, generous)).toEqual([
       { type: 'text', text: 'just words' },
     ]);
+  });
+});
+
+describe('core extractAttachments feeding buildPromptParts', () => {
+  afterEach(() => {
+    closeSessionDb();
+  });
+
+  // Content shaped the way the host writes it after staging a file to the inbox.
+  function insertChat(id: string, attachments: object[]): void {
+    getInboundDb()
+      .prepare(
+        `INSERT INTO messages_in (id, kind, timestamp, status, content)
+         VALUES (?, 'chat', ?, 'pending', ?)`,
+      )
+      .run(id, new Date().toISOString(), JSON.stringify({ text: 'look', attachments }));
+  }
+
+  it('turns a staged image into a file part bound to its message', () => {
+    initTestSessionDb();
+    insertChat('msg-1', [
+      { type: 'image', name: 'cat.png', mimeType: 'image/png', size: 1_024, localPath: 'inbox/msg-1/cat.png' },
+    ]);
+    const attachments = extractAttachments(getPendingMessages());
+    expect(buildPromptParts('look', attachments, inspect, generous)).toEqual([
+      { type: 'text', text: 'look' },
+      {
+        type: 'file',
+        mime: 'image/png',
+        filename: 'msg-1--cat.png',
+        url: 'file:///workspace/inbox/msg-1/cat.png',
+      },
+    ]);
+  });
+
+  it('keeps url-only and foreign-inbox attachments as prompt text', () => {
+    initTestSessionDb();
+    insertChat('msg-1', [{ type: 'image', name: 'remote.png', url: 'https://example.test/remote.png' }]);
+    // A row whose staged path names another message's inbox is not sent as media.
+    insertChat('msg-2', [{ type: 'image', name: 'cat.png', mimeType: 'image/png', localPath: 'inbox/msg-1/cat.png' }]);
+    const attachments = extractAttachments(getPendingMessages());
+    expect(attachments).toHaveLength(2);
+    expect(buildPromptParts('look', attachments, inspect, generous)).toEqual([{ type: 'text', text: 'look' }]);
   });
 });

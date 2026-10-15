@@ -320,8 +320,9 @@ Put comments on separate lines. These settings affect only OpenCode containers.
 - `OPENCODE_MODEL_INPUT_MODALITIES`: optional comma-separated main-model input
   types from `text,audio,image,video,pdf`.
 - `OPENCODE_NATIVE_ATTACHMENT_MAX_COUNT` / `OPENCODE_NATIVE_ATTACHMENT_MAX_BYTES`:
-  optional limits for already-staged structured attachments. Upstream channel
-  attachment transport remains text-only until that separate feature lands.
+  optional limits (default 8 files, 25 MiB per turn) for channel images and PDFs
+  the host staged to the inbox. Those reach the model as file parts; anything
+  over a limit, or of another type, stays a line in the prompt text.
 
 Custom model limits and modalities apply only to the main model. NanoClaw supplies
 MCP configuration and container policy. See [ARCHITECTURE.md](ARCHITECTURE.md) for
