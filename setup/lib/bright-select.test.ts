@@ -22,14 +22,14 @@ describe('brightSelect abort', () => {
         { value: 'skip', label: 'Skip' },
       ],
       signal: controller.signal,
-      abortedLabel: 'Your assistant replied.',
+      abortedLabel: (reason) => `Done: ${String(reason)}`,
     });
     await new Promise((r) => setTimeout(r, 100));
-    controller.abort();
+    controller.abort('replied');
     expect(typeof (await answer)).toBe('symbol');
     const out = plain(writes.join(''));
     const last = out.slice(out.lastIndexOf('Keep waiting?'));
-    expect(last).toContain('Your assistant replied.');
+    expect(last).toContain('Done: replied');
     expect(last).not.toContain('Skip');
   });
 

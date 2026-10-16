@@ -28,7 +28,7 @@ export interface FirstReplyWait {
 export interface WaitOptions {
   ping: CliPing;
   interactive: boolean;
-  /** Ask whether to keep waiting. The signal aborts the question when the reply lands first. */
+  /** Ask whether to keep waiting. The signal aborts the question with the outcome when one lands first. */
   ask(waitedMs: number, signal: AbortSignal): Promise<WaitChoice | undefined>;
   firstWaitMs?: number;
   extraWaitMs?: number;
@@ -54,7 +54,7 @@ export async function waitForFirstReply(opts: WaitOptions): Promise<FirstReplyWa
     }
 
     const asking = new AbortController();
-    void settled.then(() => asking.abort());
+    void settled.then((outcome) => asking.abort(outcome));
     const choice = await ask(Date.now() - start, asking.signal);
     // A reply that lands while the question is open wins over the answer.
     if (replied) return { outcome: replied, keptWaiting, skipped: false };

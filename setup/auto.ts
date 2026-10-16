@@ -915,7 +915,8 @@ async function askKeepWaiting(
       { value: 'skip', label: 'Skip the first chat and finish setup', hint: 'chat later with `pnpm run chat hi`' },
     ],
     signal,
-    abortedLabel: 'Your assistant replied.',
+    abortedLabel: (outcome) =>
+      (outcome as PingOutcome | undefined)?.result === 'ok' ? 'Your assistant replied.' : 'The wait ended.',
   });
   if (signal.aborted) return undefined;
   const choice = ensureAnswer(answer) as WaitChoice;

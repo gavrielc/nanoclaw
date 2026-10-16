@@ -81,6 +81,7 @@ describe('waitForFirstReply', () => {
     reply();
     await expect(done).resolves.toEqual({ outcome: { result: 'ok' }, keptWaiting: 0, skipped: false });
     expect(signals[0].aborted).toBe(true);
+    expect(signals[0].reason).toEqual({ result: 'ok' });
     expect(ping.stop).not.toHaveBeenCalled();
   });
 
