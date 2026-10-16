@@ -1,0 +1,49 @@
+/**
+ * The agent runtime the operator picked in THIS setup run, carried to the
+ * group-creation child processes over the process boundary.
+ *
+ * There is no `--provider` flag in the creation contract — provider is a DB
+ * property of a group. Setup persists the pick two ways: as the install-wide
+ * default (`DEFAULT_AGENT_PROVIDER` in `.env`, see src/config.ts), which every
+ * future group inherits at creation via the `ensureContainerConfig` chokepoint;
+ * and here, in a setup-run-scoped env var, so the FIRST agent created in the
+ * same run (by `init-first-agent` / `init-cli-agent`, which run as child
+ * processes) is stamped with the pick before the welcome wakes the container —
+ * without waiting for the host to restart and reload `.env`. `undefined`
+ * means no run-scoped pick; the creation scripts then fall back to the
+ * install-wide default. An explicit `'claude'` pick is carried like any other,
+ * so a run that chose Claude over a stamped non-Claude default is served as a
+ * Claude run (failure assist included), and the group it creates is stamped
+ * with the same value the successful sign-in writes to `.env`.
+ */
+import { envValue } from '../../src/env.js';
+
+const ENV_KEY = 'NANOCLAW_PICKED_PROVIDER';
+
+export function setPickedProvider(provider: string | undefined): void {
+  const normalized = provider?.trim().toLowerCase() || undefined;
+  if (normalized) {
+    process.env[ENV_KEY] = normalized;
+  } else {
+    delete process.env[ENV_KEY];
+  }
+}
+
+export function getPickedProvider(): string | undefined {
+  return process.env[ENV_KEY]?.trim().toLowerCase() || undefined;
+}
+
+/**
+ * The agent runtime this setup run serves, for decisions taken before or
+ * after the picker: the run-scoped pick, else the preset that skips the
+ * picker (`NANOCLAW_AGENT_PROVIDER`), else the install-wide default an earlier
+ * run stamped into `.env`. Undefined when nothing has chosen a runtime yet.
+ */
+export function resolveSelectedProvider(projectRoot = process.cwd()): string | undefined {
+  return (
+    getPickedProvider() ||
+    process.env.NANOCLAW_AGENT_PROVIDER?.trim().toLowerCase() ||
+    envValue('DEFAULT_AGENT_PROVIDER', projectRoot)?.trim().toLowerCase() ||
+    undefined
+  );
+}

@@ -1,10 +1,9 @@
 /**
- * Step: set-env — Write or update a KEY=VALUE in .env, with optional sync to
- * data/env/env (the container-mounted copy).
+ * Step: set-env — Write or update a KEY=VALUE in .env.
  *
  * Usage:
  *   pnpm exec tsx setup/index.ts --step set-env -- \
- *     --key TELEGRAM_BOT_TOKEN --value "<token>" [--sync-container]
+ *     --key TELEGRAM_BOT_TOKEN --value "<token>"
  *
  * Exists so channel-install flows don't have to invent grep/sed/rm pipelines
  * (which can't be allowlisted tightly — sed can read any file, and each
@@ -14,14 +13,92 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 import { log } from '../src/log.js';
 import { emitStatus } from './status.js';
 
+/**
+ * Upsert a `KEY=VALUE` line into the project's `.env`, returning whether the
+ * key already existed. The canonical writer for new `.env` edits (legacy setup
+ * steps still write directly) so flows don't invent grep/sed pipelines (which
+ * can't be allowlisted tightly).
+ */
+export function upsertEnvVar(
+  key: string,
+  value: string,
+  projectRoot = process.cwd(),
+): { existed: boolean } {
+  return { existed: upsertEnvVars({ [key]: value }, projectRoot).has(key) };
+}
+
+/** Commit related settings together, removing every assignment the reader accepts.
+ * A failed write or rename leaves the previous configuration intact. */
+export function upsertEnvVars(
+  values: Record<string, string>,
+  projectRoot = process.cwd(),
+): Set<string> {
+  for (const [key, value] of Object.entries(values)) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid env key: ${key} (must be UPPER_SNAKE_CASE)`);
+    if (/[\r\n\0]/.test(value)) throw new Error(`Invalid multiline env value for ${key}`);
+  }
+  const namedFile = path.join(projectRoot, '.env');
+  const exists = fs.existsSync(namedFile);
+  // Keep an operator's .env symlink; replace its target, in the same directory.
+  const envFile = exists ? fs.realpathSync(namedFile) : namedFile;
+  const content = exists ? fs.readFileSync(envFile, 'utf8') : '';
+  const existed = new Set<string>();
+  const lines = content.split(/(?<=\n)/).map((line) => {
+    const trimmed = line.trim();
+    const eq = trimmed.indexOf('=');
+    const key = trimmed.slice(0, eq).trim();
+    if (trimmed.startsWith('#') || eq < 0 || !Object.hasOwn(values, key)) return line;
+    if (existed.has(key)) return '';
+    existed.add(key);
+    return `${key}=${values[key]}\n`;
+  });
+  let next = lines.join('');
+  if (next && !next.endsWith('\n')) next += '\n';
+  next += Object.entries(values)
+    .filter(([key]) => !existed.has(key))
+    .map(([key, value]) => `${key}=${value}\n`)
+    .join('');
+  const temporary = `${envFile}.${randomUUID()}.tmp`;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(temporary, 'wx', 0o600);
+    fs.writeFileSync(fd, next);
+    if (exists) fs.fchmodSync(fd, fs.statSync(envFile).mode & 0o777);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(temporary, envFile);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(temporary, { force: true });
+  }
+  return existed;
+}
+
+/**
+ * Remove a key's line from `.env` entirely, returning whether it was there.
+ *
+ * Distinct from writing an empty or `false` value: for keys where setup tells
+ * "unset" and "answered no" apart, only removal restores the unanswered state.
+ */
+export function removeEnvVar(key: string): { existed: boolean } {
+  const envFile = path.join(process.cwd(), '.env');
+  if (!fs.existsSync(envFile)) return { existed: false };
+  const content = fs.readFileSync(envFile, 'utf-8');
+  const lineRegex = new RegExp(`^${key}=.*\\n?`, 'm');
+  if (!lineRegex.test(content)) return { existed: false };
+  fs.writeFileSync(envFile, content.replace(lineRegex, ''));
+  return { existed: true };
+}
+
 export async function run(args: string[]): Promise<void> {
   const keyIdx = args.indexOf('--key');
   const valueIdx = args.indexOf('--value');
-  const syncContainer = args.includes('--sync-container');
 
   if (keyIdx === -1 || !args[keyIdx + 1]) {
     throw new Error('--key <KEY> is required');
@@ -33,45 +110,12 @@ export async function run(args: string[]): Promise<void> {
   const key = args[keyIdx + 1];
   const value = args[valueIdx + 1];
 
-  if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
-    throw new Error(`Invalid env key: ${key} (must be UPPER_SNAKE_CASE)`);
-  }
-
-  const projectRoot = process.cwd();
-  const envFile = path.join(projectRoot, '.env');
-
-  let content = '';
-  if (fs.existsSync(envFile)) {
-    content = fs.readFileSync(envFile, 'utf-8');
-  }
-
-  const lineRegex = new RegExp(`^${key}=.*$`, 'm');
-  const newLine = `${key}=${value}`;
-  const existed = lineRegex.test(content);
-
-  if (existed) {
-    content = content.replace(lineRegex, newLine);
-  } else {
-    const sep = content && !content.endsWith('\n') ? '\n' : '';
-    content = content + sep + newLine + '\n';
-  }
-
-  fs.writeFileSync(envFile, content);
+  const { existed } = upsertEnvVar(key, value);
   log.info('Updated .env', { key, existed });
-
-  let synced = false;
-  if (syncContainer) {
-    const dataEnvDir = path.join(projectRoot, 'data', 'env');
-    fs.mkdirSync(dataEnvDir, { recursive: true });
-    fs.copyFileSync(envFile, path.join(dataEnvDir, 'env'));
-    synced = true;
-    log.info('Synced .env to container mount', { path: 'data/env/env' });
-  }
 
   emitStatus('SET_ENV', {
     KEY: key,
     EXISTED: existed,
-    SYNCED_TO_CONTAINER: synced,
     STATUS: 'success',
   });
 }

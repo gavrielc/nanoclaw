@@ -13,7 +13,34 @@
  */
 import { spawn } from 'child_process';
 
-export type PingResult = 'ok' | 'no_reply' | 'socket_error';
+import * as setupLog from '../logs.js';
+
+export const PING_AGENT_FOLDER = 'ping_test';
+
+export type PingResult = 'ok' | 'no_reply' | 'socket_error' | 'auth_error';
+
+// The only setup check that goes through the container, gateway and model.
+// Log it so a failed reply isn't hidden behind earlier successes.
+export function logFirstChat(result: PingResult, durationMs: number): void {
+  setupLog.step('first-chat', result === 'ok' ? 'success' : 'failed', durationMs, { RESULT: result });
+}
+
+export function classifyPingResult(exitCode: number | null, stdout: string, stderr = ''): PingResult {
+  const output = `${stdout}\n${stderr}`;
+  if (
+    /Invalid bearer token/i.test(output) ||
+    /authentication[_ ]error/i.test(output) ||
+    /Failed to authenticate/i.test(output) ||
+    /Please run \/login/i.test(output) ||
+    /Not logged in/i.test(output) ||
+    /Invalid API key/i.test(output)
+  ) {
+    return 'auth_error';
+  }
+  if (exitCode === 2) return 'socket_error';
+  if (exitCode === 0 && stdout.trim().length > 0) return 'ok';
+  return 'no_reply';
+}
 
 export function pingCliAgent(timeoutMs = 30_000): Promise<PingResult> {
   return new Promise((resolve) => {
@@ -21,6 +48,7 @@ export function pingCliAgent(timeoutMs = 30_000): Promise<PingResult> {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
+    let stderr = '';
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -32,13 +60,14 @@ export function pingCliAgent(timeoutMs = 30_000): Promise<PingResult> {
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf-8');
     });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf-8');
+    });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (code === 2) resolve('socket_error');
-      else if (code === 0 && stdout.trim().length > 0) resolve('ok');
-      else resolve('no_reply');
+      resolve(classifyPingResult(code, stdout, stderr));
     });
     child.on('error', () => {
       if (settled) return;
