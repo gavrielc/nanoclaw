@@ -46,7 +46,17 @@ import {
 } from './channels/initial-setup.js';
 import { runInheritScript } from './lib/inherit-script.js';
 import { offerPortalReminder, portalEnabled, runImagePortal } from './portal.js';
-import { logFirstChat, pingCliAgent, pingFailureCopy, PING_AGENT_FOLDER, type PingOutcome } from './lib/agent-ping.js';
+import {
+  logFirstChat,
+  pingFailureCopy,
+  PING_AGENT_FOLDER,
+  startCliPing,
+  type FirstChatWait,
+  type PingOutcome,
+} from './lib/agent-ping.js';
+import { EXTRA_WAIT_MS, MAX_WAIT_MS, waitForFirstReply, type WaitChoice } from './lib/first-chat-wait.js';
+import { createStageProbe, keepWaitingQuestion, StageDisplay, type FirstChatStage } from './lib/first-chat-progress.js';
+import { inspectAgentSession } from './central-db-inspection.js';
 import { getSetupProvider, listSetupProviders } from './providers/registry.js';
 import { applyProviderSkill, loadHostContractModules } from './providers/install.js';
 import {
@@ -87,20 +97,11 @@ import { claudeCliAvailable, resolveTimezoneViaClaude } from './lib/tz-from-clau
 import * as setupLog from './logs.js';
 import { ensureAnswer, fail, runQuietChild, runQuietStep, spawnQuiet } from './lib/runner.js';
 import { emit as phEmit } from './lib/diagnostics.js';
-import {
-  accentGreen,
-  brandBody,
-  brandBold,
-  brandChip,
-  dimWrap,
-  fitToWidth,
-  fmtDuration,
-  note,
-  wrapForGutter,
-} from './lib/theme.js';
+import { accentGreen, brandBody, brandBold, brandChip, dimWrap, note, wrapForGutter } from './lib/theme.js';
 import { isValidTimezone } from '../src/timezone.js';
 import { DEFAULT_AGENT_PROVIDER, TEMPLATES_DIR } from '../src/config.js';
 import { SocketTransport } from '../src/cli/socket-client.js';
+import { heartbeatPath } from '../src/session-manager.js';
 import {
   cloneRegistry,
   ensureTemplateLocal,
@@ -584,8 +585,9 @@ async function main(): Promise<void> {
         ),
       );
       const pingStart = Date.now();
-      const outcome = await confirmAssistantResponds();
-      logFirstChat(outcome, Date.now() - pingStart);
+      const { outcome, wait } = await confirmAssistantResponds();
+      const waitedMs = Date.now() - pingStart;
+      logFirstChat(outcome, waitedMs, wait);
       const ping = outcome.result;
       if (ping === 'ok') {
         phEmit('first_chat_ready');
@@ -654,7 +656,7 @@ async function main(): Promise<void> {
         }
       } else {
         phEmit('first_chat_failed', { reason: ping });
-        const copy = pingFailureCopy(outcome);
+        const copy = pingFailureCopy(outcome, waitedMs);
         note(copy.note, 'Skipping the first chat');
         await offerClaudeOnFailure({ stepName: 'cli-agent', msg: copy.assistMsg, hint: copy.assistHint });
       }
@@ -859,31 +861,65 @@ async function main(): Promise<void> {
 
 /**
  * Round-trip ping against the CLI socket before we ask the user to chat.
- * Renders its own spinner with elapsed time because a cold-start container
- * boot can take 30–60s — the elapsed counter is the difference between
- * "patient" and "is this hung?". Returns the raw result so the caller can
- * branch between the chat loop (ok) and a diagnostic note (anything else).
+ * A first reply waits on the sandbox, the agent runtime and the model, which
+ * can take minutes with a local model, so each stage gets its own line and
+ * timer, and a long wait asks whether to keep going instead of failing.
+ * Returns the outcome so the caller can branch between the chat loop (ok)
+ * and a diagnostic note (anything else).
  */
-async function confirmAssistantResponds(): Promise<PingOutcome> {
-  const s = p.spinner();
+async function confirmAssistantResponds(): Promise<{ outcome: PingOutcome; wait: FirstChatWait }> {
   const start = Date.now();
-  const label = 'Waking your assistant…';
-  s.start(fitToWidth(label, ' (99m 59s)'));
-  const tick = setInterval(() => {
-    const suffix = ` (${fmtDuration(Date.now() - start)})`;
-    s.message(`${fitToWidth(label, suffix)}${k.dim(suffix)}`);
-  }, 1000);
+  const ping = startCliPing(MAX_WAIT_MS);
+  const probe = createStageProbe({
+    since: start,
+    readSession: () => inspectAgentSession(process.cwd(), PING_AGENT_FOLDER),
+    heartbeatFile: heartbeatPath,
+  });
+  const display = new StageDisplay(probe, {}, start);
+  display.start();
+  void display.tick();
+  const tick = setInterval(() => void display.tick(), 1000);
 
-  const outcome = await pingCliAgent();
+  const { outcome, keptWaiting, skipped } = await waitForFirstReply({
+    ping,
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    ask: async (waitedMs, signal) => {
+      display.pause();
+      const choice = await askKeepWaiting(display.stage, waitedMs, signal);
+      display.resume();
+      return choice;
+    },
+  });
 
   clearInterval(tick);
-  const suffix = ` (${fmtDuration(Date.now() - start)})`;
-  if (outcome.result === 'ok') {
-    s.stop(`${k.bold(fitToWidth('Your assistant is ready.', suffix))}${k.dim(suffix)}`);
-  } else {
-    s.stop(`${k.bold(fitToWidth(pingFailureCopy(outcome).spinner, suffix))}${k.dim(suffix)}`, 1);
-  }
-  return outcome;
+  await display.idle();
+  if (outcome.result === 'ok') display.succeed('Your assistant is ready.');
+  else display.fail(pingFailureCopy(outcome).spinner);
+  return { outcome, wait: { keptWaiting, skipped, stage: display.stage } };
+}
+
+async function askKeepWaiting(
+  stage: FirstChatStage,
+  waitedMs: number,
+  signal: AbortSignal,
+): Promise<WaitChoice | undefined> {
+  const answer = await brightSelect<WaitChoice>({
+    message: keepWaitingQuestion(stage, waitedMs),
+    options: [
+      {
+        value: 'wait',
+        label: 'Keep waiting',
+        hint: `${EXTRA_WAIT_MS / 60_000} more minutes; a local model can take a few minutes to load`,
+      },
+      { value: 'skip', label: 'Skip the first chat and finish setup', hint: 'chat later with `pnpm run chat hi`' },
+    ],
+    signal,
+    abortedLabel: 'Your assistant replied.',
+  });
+  if (signal.aborted) return undefined;
+  const choice = ensureAnswer(answer) as WaitChoice;
+  setupLog.userInput('first_chat_wait', choice);
+  return choice;
 }
 
 /**

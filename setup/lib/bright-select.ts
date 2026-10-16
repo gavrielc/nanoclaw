@@ -64,6 +64,10 @@ export interface BrightSelectOptions<T> {
   message: string;
   options: BrightSelectOption<T>[];
   initialValue?: T;
+  /** Closes the prompt from outside; it then resolves to the cancel symbol. */
+  signal?: AbortSignal;
+  /** Shown instead of a struck-out choice when `signal` closed the prompt. */
+  abortedLabel?: string;
 }
 
 /**
@@ -98,14 +102,22 @@ export function flushStdin(windowMs = 50): Promise<void> {
  * `p.select`.
  */
 export async function brightSelect<T>(opts: BrightSelectOptions<T>): Promise<T | symbol> {
-  const { message, options, initialValue } = opts;
+  const { message, options, initialValue, signal, abortedLabel } = opts;
 
   await flushStdin();
   return new SelectPrompt({
     options: options as Array<{ value: T; label?: string; hint?: string }>,
     initialValue,
+    signal,
     render() {
       const st = this.state as PromptState;
+      if (st === 'cancel' && signal?.aborted && abortedLabel) {
+        return [
+          styleText('gray', BAR),
+          `${headerIcon('submit')}  ${message}`,
+          `${styleText('gray', BAR)}  ${styleText('dim', brandBody(abortedLabel))}`,
+        ].join('\n');
+      }
       const color = stateColor(st);
       const bar = styleText(color, BAR);
       const grayBar = styleText('gray', BAR);

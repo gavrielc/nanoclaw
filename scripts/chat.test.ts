@@ -52,6 +52,13 @@ describe('chat client', () => {
     expect(r).toEqual({ code: 4, stdout: 'Done part one.\nSpending limit reached\n' });
   }, 20_000);
 
+  it('exits 3 at the deadline the caller sets', async () => {
+    const started = Date.now();
+    const r = await chat([], { NANOCLAW_CHAT_TIMEOUT_MS: '500' });
+    expect(r).toEqual({ code: 3, stdout: '' });
+    expect(Date.now() - started).toBeLessThan(15_000);
+  }, 20_000);
+
   it('echoes socket lines as-is in raw-lines mode', async () => {
     const notice = { text: 'Spending limit reached', failureNotice: true };
     const r = await chat([notice], { NANOCLAW_CHAT_RAW_LINES: '1' });
