@@ -64,7 +64,7 @@ export interface BrightSelectOptions<T> {
   message: string;
   options: BrightSelectOption<T>[];
   initialValue?: T;
-  /** Closes the prompt from outside; it then resolves to the cancel symbol. */
+  /** Closes the prompt from outside; it then resolves to a cancel symbol. */
   signal?: AbortSignal;
   /** Shown instead of a struck-out choice when `signal` closed the prompt. */
   abortedLabel?: string;
@@ -95,6 +95,20 @@ export function flushStdin(windowMs = 50): Promise<void> {
   });
 }
 
+type Option<T> = { value: T; label?: string; hint?: string };
+
+// clack's own signal handling closes the prompt without drawing its last
+// frame, leaving the options on screen. Close it the way a cancel key does.
+class AbortableSelect<T> extends SelectPrompt<Option<T>> {
+  abort(): void {
+    this.state = 'cancel';
+    (this as unknown as { render(): void }).render();
+    this.close();
+  }
+}
+
+const ABORTED = Symbol('aborted');
+
 /**
  * Matches the return shape of `p.select` — resolves to the selected value
  * on submit, or to clack's cancel symbol on Ctrl-C / Esc. Callers pass
@@ -105,10 +119,10 @@ export async function brightSelect<T>(opts: BrightSelectOptions<T>): Promise<T |
   const { message, options, initialValue, signal, abortedLabel } = opts;
 
   await flushStdin();
-  return new SelectPrompt({
-    options: options as Array<{ value: T; label?: string; hint?: string }>,
+  if (signal?.aborted) return ABORTED;
+  const prompt = new AbortableSelect<T>({
+    options: options as Option<T>[],
     initialValue,
-    signal,
     render() {
       const st = this.state as PromptState;
       if (st === 'cancel' && signal?.aborted && abortedLabel) {
@@ -146,7 +160,14 @@ export async function brightSelect<T>(opts: BrightSelectOptions<T>): Promise<T |
       lines.push(styleText(color, CAP_BOT));
       return lines.join('\n');
     },
-  }).prompt() as Promise<T | symbol>;
+  });
+  const abort = (): void => prompt.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    return (await prompt.prompt()) as T | symbol;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
 }
 
 export { isCancel };

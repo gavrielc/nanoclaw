@@ -64,7 +64,8 @@ export async function waitForFirstReply(opts: WaitOptions): Promise<FirstReplyWa
       continue;
     }
     ping.stop();
-    return { outcome: await ping.outcome, keptWaiting, skipped: true };
+    const outcome = await ping.outcome;
+    return { outcome, keptWaiting, skipped: outcome.result !== 'ok' };
   }
 }
 

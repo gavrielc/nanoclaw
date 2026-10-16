@@ -136,6 +136,13 @@ describe('startCliPing', () => {
     await expect(ping.outcome).resolves.toEqual({ result: 'no_reply' });
   });
 
+  it('keeps a reply the client printed before it was stopped', async () => {
+    const ping = startCliPing(600_000);
+    children.at(-1)?.stdout.emit('data', raw('pong'));
+    ping.stop();
+    await expect(ping.outcome).resolves.toEqual({ result: 'ok' });
+  });
+
   it('kills a chat client that outlives its own deadline', async () => {
     vi.useFakeTimers();
     const ping = startCliPing(1000);

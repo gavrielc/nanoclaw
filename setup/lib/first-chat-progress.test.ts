@@ -174,6 +174,22 @@ describe('StageDisplay', () => {
     expect(ui.lines.slice(-2)).toEqual(['Reply received (1m 0s)', 'Your assistant is ready. (1m 5s)']);
   });
 
+  it('keeps the timer running while a probe read hangs', async () => {
+    let now = 0;
+    const ui = fakeUi();
+    const display = new StageDisplay({ read: () => new Promise(() => {}) }, { ...ui.deps, now: () => now }, 0);
+    display.start();
+    void display.tick();
+    now = 7000;
+    void display.tick();
+    expect(ui.spinners[0].label).toMatch(/^Waking your assistant… \(7s\)/);
+    vi.useFakeTimers();
+    const idle = display.idle();
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(idle).resolves.toBeUndefined();
+    vi.useRealTimers();
+  });
+
   it('claims no stage when the probe never reads', async () => {
     let now = 0;
     const ui = fakeUi();

@@ -886,7 +886,8 @@ async function confirmAssistantResponds(): Promise<{ outcome: PingOutcome; wait:
     ask: async (waitedMs, signal) => {
       display.pause();
       const choice = await askKeepWaiting(display.stage, waitedMs, signal);
-      display.resume();
+      // Otherwise the wait is over; the closing lines print without a spinner.
+      if (choice === 'wait') display.resume();
       return choice;
     },
   });

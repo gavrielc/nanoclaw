@@ -147,9 +147,17 @@ export function pingOutcome(exitCode: number | null, stdout: string, stderr: str
 }
 
 export interface CliPing {
-  /** Settles when the chat client exits, or with no_reply once stopped. */
+  /** Settles when the chat client exits, or once stopped. */
   outcome: Promise<PingOutcome>;
   stop(): void;
+}
+
+// A stopped client may already have printed a reply while it waits out its
+// silence window; that reply still counts.
+function outcomeSoFar(stdout: string, stderr: string): PingOutcome {
+  const replies = parseReplies(stdout);
+  if (replies.length === 0) return { result: 'no_reply' };
+  return pingOutcome(replies.some((r) => r.failureNotice) ? 4 : 0, stdout, stderr);
 }
 
 // The client's own deadline should win, so its exit code is the one read.
@@ -159,22 +167,17 @@ const GUARD_GRACE_MS = 5_000;
 export function startCliPing(deadlineMs: number): CliPing {
   let stop = (): void => {};
   const outcome = new Promise<PingOutcome>((resolve) => {
-    // --silent keeps pnpm's banner out of stdout, which holds only replies.
-    // Its own process group, so a kill also reaches the chat client under pnpm.
-    const child = spawn('pnpm', ['--silent', 'run', 'chat', 'ping'], {
+    // `pnpm run chat` without pnpm: one process, so a kill reaches the client
+    // itself, and a closing terminal signals it along with setup.
+    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/chat.ts', 'ping'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
       env: { ...process.env, NANOCLAW_CHAT_RAW_LINES: '1', NANOCLAW_CHAT_TIMEOUT_MS: String(deadlineMs) },
     });
     let stdout = '';
     let stderr = '';
     let settled = false;
     const kill = (): void => {
-      try {
-        process.kill(-(child.pid as number), 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
+      child.kill('SIGKILL');
     };
     const settle = (result: PingOutcome): void => {
       if (settled) return;
@@ -187,12 +190,12 @@ export function startCliPing(deadlineMs: number): CliPing {
     process.once('exit', kill);
     const guard = setTimeout(() => {
       kill();
-      settle({ result: 'no_reply' });
+      settle(outcomeSoFar(stdout, stderr));
     }, deadlineMs + GUARD_GRACE_MS);
     stop = () => {
       if (settled) return;
       kill();
-      settle({ result: 'no_reply' });
+      settle(outcomeSoFar(stdout, stderr));
     };
 
     child.stdout.on('data', (chunk: Buffer) => {

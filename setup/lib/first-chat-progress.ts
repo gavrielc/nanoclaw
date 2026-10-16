@@ -33,6 +33,8 @@ const COPY: Record<FirstChatStage, { running: string; done: string; waitingOn: s
   },
 };
 
+// How long setup waits for a probe read still in flight before moving on.
+const IDLE_WAIT_MS = 3_000;
 // Shown once the model has been quiet this long; a hosted model rarely is.
 const SLOW_MODEL_HINT_MS = 20_000;
 const SLOW_MODEL_HINT = 'A local model can take a few minutes to load before its first reply.';
@@ -188,16 +190,20 @@ export class StageDisplay {
     this.openSpinner();
   }
 
-  /** Read the signals, print the stages that finished and refresh the timer. */
+  /** Refresh the timer and read the signals; a slow read never stalls the timer. */
   tick(): Promise<void> {
     if (this.done) return Promise.resolve();
     this.reading ??= this.read().finally(() => (this.reading = null));
-    return this.reading;
+    this.redraw();
+    return this.reading.then(() => this.redraw());
   }
 
-  /** Resolves once no probe read is in flight. */
+  /** Resolves once no probe read is in flight, or after a short cap. */
   async idle(): Promise<void> {
-    await this.reading;
+    let timer: NodeJS.Timeout | undefined;
+    const cap = new Promise<void>((resolve) => (timer = setTimeout(resolve, IDLE_WAIT_MS)));
+    await Promise.race([this.reading, cap]);
+    clearTimeout(timer);
   }
 
   pause(): void {
@@ -233,12 +239,13 @@ export class StageDisplay {
     } catch {
       // Keep the last stage; the next tick reads again.
     }
-    if (this.done) return;
-    if (signals) {
-      this.known = true;
-      this.pending.push(...this.tracker.advance(stageFor(signals), this.now()));
-    }
-    if (!this.spinner) return;
+    if (this.done || !signals) return;
+    this.known = true;
+    this.pending.push(...this.tracker.advance(stageFor(signals), this.now()));
+  }
+
+  private redraw(): void {
+    if (this.done || !this.spinner) return;
     if (this.pending.length > 0) {
       this.flush();
       this.openSpinner();

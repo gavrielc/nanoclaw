@@ -96,6 +96,15 @@ describe('waitForFirstReply', () => {
     expect(ping.stop).not.toHaveBeenCalled();
   });
 
+  it('does not count a skip as skipped when stopping finds a reply', async () => {
+    let resolve!: (outcome: PingOutcome) => void;
+    const outcome = new Promise<PingOutcome>((r) => (resolve = r));
+    const ping = { outcome, stop: vi.fn(() => resolve({ result: 'ok' })) };
+    const done = waitForFirstReply({ ping, interactive: true, ask: async () => 'skip' as const });
+    await vi.advanceTimersByTimeAsync(FIRST_WAIT_MS);
+    await expect(done).resolves.toEqual({ outcome: { result: 'ok' }, keptWaiting: 0, skipped: false });
+  });
+
   it('returns at once when the chat client ends early', async () => {
     const { ping, reply } = fakePing();
     const { ask } = answers();
