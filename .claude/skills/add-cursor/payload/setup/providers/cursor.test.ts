@@ -5,35 +5,83 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { GatewayCredentialConnection, GatewayCredentialTarget } from '../gateways/credential-store.js';
+
 const mockSpawn = vi.fn();
 const mockExecFileSync = vi.fn();
+const mockGetCredentialStore = vi.fn();
 const tempDirs: string[] = [];
 vi.mock('child_process', () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
   execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
+}));
+vi.mock('../gateways/credential-store.js', () => ({
+  getCredentialStore: (...args: unknown[]) => mockGetCredentialStore(...args),
 }));
 
 vi.mock('../logs.js', () => ({ step: vi.fn(), userInput: vi.fn() }));
 
 import {
   CURSOR_BARRELS,
-  cursorSecretExists,
-  findCursorModelsSecret,
-  findCursorSecret,
-  listCursorSecrets,
+  CURSOR_CREDENTIAL_PLACEHOLDER,
+  CURSOR_CREDENTIAL_TARGETS,
+  cursorCredentialConnections,
+  cursorCredentialsConnected,
+  loginHelperCommand,
   looksLikeCursorApiKey,
   runInherit,
   runCursorAuthStep,
   runCursorInstallCheck,
   runCursorLoginAuth,
-  vaultCursorKey,
-  vaultCursorKeyFile,
+  saveCursorKey,
   verifyCursorInstall,
 } from './cursor.js';
+
+/** In-memory gateway: one entry per target name, `save` records what it stored. */
+function fakeGateway(stored: Record<string, { reusable: boolean }> = {}) {
+  const targets: GatewayCredentialTarget[] = [];
+  const saves: Array<{ name: string; value: unknown }> = [];
+  const kept: string[] = [];
+  const failSave = new Set<string>();
+  const connection = (target: GatewayCredentialTarget): GatewayCredentialConnection => {
+    targets.push(target);
+    return {
+      find: async () => stored[target.name] ?? null,
+      keep: async () => {
+        kept.push(target.name);
+      },
+      save: async (value) => {
+        if (failSave.has(target.name)) throw new Error(`${target.name} save failed`);
+        saves.push({ name: target.name, value });
+        stored[target.name] = { reusable: true };
+      },
+    };
+  };
+  const store = { has: vi.fn(), save: vi.fn(), connection };
+  mockGetCredentialStore.mockResolvedValue(store);
+  return { store, targets, saves, kept, failSave };
+}
+
+function exitThrows(): void {
+  vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
+    throw new Error(`exit:${code}`);
+  }) as typeof process.exit);
+}
+
+// The container's pinned Bun, read the way the login helper reads it.
+const pinnedBun = (() => {
+  try {
+    return fs.readFileSync(path.join(process.cwd(), 'container', 'Dockerfile'), 'utf-8').match(/^ARG BUN_VERSION=(\S+)$/m)?.[1];
+  } catch {
+    return undefined;
+  }
+})();
 
 beforeEach(() => {
   mockSpawn.mockReset();
   mockExecFileSync.mockReset();
+  mockExecFileSync.mockReturnValue(`${pinnedBun}\n`);
+  mockGetCredentialStore.mockReset();
 });
 
 afterEach(() => {
@@ -166,526 +214,162 @@ describe('looksLikeCursorApiKey', () => {
   });
 });
 
-describe('findCursorSecret', () => {
-  it('matches only the SDK key-exchange route instead of stale broad rules', () => {
-    const stale = { id: 'old', name: 'Cursor', type: 'generic', hostPattern: 'api.cursor.com' };
-    const broad = { id: 'broad', name: 'Cursor', type: 'generic', hostPattern: 'api2.cursor.sh' };
-    const runtime = {
-      id: 'current',
-      name: 'Cursor SDK',
-      type: 'generic',
-      hostPattern: 'api2.cursor.sh',
-      pathPattern: '/auth/exchange_user_api_key',
-    };
-    expect(findCursorSecret([stale, broad, runtime])?.id).toBe('current');
-    expect(findCursorSecret([stale, broad])).toBeUndefined();
+describe('Cursor gateway credentials', () => {
+  it('describes one path-scoped bearer api-key entry per Cursor route, carrying the container placeholder', async () => {
+    const { targets } = fakeGateway();
+    await cursorCredentialConnections();
+    expect(targets).toEqual(CURSOR_CREDENTIAL_TARGETS);
+    expect(targets.map((target) => [target.name, target.host, target.path])).toEqual([
+      ['Cursor', 'api2.cursor.sh', '/auth/exchange_user_api_key'],
+      ['Cursor models', 'api.cursor.com', '/v1/models'],
+    ]);
+    for (const target of targets) {
+      expect(target).toMatchObject({
+        kind: 'api-key',
+        proxyValue: CURSOR_CREDENTIAL_PLACEHOLDER,
+        injection: { headerName: 'Authorization', valueFormat: 'Bearer {value}' },
+      });
+    }
   });
 
-  it('matches hosts case-insensitively but keeps the path exact', () => {
-    const exact = {
-      id: 'exact',
-      name: 'Cursor',
-      type: 'generic',
-      hostPattern: 'API2.CURSOR.SH',
-      pathPattern: '/auth/exchange_user_api_key',
-    };
-    const broadPath = { ...exact, id: 'broad-path', pathPattern: '/*' };
-    expect(findCursorSecret([broadPath, exact])?.id).toBe('exact');
+  installedIt('uses the same placeholder the host adapter hands the container', () => {
+    const host = fs.readFileSync(path.join(process.cwd(), 'src', 'providers', 'cursor.ts'), 'utf-8');
+    expect(host).toContain(`CURSOR_API_KEY_PLACEHOLDER = '${CURSOR_CREDENTIAL_PLACEHOLDER}'`);
   });
 
-  it('matches the separate original-key model-discovery route', () => {
-    const exchange = {
-      id: 'exchange',
-      name: 'Cursor',
-      type: 'generic',
-      hostPattern: 'api2.cursor.sh',
-      pathPattern: '/auth/exchange_user_api_key',
-    };
-    const models = {
-      id: 'models',
-      name: 'Cursor models',
-      type: 'generic',
-      hostPattern: 'api.cursor.com',
-      pathPattern: '/v1/models',
-    };
-    expect(findCursorModelsSecret([exchange, models])?.id).toBe('models');
-    expect(findCursorModelsSecret([exchange])).toBeUndefined();
-  });
-});
-
-describe('Cursor secret discovery', () => {
-  it('requires a parseable OneCLI list with an array payload', () => {
-    mockExecFileSync.mockReturnValueOnce(JSON.stringify({ data: [] }));
-    expect(listCursorSecrets()).toEqual([]);
-
-    mockExecFileSync.mockReturnValueOnce(JSON.stringify({ data: null }));
-    expect(() => listCursorSecrets()).toThrow('invalid secret list');
-
-    mockExecFileSync.mockReturnValueOnce('not json');
-    expect(() => listCursorSecrets()).toThrow();
+  it('refuses a gateway that only stores provider-named credentials', async () => {
+    mockGetCredentialStore.mockResolvedValue({ has: vi.fn(), save: vi.fn() });
+    await expect(cursorCredentialConnections()).rejects.toThrow('does not support provider credential connections');
   });
 
-  it('reports connected only when both narrow routes exist', () => {
-    const exchange = {
-      id: 'exchange',
-      name: 'Cursor',
-      type: 'generic',
-      hostPattern: 'api2.cursor.sh',
-      pathPattern: '/auth/exchange_user_api_key',
-    };
-    const models = {
-      id: 'models',
-      name: 'Cursor models',
-      type: 'generic',
-      hostPattern: 'api.cursor.com',
-      pathPattern: '/v1/models',
-    };
-    mockExecFileSync.mockReturnValueOnce(JSON.stringify({ data: [exchange, models] }));
-    expect(cursorSecretExists()).toBe(true);
-    mockExecFileSync.mockReturnValueOnce(JSON.stringify({ data: [exchange] }));
-    expect(cursorSecretExists()).toBe(false);
+  it('reports connected only when both entries exist and are reusable', async () => {
+    const stored: Record<string, { reusable: boolean }> = { Cursor: { reusable: true } };
+    fakeGateway(stored);
+    expect(await cursorCredentialsConnected(await cursorCredentialConnections())).toBe(false);
+    stored['Cursor models'] = { reusable: false };
+    expect(await cursorCredentialsConnected(await cursorCredentialConnections())).toBe(false);
+    stored['Cursor models'] = { reusable: true };
+    expect(await cursorCredentialsConnected(await cursorCredentialConnections())).toBe(true);
   });
 
-  it('treats an unavailable or malformed vault as not connected', () => {
-    mockExecFileSync.mockImplementationOnce(() => {
-      throw new Error('ECONNREFUSED');
-    });
-    expect(cursorSecretExists()).toBe(false);
-    mockExecFileSync.mockReturnValueOnce('{');
-    expect(cursorSecretExists()).toBe(false);
+  it('saves the trimmed key to both entries and refuses an empty one', async () => {
+    const { saves } = fakeGateway();
+    const connections = await cursorCredentialConnections();
+    await saveCursorKey('  cursor_secret_material  ', connections);
+    expect(saves).toEqual([
+      { name: 'Cursor', value: 'cursor_secret_material' },
+      { name: 'Cursor models', value: 'cursor_secret_material' },
+    ]);
+    await expect(saveCursorKey('   ', connections)).rejects.toThrow('empty');
   });
 
-  it('finds OneCLI in ~/.local/bin for standalone provider-auth runs', () => {
-    mockExecFileSync.mockReturnValueOnce(JSON.stringify({ data: [] }));
-    listCursorSecrets();
-    const options = mockExecFileSync.mock.calls[0]![2] as { env: NodeJS.ProcessEnv };
-    expect(options.env.PATH?.split(path.delimiter)[0]).toBe(path.join(os.homedir(), '.local', 'bin'));
+  it('skips sign-in when the gateway already holds both entries, letting it reconcile them', async () => {
+    const { kept } = fakeGateway({ Cursor: { reusable: true }, 'Cursor models': { reusable: true } });
+    await runCursorAuthStep();
+    expect(kept).toEqual(['Cursor', 'Cursor models']);
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it('fails before interactive login when the vault cannot be read', async () => {
-    mockExecFileSync.mockImplementationOnce(() => {
-      throw new Error('vault unavailable');
-    });
-    vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
-      throw new Error(`exit:${code}`);
-    }) as typeof process.exit);
+  it('names the entry that already holds the new key when a later save fails', async () => {
+    const { failSave, saves } = fakeGateway();
+    failSave.add('Cursor models');
+    await expect(saveCursorKey('cursor_secret_material', await cursorCredentialConnections())).rejects.toThrow(
+      /Saved the new key for Cursor, but saving it for Cursor models failed \(Cursor models save failed\)\. Re-run provider-auth/,
+    );
+    expect(saves.map((entry) => entry.name)).toEqual(['Cursor']);
+  });
+
+  it('fails before interactive login when the gateway cannot be read', async () => {
+    mockGetCredentialStore.mockRejectedValue(new Error('Unknown gateway: nope'));
+    exitThrows();
     await expect(runCursorAuthStep()).rejects.toThrow('exit:1');
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 });
 
-describe('vaultCursorKeyFile', () => {
-  it('creates both missing routes from the same file without putting the key in argv', () => {
-    mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create') {
-        return JSON.stringify({ id: args.includes('api2.cursor.sh') ? 'exchange-new' : 'models-new' });
-      }
-      throw new Error(`unexpected ${cmd} ${args.join(' ')}`);
+describe('loginHelperCommand', () => {
+  installedIt('uses the host Bun only when it matches the container pin', () => {
+    expect(loginHelperCommand()).toEqual({ command: 'bun', prefix: [] });
+    mockExecFileSync.mockReturnValue('0.0.1\n');
+    expect(loginHelperCommand()).toEqual({ command: 'pnpm', prefix: [`--package=bun@${pinnedBun}`, 'dlx', 'bun'] });
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
     });
-
-    expect(vaultCursorKeyFile('/secure/api-key')).toEqual(['exchange-new', 'models-new']);
-    const creates = mockExecFileSync.mock.calls.filter((call) => call[1][1] === 'create');
-    expect(creates).toHaveLength(2);
-    for (const [, args] of creates) {
-      expect(args).toContain('/secure/api-key');
-      expect(args).not.toContain('--value');
-      expect(args).not.toContain('cursor_secret_material');
-    }
-  });
-
-  it('is idempotent when both exact routes already exist', () => {
-    mockExecFileSync.mockReturnValueOnce(
-      JSON.stringify({
-        data: [
-          {
-            id: 'exchange',
-            name: 'Cursor',
-            type: 'generic',
-            hostPattern: 'api2.cursor.sh',
-            pathPattern: '/auth/exchange_user_api_key',
-          },
-          {
-            id: 'models',
-            name: 'Cursor models',
-            type: 'generic',
-            hostPattern: 'api.cursor.com',
-            pathPattern: '/v1/models',
-          },
-        ],
-      }),
-    );
-    expect(vaultCursorKeyFile('/secure/api-key')).toEqual([]);
-    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
-  });
-
-  it('rotates both routes by staging replacements before deleting old entries', () => {
-    const deleted: string[] = [];
-    const sequence: string[] = [];
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') {
-        return JSON.stringify({
-          data: [
-            {
-              id: 'exchange-old',
-              name: 'Cursor',
-              type: 'generic',
-              hostPattern: 'api2.cursor.sh',
-              pathPattern: '/auth/exchange_user_api_key',
-            },
-            {
-              id: 'models-old',
-              name: 'Cursor models',
-              type: 'generic',
-              hostPattern: 'api.cursor.com',
-              pathPattern: '/v1/models',
-            },
-          ],
-        });
-      }
-      if (args[1] === 'create') {
-        sequence.push(`create:${args.includes('api2.cursor.sh') ? 'exchange' : 'models'}`);
-        return JSON.stringify({ id: args.includes('api2.cursor.sh') ? 'exchange-new' : 'models-new' });
-      }
-      if (args[1] === 'delete') {
-        const id = args[args.indexOf('--id') + 1]!;
-        deleted.push(id);
-        sequence.push(`delete:${id}`);
-        return '';
-      }
-      throw new Error(`unexpected ${args.join(' ')}`);
-    });
-    expect(vaultCursorKeyFile('/secure/api-key', { replaceExisting: true })).toEqual(['exchange-new', 'models-new']);
-    expect(deleted).toEqual(['exchange-old', 'models-old']);
-    expect(sequence).toEqual(['create:exchange', 'create:models', 'delete:exchange-old', 'delete:models-old']);
-  });
-
-  it('preserves old routes when staging a replacement pair fails', () => {
-    const deleted: string[] = [];
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') {
-        return JSON.stringify({
-          data: [
-            {
-              id: 'exchange-old',
-              name: 'Cursor',
-              type: 'generic',
-              hostPattern: 'api2.cursor.sh',
-              pathPattern: '/auth/exchange_user_api_key',
-            },
-            {
-              id: 'models-old',
-              name: 'Cursor models',
-              type: 'generic',
-              hostPattern: 'api.cursor.com',
-              pathPattern: '/v1/models',
-            },
-          ],
-        });
-      }
-      if (args[1] === 'create' && args.includes('api2.cursor.sh')) return JSON.stringify({ id: 'exchange-new' });
-      if (args[1] === 'create') throw new Error('replacement models failed');
-      if (args[1] === 'delete') {
-        deleted.push(args[args.indexOf('--id') + 1]!);
-        return '';
-      }
-      throw new Error(`unexpected ${args.join(' ')}`);
-    });
-    expect(() => vaultCursorKeyFile('/secure/api-key', { replaceExisting: true })).toThrow('replacement models failed');
-    expect(deleted).toEqual(['exchange-new']);
-  });
-
-  it('keeps staged replacements and reports stale cleanup failures', () => {
-    const deleted: string[] = [];
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') {
-        return JSON.stringify({
-          data: [
-            {
-              id: 'exchange-old',
-              name: 'Cursor',
-              type: 'generic',
-              hostPattern: 'api2.cursor.sh',
-              pathPattern: '/auth/exchange_user_api_key',
-            },
-            {
-              id: 'models-old',
-              name: 'Cursor models',
-              type: 'generic',
-              hostPattern: 'api.cursor.com',
-              pathPattern: '/v1/models',
-            },
-          ],
-        });
-      }
-      if (args[1] === 'create') {
-        return JSON.stringify({ id: args.includes('api2.cursor.sh') ? 'exchange-new' : 'models-new' });
-      }
-      if (args[1] === 'delete') {
-        const id = args[args.indexOf('--id') + 1]!;
-        deleted.push(id);
-        if (id === 'exchange-old') throw new Error('delete denied');
-        return '';
-      }
-      throw new Error(`unexpected ${args.join(' ')}`);
-    });
-    expect(() => vaultCursorKeyFile('/secure/api-key', { replaceExisting: true })).toThrow('stale OneCLI secret');
-    expect(deleted).toEqual(['exchange-old', 'models-old']);
-    expect(deleted).not.toContain('exchange-new');
-    expect(deleted).not.toContain('models-new');
-  });
-
-  it('repairs a partial prior install by creating only the missing route', () => {
-    mockExecFileSync
-      .mockReturnValueOnce(
-        JSON.stringify({
-          data: [
-            {
-              id: 'exchange',
-              name: 'Cursor',
-              type: 'generic',
-              hostPattern: 'api2.cursor.sh',
-              pathPattern: '/auth/exchange_user_api_key',
-            },
-          ],
-        }),
-      )
-      .mockReturnValueOnce(JSON.stringify({ id: 'models-new' }));
-    expect(vaultCursorKeyFile('/secure/api-key')).toEqual(['models-new']);
-    const creates = mockExecFileSync.mock.calls.filter((call) => call[1][1] === 'create');
-    expect(creates).toHaveLength(1);
-    expect(creates[0]![1]).toContain('api.cursor.com');
-  });
-
-  it('rolls back a route created by this call when the second create fails', () => {
-    const deleted: string[] = [];
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create' && args.includes('api2.cursor.sh')) return JSON.stringify({ id: 'exchange-new' });
-      if (args[1] === 'create') throw new Error('models create failed');
-      if (args[1] === 'delete') {
-        deleted.push(args[args.indexOf('--id') + 1]!);
-        return '';
-      }
-      throw new Error(`unexpected ${args.join(' ')}`);
-    });
-    expect(() => vaultCursorKeyFile('/secure/api-key')).toThrow('models create failed');
-    expect(deleted).toEqual(['exchange-new']);
-  });
-
-  it('preserves the create error even if rollback also fails', () => {
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create' && args.includes('api2.cursor.sh')) return JSON.stringify({ id: 'exchange-new' });
-      if (args[1] === 'create') throw new Error('models create failed');
-      if (args[1] === 'delete') throw new Error('rollback unavailable');
-      throw new Error(`unexpected ${args.join(' ')}`);
-    });
-    expect(() => vaultCursorKeyFile('/secure/api-key')).toThrow('models create failed');
-  });
-
-  it('reconciles and removes a created route when OneCLI returns malformed create output', () => {
-    let listCalls = 0;
-    const deleted: string[] = [];
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') {
-        listCalls++;
-        return listCalls === 1
-          ? JSON.stringify({ data: [] })
-          : JSON.stringify({
-              data: [
-                {
-                  id: 'created-despite-bad-output',
-                  name: 'Cursor',
-                  type: 'generic',
-                  hostPattern: 'api2.cursor.sh',
-                  pathPattern: '/auth/exchange_user_api_key',
-                },
-              ],
-            });
-      }
-      if (args[1] === 'create') return 'not json';
-      if (args[1] === 'delete') {
-        deleted.push(args[args.indexOf('--id') + 1]!);
-        return '';
-      }
-      throw new Error(`unexpected ${args.join(' ')}`);
-    });
-    expect(() => vaultCursorKeyFile('/secure/api-key')).toThrow();
-    expect(deleted).toEqual(['created-despite-bad-output']);
-  });
-});
-
-describe('vaultCursorKey handoff lifecycle', () => {
-  it('uses a mode-0600 temp file and removes it after success', () => {
-    let keyPath = '';
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create') {
-        keyPath = args[args.indexOf('--file') + 1]!;
-        expect(fs.readFileSync(keyPath, 'utf-8')).toBe('cursor_secret_material');
-        expect(fs.statSync(keyPath).mode & 0o777).toBe(0o600);
-        return JSON.stringify({ id: args.includes('api2.cursor.sh') ? 'exchange' : 'models' });
-      }
-      return '';
-    });
-    vaultCursorKey('cursor_secret_material');
-    expect(fs.existsSync(keyPath)).toBe(false);
-  });
-
-  it('removes the temp file when vaulting fails', () => {
-    let keyPath = '';
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create') {
-        keyPath = args[args.indexOf('--file') + 1]!;
-        throw new Error('vault down');
-      }
-      return '';
-    });
-    expect(() => vaultCursorKey('cursor_secret_material')).toThrow('vault down');
-    expect(fs.existsSync(keyPath)).toBe(false);
+    expect(loginHelperCommand().command).toBe('pnpm');
   });
 });
 
 describe('runCursorLoginAuth', () => {
-  it('uses the SDK helper, vaults via a mode-0600 file, and deletes the handoff', async () => {
-    const vaultedPaths: string[] = [];
-    mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
-      if (cmd === 'onecli' && args[1] === 'list') return JSON.stringify({ data: [] });
-      if (cmd === 'onecli' && args[1] === 'create') {
-        const vaultedPath = args[args.indexOf('--file') + 1];
-        vaultedPaths.push(vaultedPath!);
-        expect(vaultedPath).toBeDefined();
-        expect(fs.readFileSync(vaultedPath!, 'utf-8')).toBe('cursor_oauth_minted_key_value');
-        expect(fs.statSync(vaultedPath!).mode & 0o777).toBe(0o600);
-        return JSON.stringify({ id: args.includes('api2.cursor.sh') ? 'exchange' : 'models' });
-      }
-      return '';
-    });
-
+  function helperWrites(content: string | null, mode = 0o600, exitCode = 0): { keyPath: () => string } {
+    let keyPath = '';
     mockSpawn.mockImplementation((...args: unknown[]) => {
       expect(args[0]).toBe('bun');
       const helperArgs = args[1] as string[];
       expect(helperArgs[0]).toMatch(/cursor-auth\.ts$/);
-      const keyPath = helperArgs[helperArgs.indexOf('--output') + 1]!;
-      fs.writeFileSync(keyPath, 'cursor_oauth_minted_key_value', { mode: 0o600 });
+      keyPath = helperArgs[helperArgs.indexOf('--output') + 1]!;
+      if (content !== null) {
+        fs.writeFileSync(keyPath, content, { mode });
+        fs.chmodSync(keyPath, mode);
+      }
       const child = new EventEmitter();
-      setImmediate(() => child.emit('close', 0));
+      setImmediate(() => child.emit('close', exitCode));
       return child;
     });
+    return { keyPath: () => keyPath };
+  }
 
-    await runCursorLoginAuth('browser');
-
-    const vaultCalls = mockExecFileSync.mock.calls.filter((c) => c[0] === 'onecli' && c[1][1] === 'create');
-    expect(vaultCalls).toHaveLength(2);
-    const vaultArgs = vaultCalls.map((call) => call[1] as string[]);
-    expect(
-      vaultArgs.some((args) => args.includes('api2.cursor.sh') && args.includes('/auth/exchange_user_api_key')),
-    ).toBe(true);
-    expect(vaultArgs.some((args) => args.includes('api.cursor.com') && args.includes('/v1/models'))).toBe(true);
-    for (const args of vaultArgs) {
-      expect(args).toContain('Bearer {value}');
-      expect(args).not.toContain('--value');
-    }
-    expect(new Set(vaultedPaths).size).toBe(1);
-    expect(fs.existsSync(vaultedPaths[0]!)).toBe(false);
+  it('saves the helper-minted key to both entries and deletes the handoff', async () => {
+    const { saves } = fakeGateway();
+    const helper = helperWrites('cursor_oauth_minted_key_value\n');
+    await runCursorLoginAuth('browser', await cursorCredentialConnections());
+    expect(saves.map((entry) => entry.value)).toEqual([
+      'cursor_oauth_minted_key_value',
+      'cursor_oauth_minted_key_value',
+    ]);
+    expect(fs.existsSync(path.dirname(helper.keyPath()))).toBe(false);
   });
 
   it('passes --no-browser for URL login', async () => {
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create') return JSON.stringify({ id: args.includes('api2.cursor.sh') ? 'exchange' : 'models' });
-      return '';
-    });
-    mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
-      expect(args).toContain('--no-browser');
-      const keyPath = args[args.indexOf('--output') + 1]!;
-      fs.writeFileSync(keyPath, 'cursor_url_minted_key', { mode: 0o600 });
-      const child = new EventEmitter();
-      setImmediate(() => child.emit('close', 0));
-      return child;
-    });
-    await runCursorLoginAuth('url');
+    fakeGateway();
+    helperWrites('cursor_url_minted_key');
+    await runCursorLoginAuth('url', await cursorCredentialConnections());
+    expect(mockSpawn.mock.calls[0]![1]).toContain('--no-browser');
   });
 
   it('cleans the handoff before exiting when the helper fails', async () => {
-    let keyPath = '';
-    mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
-      keyPath = args[args.indexOf('--output') + 1]!;
-      fs.writeFileSync(keyPath, 'partial-secret', { mode: 0o600 });
-      const child = new EventEmitter();
-      setImmediate(() => child.emit('close', 17));
-      return child;
-    });
-    vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
-      throw new Error(`exit:${code}`);
-    }) as typeof process.exit);
-    await expect(runCursorLoginAuth('browser')).rejects.toThrow('exit:1');
-    expect(fs.existsSync(keyPath)).toBe(false);
-    expect(mockExecFileSync).not.toHaveBeenCalled();
+    const { saves } = fakeGateway();
+    const helper = helperWrites('partial-secret', 0o600, 17);
+    exitThrows();
+    await expect(runCursorLoginAuth('browser', await cursorCredentialConnections())).rejects.toThrow('exit:1');
+    expect(fs.existsSync(path.dirname(helper.keyPath()))).toBe(false);
+    expect(saves).toEqual([]);
   });
 
   it('cleans the handoff before exiting when the helper writes no key', async () => {
-    let keyPath = '';
-    mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
-      keyPath = args[args.indexOf('--output') + 1]!;
-      const child = new EventEmitter();
-      setImmediate(() => child.emit('close', 0));
-      return child;
-    });
-    vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
-      throw new Error(`exit:${code}`);
-    }) as typeof process.exit);
-    await expect(runCursorLoginAuth('browser')).rejects.toThrow('exit:1');
-    expect(fs.existsSync(path.dirname(keyPath))).toBe(false);
-    expect(mockExecFileSync).not.toHaveBeenCalled();
+    const { saves } = fakeGateway();
+    const helper = helperWrites(null);
+    exitThrows();
+    await expect(runCursorLoginAuth('browser', await cursorCredentialConnections())).rejects.toThrow('exit:1');
+    expect(fs.existsSync(path.dirname(helper.keyPath()))).toBe(false);
+    expect(saves).toEqual([]);
   });
 
-  it('rejects and deletes a non-private OAuth handoff before vaulting', async () => {
-    let keyPath = '';
-    mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
-      keyPath = args[args.indexOf('--output') + 1]!;
-      fs.writeFileSync(keyPath, 'cursor_insecure_handoff', { mode: 0o644 });
-      fs.chmodSync(keyPath, 0o644);
-      const child = new EventEmitter();
-      setImmediate(() => child.emit('close', 0));
-      return child;
-    });
-    vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
-      throw new Error(`exit:${code}`);
-    }) as typeof process.exit);
-    await expect(runCursorLoginAuth('browser')).rejects.toThrow('exit:1');
-    expect(fs.existsSync(path.dirname(keyPath))).toBe(false);
-    expect(mockExecFileSync).not.toHaveBeenCalled();
+  it('rejects and deletes a non-private handoff without saving it', async () => {
+    const { saves } = fakeGateway();
+    const helper = helperWrites('cursor_insecure_handoff', 0o644);
+    exitThrows();
+    await expect(runCursorLoginAuth('browser', await cursorCredentialConnections())).rejects.toThrow('exit:1');
+    expect(fs.existsSync(path.dirname(helper.keyPath()))).toBe(false);
+    expect(saves).toEqual([]);
   });
 
-  it('cleans the handoff and rolls back if the second vault route fails', async () => {
-    let keyPath = '';
-    const deleted: string[] = [];
-    mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
-      keyPath = args[args.indexOf('--output') + 1]!;
-      fs.writeFileSync(keyPath, 'cursor_oauth_minted_key_value', { mode: 0o600 });
-      const child = new EventEmitter();
-      setImmediate(() => child.emit('close', 0));
-      return child;
-    });
-    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args[1] === 'list') return JSON.stringify({ data: [] });
-      if (args[1] === 'create' && args.includes('api2.cursor.sh')) return JSON.stringify({ id: 'exchange-new' });
-      if (args[1] === 'create') throw new Error('models route failed');
-      if (args[1] === 'delete') {
-        deleted.push(args[args.indexOf('--id') + 1]!);
-        return '';
-      }
-      return '';
-    });
-    vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
-      throw new Error(`exit:${code}`);
-    }) as typeof process.exit);
-    await expect(runCursorLoginAuth('browser')).rejects.toThrow('exit:1');
-    expect(deleted).toEqual(['exchange-new']);
-    expect(fs.existsSync(path.dirname(keyPath))).toBe(false);
+  it('cleans the handoff and exits when the gateway rejects the second entry', async () => {
+    const { failSave } = fakeGateway();
+    failSave.add('Cursor models');
+    const helper = helperWrites('cursor_oauth_minted_key_value');
+    exitThrows();
+    await expect(runCursorLoginAuth('browser', await cursorCredentialConnections())).rejects.toThrow('exit:1');
+    expect(fs.existsSync(path.dirname(helper.keyPath()))).toBe(false);
   });
 });
 
@@ -731,8 +415,8 @@ describe('runInherit', () => {
 });
 
 describe('trunk reach-ins', () => {
-  // On an install the skill ships in trunk; on the standalone providers branch
-  // it does not, so the check is skipped rather than failed there.
+  // The skill ships in trunk; an applied tree may not carry it, so the check
+  // is skipped rather than failed there.
   const skillPath = path.join(process.cwd(), '.claude', 'skills', 'add-cursor', 'SKILL.md');
   const skillIt = fs.existsSync(skillPath) ? it : it.skip;
 
@@ -741,7 +425,8 @@ describe('trunk reach-ins', () => {
     expect(skill).toContain('nanoclaw-provider: cursor');
     expect(skill).toContain('nanoclaw-provider-label: Cursor');
     expect(skill).toContain('nanoclaw-provider-hint: Cursor — account sign-in or API key');
-    expect(skill).toContain('nc:copy from-branch:providers');
+    expect(skill).toContain('payload/setup/providers/cursor.ts -> setup/providers/cursor.ts');
+    expect(skill).not.toContain('from-branch');
     expect(skill).toContain('nc:dep manager:bun cwd:container/agent-runner');
     expect(skill).toContain('@cursor/sdk@1.0.28');
     expect(skill).toContain('--step provider-auth cursor');

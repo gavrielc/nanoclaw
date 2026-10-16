@@ -55,7 +55,7 @@ export const cursorRuntimeContract: ProviderRuntimeContract = {
 };
 
 // Two-step registration: providers/cursor.ts registered the factory; this
-// attaches the contract. Order-independent, and neither file imports the other.
+// attaches the contract. Order-independent; providers/cursor.ts never imports this file.
 registerProviderContract(provider, cursorRuntimeContract);
 
 function archiveExchange({ exchange }: RuntimeAfterExchangeInput, fx: RuntimeCallbackEffects): string | null {

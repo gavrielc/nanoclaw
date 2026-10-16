@@ -7,6 +7,7 @@ import { AgentNotFoundError } from '@cursor/sdk';
 import { closeSessionDb, getInboundDb, initTestSessionDb } from '../mailbox/sqlite/connection.js';
 import { getUndeliveredMessages } from '../db/messages-out.js';
 import { getContinuation, setContinuation } from '../db/session-state.js';
+import { GENERIC_FAILURE_NOTICE } from '../formatter.js';
 import { MEMORY_SESSION_HOOK } from '../memory/session-hook.js';
 import { processQuery, runPollLoop } from '../poll-loop.js';
 import { CursorProvider, cursorAgentApi } from './cursor.js';
@@ -213,7 +214,7 @@ describe('CursorProvider through the real poll-loop', () => {
       expect(getContinuation('cursor')).toBeUndefined();
       const out = getUndeliveredMessages();
       expect(out).toHaveLength(1);
-      expect(JSON.parse(out[0]!.content).text).toBe('The agent run failed. Check the logs for details.');
+      expect(JSON.parse(out[0]!.content).text).toBe(GENERIC_FAILURE_NOTICE);
     } finally {
       cursorAgentApi.create = original.create;
       cursorAgentApi.resume = original.resume;

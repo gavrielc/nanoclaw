@@ -5,7 +5,7 @@
  * without adding it to the host pnpm tree. It mints an expiring user API key
  * with Cursor.auth.login({ store: null }) and writes the key directly to a
  * caller-owned, mode-0600 file. The credential is never printed or placed in
- * argv; setup hands that file to `onecli secrets create --file`.
+ * argv; setup reads that file into the credential gateway and deletes it.
  */
 import fs from 'fs';
 

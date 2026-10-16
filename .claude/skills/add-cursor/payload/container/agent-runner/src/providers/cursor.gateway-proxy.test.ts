@@ -438,6 +438,15 @@ describe('installHttp2ProxyGuard (client-side refusal, in-process)', () => {
     expect(() => http2.connect('https://api2.cursor.sh')).toThrow(REFUSED);
   });
 
+  it('honors a NO_PROXY port only for that port', () => {
+    restore = installHttp2ProxyGuard({ HTTPS_PROXY: 'http://10.0.0.1:3128', NO_PROXY: '127.0.0.1:1,[::1]:2' });
+    settle(http2.connect('https://127.0.0.1:1'));
+    expect(() => http2.connect('https://127.0.0.1:2')).toThrow(REFUSED);
+    expect(() => tls.connect({ host: '127.0.0.1', port: 443, ALPNProtocols: ['h2'] })).toThrow(REFUSED);
+    settle(tls.connect({ host: '::1', port: 2, ALPNProtocols: ['h2'] }));
+    expect(() => tls.connect({ host: '::1', port: 3, ALPNProtocols: ['h2'] })).toThrow(REFUSED);
+  });
+
   it('refuses every HTTP/2 dial when the proxy setting cannot be parsed', () => {
     restore = installHttp2ProxyGuard({ HTTPS_PROXY: 'not a url' });
     expect(() => http2.connect('https://127.0.0.1:1')).toThrow(REFUSED);
@@ -534,6 +543,59 @@ describe('installHttp2ProxyGuard (client-side refusal, in-process)', () => {
       expect(headers[0]).toContain(basic('proxyuser', 's3cret'));
       expect(headers[1]).toContain(basic('proxyuser', 'p@ss'));
       expect(headers[2]).not.toContain('Proxy-Authorization');
+    },
+  );
+
+  /** One https.get through the guard; resolves with its error, rejects on a response or a hang. */
+  function failedRequest(): Promise<Error> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timed out: the tunnel never settled')), 5_000);
+      const req = https.get('https://api2.cursor.sh/v1/models');
+      req.on('error', (err) => {
+        clearTimeout(timer);
+        resolve(err);
+      });
+      req.on('response', (res) => {
+        clearTimeout(timer);
+        res.resume();
+        reject(new Error('expected the tunnel to fail'));
+      });
+    });
+  }
+
+  async function listen(proxy: net.Server): Promise<number> {
+    return new Promise((resolve) => {
+      proxy.listen(0, '127.0.0.1', () => resolve((proxy.address() as net.AddressInfo).port));
+    });
+  }
+
+  it.skipIf(typeof https.Agent.prototype.createConnection !== 'function')(
+    'fails the request when the proxy hangs up before answering CONNECT',
+    async () => {
+      const proxy = net.createServer((client) => {
+        client.once('data', () => client.end('HTTP/1.1 200'));
+      });
+      const port = await listen(proxy);
+      restore = installHttp2ProxyGuard({ HTTPS_PROXY: `http://127.0.0.1:${port}` });
+      const err = await failedRequest();
+      proxy.close();
+      expect(err.message).toContain('closed before answering CONNECT');
+    },
+  );
+
+  it.skipIf(typeof https.Agent.prototype.createConnection !== 'function')(
+    'refuses to send CONNECT and proxy credentials in the clear to an https:// proxy',
+    async () => {
+      const received: string[] = [];
+      const proxy = net.createServer((client) => {
+        client.on('data', (chunk: Buffer) => received.push(chunk.toString('latin1')));
+      });
+      const port = await listen(proxy);
+      restore = installHttp2ProxyGuard({ HTTPS_PROXY: `https://proxyuser:s3cret@127.0.0.1:${port}` });
+      const err = await failedRequest();
+      proxy.close();
+      expect(err.message).toContain('needs an http:// proxy');
+      expect(received.join('')).toBe('');
     },
   );
 

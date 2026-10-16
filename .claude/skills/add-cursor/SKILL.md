@@ -1,6 +1,6 @@
 ---
 name: add-cursor
-description: Use Cursor (local Agent SDK) as a full agent provider — planning, tool orchestration, MCP tools, session resume — alongside or instead of Claude. Cursor-account sign-in or API key, vault-only via OneCLI. Per-group via `ncl groups config update --provider cursor`. Distinct from using Cursor as a cloud agent (those run on Cursor VMs and are not this provider).
+description: Use Cursor (local Agent SDK) as a full agent provider — planning, tool orchestration, MCP tools, session resume — alongside or instead of Claude. Cursor-account sign-in or API key, held by the credential gateway. Per-group via `ncl groups config update --provider cursor`. Distinct from using Cursor as a cloud agent (those run on Cursor VMs and are not this provider).
 metadata:
   nanoclaw-provider: cursor
   nanoclaw-provider-label: Cursor
@@ -11,13 +11,13 @@ metadata:
 
 # Cursor agent provider
 
-> Shortcut: `pnpm exec tsx setup/index.ts --step provider-auth cursor` performs this whole install (payload from the providers branch: files, barrels, SDK pin, image rebuild) plus auth in one command. The steps below are the same operations, for agent-driven or manual application.
+> Shortcut: `pnpm exec tsx setup/index.ts --step provider-auth cursor` performs this whole install (payload files, barrels, SDK pin, image rebuild) plus auth in one command. The steps below are the same operations, for agent-driven or manual application.
 
-NanoClaw selects each group's agent backend from `container_configs.provider` (default `claude`). This skill installs the Cursor provider: copy the payload from the `providers` branch, append one import to each of the five provider and contract barrels, pin `@cursor/sdk` in the agent-runner tree, rebuild, then run the vault auth walk-through.
+NanoClaw selects each group's agent backend from `container_configs.provider` (default `claude`). This skill installs the Cursor provider: copy the payload from this skill's `payload/`, append one import to each of the five provider and contract barrels, pin `@cursor/sdk` in the agent-runner tree, rebuild, then run the auth walk-through.
 
-The provider runs `@cursor/sdk` in-process inside the container (`Agent.create` / `resume` / `send`): native streaming, MCP tools, a local agent store (the continuation is a Cursor `agentId`). It integrates through the provider contracts only — a data-only host contract declares the composed `AGENTS.md`, the per-group `.cursor-shared` state volume at `~/.cursor`, and the two Cursor-native skill directories; the runtime contract declares the execution stance, model mapping, memory hooks, and MCP mapping. Core composes the project document from those facts; no provider prose or provider-written files on the host.
+The provider runs `@cursor/sdk` in-process inside the container (`Agent.create` / `resume` / `send`): native streaming, MCP tools, a local agent store (the continuation is a Cursor `agentId`). It integrates through the provider contracts only — a data-only host contract declares the composed `AGENTS.md`, the per-group `.cursor-shared` state volume at `~/.cursor`, the two Cursor-native skill directories and the Cursor model domains; the runtime contract declares the execution stance, model mapping, memory hooks, MCP mapping, and archives each exchange into `conversations/` through core's shared exchange archive.
 
-Credentials are **vault-only**: the container only ever sees the placeholder `CURSOR_API_KEY=cursor_placeholder_nanoclaw`, which the SDK sends as a bearer header, and the credential gateway rewrites it in flight on two narrowly scoped routes — `api2.cursor.sh/auth/exchange_user_api_key` (the SDK swaps the user key for a short-lived runtime token) and `api.cursor.com/v1/models` (model discovery). The runtime token stays in the SDK's memory and rides the same gateway proxy on the agent's Connect RPCs. The payload ships `cursor.gateway-proxy.test.ts`, which proves every request of a real SDK run transits the proxy carrying nothing but the placeholder. Never put a key in chat.
+Credentials stay in the credential gateway selected by `NANOCLAW_GATEWAY_PROVIDER`. The container only ever sees the placeholder `CURSOR_API_KEY=cursor_placeholder_nanoclaw`, which the SDK sends as a bearer header. Setup stores the key for two exact routes: `api2.cursor.sh/auth/exchange_user_api_key`, where the SDK swaps it for a short-lived runtime token, and `api.cursor.com/v1/models`, for model discovery. The runtime token stays in the SDK's memory and rides the same gateway proxy on the agent's Connect RPCs to `api2.cursor.sh`, which the gateway leaves untouched because the key is scoped to the exchange path. The payload ships `cursor.gateway-proxy.test.ts`, which proves every request of a real SDK run transits the proxy carrying nothing but the placeholder. Never put a key in chat.
 
 The mechanical steps under **Install** carry `nc:` directive fences: an agent reads the prose and applies them, and a parser can apply them deterministically from the same document. Every directive is idempotent, so the whole skill is safe to re-run; anything a parser can't apply falls back to the prose beside it.
 
@@ -25,107 +25,115 @@ The mechanical steps under **Install** carry `nc:` directive fences: an agent re
 
 ### Pre-flight
 
-Requires the provider-contract core: `src/provider-contracts/index.ts` and `container/agent-runner/src/provider-contracts/index.ts` on trunk. If either is missing, stop and tell the operator to run `/update-nanoclaw` first.
+Install and refresh require host contract version 1, credential-connection seam version 2 or later (path-scoped credentials), and core's shared exchange archive (`container/agent-runner/src/provider-contracts/exchange-archive.ts`). The compatibility predicate below guards every later step, so an unsupported core receives no partial payload or dependency changes. If it prints `no`, stop and tell the operator to run `/update-nanoclaw` first.
 
-Check whether the payload is already wired (a prior apply). All of these present means installed — skip to **Authenticate**:
+```nc:run effect:refresh capture:cursor_core_ready validate:^yes$
+node -e "const fs=require('fs'); const r=(f)=>fs.existsSync(f)?fs.readFileSync(f,'utf8'):''; if(/PROVIDER_HOST_CONTRACT_SEAM_VERSION = 1/.test(r('src/provider-contracts/registry.ts')) && /PROVIDER_CREDENTIAL_CONNECTION_SEAM_VERSION = ([2-9]|[1-9][0-9])/.test(r('setup/gateways/credential-store.ts')) && /export function archiveProviderExchange/.test(r('container/agent-runner/src/provider-contracts/exchange-archive.ts'))) console.log('yes'); else console.log('no')"
+```
 
-- `src/providers/cursor.ts` and `src/provider-contracts/cursor.ts`
-- `container/agent-runner/src/providers/cursor.ts`, `cursor-auth.ts`, `cursor-hook.ts`, and `container/agent-runner/src/provider-contracts/cursor.ts`
-- `setup/providers/cursor.ts`
-- `import './cursor.js';` in the three provider barrels and both contract barrels
-- `@cursor/sdk` pinned to `1.0.28` in `container/agent-runner/package.json`
+### 1. Copy the payload
 
-### 1. Fetch and copy the payload
+Copy only the files listed below from this skill's `payload/` to the matching paths at the project root. These are skill-owned files; overwrite them together when refreshing the skill. The host files are the data-only host contract, the env adapter and their guards; the container files are the provider runtime (turn loop, event mapping, hooks.json writer), the runtime contract, the memory hook adapter, the host-side login helper, and their guards — including the conformance test the verifier requires and the gateway-proxy proof; the setup file is the picker entry and auth walk-through.
 
-Fetch the `providers` branch and copy the Cursor payload into all three trees (additive — overwrite each file, never merge the branch). The canonical remote is `nanocoai/nanoclaw` (`origin` on a normal clone; a fork should fetch from that upstream, not from itself). The host files are the data-only host contract + the legacy env adapter + their guards; the container files are the provider runtime (turn loop, event mapping, hooks.json writer, shared exchange archiver), the runtime contract, the memory hook adapter, the host-side login helper, and their guards — including the conformance test the verifier requires and the gateway-proxy proof; the setup file is the picker entry + vault auth walk-through.
-
-```nc:copy from-branch:providers
-src/providers/cursor.ts
-src/providers/cursor-registration.test.ts
-src/providers/cursor-host-contribution.test.ts
-src/provider-contracts/cursor.ts
-container/agent-runner/src/providers/cursor.ts
-container/agent-runner/src/providers/cursor-auth.ts
-container/agent-runner/src/providers/cursor-hook.ts
-container/agent-runner/src/providers/cursor-gateway-probe.ts
-container/agent-runner/src/providers/exchange-archive.ts
-container/agent-runner/src/providers/exchange-archive.test.ts
-container/agent-runner/src/providers/cursor-registration.test.ts
-container/agent-runner/src/providers/cursor.factory.test.ts
-container/agent-runner/src/providers/cursor-auth.test.ts
-container/agent-runner/src/providers/cursor-hook.test.ts
-container/agent-runner/src/providers/cursor.poll-loop.test.ts
-container/agent-runner/src/providers/cursor.conformance.test.ts
-container/agent-runner/src/providers/cursor.gateway-proxy.test.ts
-container/agent-runner/src/provider-contracts/cursor.ts
-setup/providers/cursor.ts
-setup/providers/cursor.test.ts
-setup/providers/cursor-registration.test.ts
+```nc:copy when:cursor_core_ready=yes
+payload/src/providers/cursor.ts -> src/providers/cursor.ts
+payload/src/providers/cursor-registration.test.ts -> src/providers/cursor-registration.test.ts
+payload/src/providers/cursor-host-contribution.test.ts -> src/providers/cursor-host-contribution.test.ts
+payload/src/provider-contracts/cursor.ts -> src/provider-contracts/cursor.ts
+payload/container/agent-runner/src/providers/cursor.ts -> container/agent-runner/src/providers/cursor.ts
+payload/container/agent-runner/src/providers/cursor-auth.ts -> container/agent-runner/src/providers/cursor-auth.ts
+payload/container/agent-runner/src/providers/cursor-hook.ts -> container/agent-runner/src/providers/cursor-hook.ts
+payload/container/agent-runner/src/providers/cursor-gateway-probe.ts -> container/agent-runner/src/providers/cursor-gateway-probe.ts
+payload/container/agent-runner/src/providers/cursor-registration.test.ts -> container/agent-runner/src/providers/cursor-registration.test.ts
+payload/container/agent-runner/src/providers/cursor.factory.test.ts -> container/agent-runner/src/providers/cursor.factory.test.ts
+payload/container/agent-runner/src/providers/cursor-auth.test.ts -> container/agent-runner/src/providers/cursor-auth.test.ts
+payload/container/agent-runner/src/providers/cursor-hook.test.ts -> container/agent-runner/src/providers/cursor-hook.test.ts
+payload/container/agent-runner/src/providers/cursor.poll-loop.test.ts -> container/agent-runner/src/providers/cursor.poll-loop.test.ts
+payload/container/agent-runner/src/providers/cursor.conformance.test.ts -> container/agent-runner/src/providers/cursor.conformance.test.ts
+payload/container/agent-runner/src/providers/cursor.gateway-proxy.test.ts -> container/agent-runner/src/providers/cursor.gateway-proxy.test.ts
+payload/container/agent-runner/src/provider-contracts/cursor.ts -> container/agent-runner/src/provider-contracts/cursor.ts
+payload/setup/providers/cursor.ts -> setup/providers/cursor.ts
+payload/setup/providers/cursor.test.ts -> setup/providers/cursor.test.ts
+payload/setup/providers/cursor-registration.test.ts -> setup/providers/cursor-registration.test.ts
 ```
 
 ### 2. Wire the barrels
 
-Append the self-registration import to each provider and contract barrel (skipped if already present). Each barrel-registration test imports its real barrel and asserts `cursor` is registered — they go red the moment a barrel line is missing or drifts.
+Append `import './cursor.js';` once to each of the five setup, provider, and contract barrels below. Keep all existing imports. Each barrel-registration test imports its real barrel and asserts `cursor` is registered.
 
-```nc:append to:src/providers/index.ts
+```nc:append to:src/providers/index.ts when:cursor_core_ready=yes
 import './cursor.js';
 ```
 
-```nc:append to:src/provider-contracts/index.ts
+```nc:append to:src/provider-contracts/index.ts when:cursor_core_ready=yes
 import './cursor.js';
 ```
 
-```nc:append to:container/agent-runner/src/providers/index.ts
+```nc:append to:container/agent-runner/src/providers/index.ts when:cursor_core_ready=yes
 import './cursor.js';
 ```
 
-```nc:append to:container/agent-runner/src/provider-contracts/index.ts
+```nc:append to:container/agent-runner/src/provider-contracts/index.ts when:cursor_core_ready=yes
 import './cursor.js';
 ```
 
-```nc:append to:setup/providers/index.ts
+```nc:append to:setup/providers/index.ts when:cursor_core_ready=yes
 import './cursor.js';
 ```
 
 ### 3. Agent-runner dependency
 
-The container talks to Cursor through `@cursor/sdk`, not a CLI binary. Pin the exact version in the agent-runner tree (Bun, not the host pnpm workspace — `@cursor/sdk` must not enter the host lockfile). Re-running `bun add` of the same pin is a no-op. Do not run `bun update`.
+The container talks to Cursor through `@cursor/sdk`, not a CLI binary. Pin the exact version in the agent-runner tree (Bun, not the host pnpm workspace — `@cursor/sdk` must not enter the host lockfile). Do not add a Cursor CLI to `container/cli-tools.json`.
 
-```nc:dep manager:bun cwd:container/agent-runner
+```nc:dep manager:bun cwd:container/agent-runner when:cursor_core_ready=yes
 @cursor/sdk@1.0.28
 ```
 
-The version (`1.0.28`) is the canonical pin — this SKILL.md is the source of truth. Do not add a Cursor CLI to `container/cli-tools.json`; the container uses the library.
+### 4. Build and test
 
-### 4. Build
-
-```nc:run effect:build
+```nc:run effect:build when:cursor_core_ready=yes
 pnpm run build
-pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
-./container/build.sh
 ```
 
-### 5. Validate
+```nc:run effect:build when:cursor_core_ready=yes
+cd container/agent-runner && bun run typecheck
+```
 
-```nc:run effect:test
+```nc:run effect:test when:cursor_core_ready=yes
+pnpm exec vitest run src/providers/cursor-registration.test.ts src/providers/cursor-host-contribution.test.ts setup/providers
+```
+
+```nc:run effect:test when:cursor_core_ready=yes
+cd container/agent-runner && bun test --isolate src/providers/cursor*.test.ts
+```
+
+```nc:run effect:test when:cursor_core_ready=yes
 pnpm exec tsx scripts/provider-contract-verifier.ts --required-declared cursor
 ```
 
 The verifier runs the host and runtime contract suites (registration, conformance, the gateway-proxy proof) and checks the host and runtime contract inventories agree. It goes red if a barrel line is missing, a barrel fails to evaluate, the payload is broken, or `@cursor/sdk` is not installed.
 
+Build the local image. The SDK dependency requires a full local build.
+
+```nc:run effect:build when:cursor_core_ready=yes
+./container/build.sh build
+```
+
 ## Authenticate
 
-```nc:run effect:external
+```nc:run effect:external when:cursor_core_ready=yes
 pnpm exec tsx setup/index.ts --step provider-auth cursor
 ```
 
-The same walk-through fresh installs get from the setup picker: sign in with a Cursor account (browser or URL), or enter a Cursor API key into the local masked prompt. Account sign-in runs the host-side helper (`bun container/agent-runner/src/providers/cursor-auth.ts`), which uses `Cursor.auth.login({ store: null })` to mint an expiring NanoClaw key, writes it straight to a mode-0600 handoff file, and asks OneCLI to consume that file; manual keys use the same handoff. The key is never printed, placed in process arguments, or sent through chat. The flow creates one generic OneCLI entry per exact SDK route (`api2.cursor.sh/auth/exchange_user_api_key` and `api.cursor.com/v1/models`), short-circuits only when both exist, and finishes with the install check.
+The same walk-through fresh installs get from the setup picker: sign in with a Cursor account (browser or URL), or enter a Cursor API key into the local masked prompt. Account sign-in runs the host-side helper (`bun container/agent-runner/src/providers/cursor-auth.ts`), which uses `Cursor.auth.login({ store: null })` to mint an expiring NanoClaw key into a mode-0600 handoff file; setup hands it to the credential gateway and deletes the file. The key is never printed, placed in process arguments, or sent through chat. The flow stores the key for those two routes, short-circuits only when the gateway already holds both, and finishes with the install check.
 
-OAuth-minted keys default to 90 days; dashboard and service-account keys last until revoked. Prefer a dashboard or service-account key for unattended installs. To replace an expired or revoked key: `onecli secrets list`, `onecli secrets delete --id <id>` for both Cursor entries, then re-run the provider-auth command.
+OAuth-minted keys default to 90 days; dashboard and service-account keys last until revoked. Prefer a dashboard or service-account key for unattended installs. To replace an expired or revoked key, remove both entries (`Cursor` for `api2.cursor.sh/auth/exchange_user_api_key`, `Cursor models` for `api.cursor.com/v1/models`) with your gateway's own tools, then re-run the provider-auth command.
 
 ## Use it
 
-Per group:
+After installing on a running NanoClaw host, restart the host service first so it loads the Cursor registration (Linux: `systemctl --user restart nanoclaw-v2-<install-slug>.service`; macOS: its launchd restart). A host that still runs the old build spawns Cursor groups without the Cursor state volume, so continuations would not survive a container restart.
+
+Then, per group:
 
 ```bash
 ncl groups config update --id <group-id> --provider cursor
@@ -148,11 +156,10 @@ After install, ask the operator before flipping it:
 
 > "Cursor is installed. Default new agent groups to cursor? Existing groups keep their current provider."
 
-On yes — set it, then restart the host so it takes effect:
+On yes — set it, then restart the host service as in **Use it** above so it takes effect:
 
 ```bash
 pnpm exec tsx setup/index.ts --step set-env -- --key DEFAULT_AGENT_PROVIDER --value cursor
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS; Linux: systemctl --user restart nanoclaw
 ```
 
 This affects only groups created afterward. Per-group `ncl groups config update --provider` still overrides the default in either direction.
@@ -160,7 +167,9 @@ This affects only groups created afterward. Per-group `ncl groups config update 
 ## Troubleshooting
 
 - **Container dies at boot, channel silent:** `grep 'Container exited non-zero' logs/nanoclaw.error.log` — the `stderrTail` carries the reason (e.g. `Unknown provider: cursor. Registered: claude` means the barrels aren't wired in the running build).
-- **401 after months of working:** an OAuth-minted user key expired (default 90 days). Delete both Cursor vault entries and re-run `pnpm exec tsx setup/index.ts --step provider-auth cursor`. Prefer a dashboard or service-account key for unattended installs.
-- **Auth errors mid-conversation:** the vault secret is missing or stale — same rotation as above.
-- **`@cursor/sdk` missing inside the container:** the image predates the pin — re-run `./container/build.sh`.
-- **Traffic and the gateway:** under Bun the SDK's key exchange, model discovery, and Connect RPCs (HTTP/1.1) all honor `HTTPS_PROXY` and the gateway CA, and the provider pins HTTP/1.1. The one path that cannot be proxied is an HTTP/2 Connect transport (`node:http2` ignores `HTTPS_PROXY`), which the SDK selects only when Cursor's server-side `http2Config` forces HTTP/2 over the client pin. While a proxy is configured the provider refuses that path client-side: the run fails with `Cursor SDK attempted an HTTP/2 connection to <authority> that would bypass the configured proxy; refusing` instead of the agent's runtime token (never the vaulted key) leaving the container directly. Seeing that error means Cursor is forcing HTTP/2 — check Cursor's status and retry later; do not remove the proxy. The operator-side layer is core's `NANOCLAW_EGRESS_LOCKDOWN=true`: the container runs on an internal Docker network whose only hop is the gateway, so any bypass attempt fails at the network as well.
+- **401 after months of working:** an OAuth-minted user key expired (default 90 days). Remove both Cursor entries from the gateway and re-run `pnpm exec tsx setup/index.ts --step provider-auth cursor`. Prefer a dashboard or service-account key for unattended installs.
+- **Auth errors mid-conversation:** the gateway entry is missing or stale — same rotation as above.
+- **`@cursor/sdk` missing inside the container:** the image predates the pin — re-run `./container/build.sh build`.
+- **Traffic and the gateway:** under Bun the SDK's key exchange, model discovery, and Connect RPCs (HTTP/1.1) all honor `HTTPS_PROXY` and the gateway CA, and the provider pins HTTP/1.1. The one path that cannot be proxied is an HTTP/2 Connect transport (`node:http2` ignores `HTTPS_PROXY`), which the SDK selects only when Cursor's server-side `http2Config` forces HTTP/2 over the client pin. While a proxy is configured the provider refuses that path client-side: the run fails with `Cursor SDK attempted an HTTP/2 connection to <authority> that would bypass the configured proxy; refusing` instead of the agent's runtime token (never the stored key) leaving the container directly. Seeing that error means Cursor is forcing HTTP/2 — check Cursor's status and retry later; do not remove the proxy. The operator-side layer is core's `NANOCLAW_EGRESS_LOCKDOWN=true`: the container runs on an internal Docker network whose only hop is the gateway, so any bypass attempt fails at the network as well.
+
+To remove the provider, follow [REMOVE.md](REMOVE.md).

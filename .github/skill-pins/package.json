@@ -16,6 +16,7 @@
     "@chat-adapter/teams": "4.41.1",
     "@chat-adapter/telegram": "4.41.1",
     "@chat-adapter/whatsapp": "4.41.1",
+    "@cursor/sdk": "1.0.28",
     "@deltachat/stdio-rpc-server": "2.49.0",
     "@firecrawl/anydoc": "0.1.6",
     "@getdial/cli": "0.37.0",
@@ -105,6 +106,12 @@
       "version": "4.41.1",
       "sources": [
         ".claude/skills/add-whatsapp-cloud/SKILL.md nc:dep"
+      ]
+    },
+    "@cursor/sdk": {
+      "version": "1.0.28",
+      "sources": [
+        ".claude/skills/add-cursor/SKILL.md nc:dep manager:bun cwd:container/agent-runner when:cursor_core_ready=yes"
       ]
     },
     "@deltachat/stdio-rpc-server": {

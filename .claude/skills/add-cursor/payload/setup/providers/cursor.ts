@@ -1,27 +1,23 @@
 /**
  * Cursor provider setup — auth walk-through + install verification.
  *
- * Cursor-owned payload code: `/add-cursor` copies this in from the `providers`
- * branch. The only trunk reach-in is the `setup/providers/index.ts` barrel
+ * Cursor-owned payload code: `/add-cursor` copies this in from the skill's
+ * `payload/`. The only trunk reach-in is the `setup/providers/index.ts` barrel
  * import; the setup picker offers Cursor from the skill's own frontmatter.
  *
- * Auth keeps the long-lived credential in OneCLI — nothing lands in .env:
+ * The long-lived key goes to the selected credential gateway, never `.env`:
  *   - Cursor account (the common case): a helper in the agent-runner package
- *     calls `Cursor.auth.login({ store: null })`. The SDK mints an expiring
- *     user API key and writes it straight to a mode-0600 handoff file; OneCLI
- *     consumes it via `--file`, then setup deletes it. Two narrowly scoped
- *     vault rules use the same key: `api2.cursor.sh/auth/exchange_user_api_key`
- *     swaps it for a short-lived runtime token, while
- *     `api.cursor.com/v1/models` uses the original key for model discovery.
- *     Runtime calls keep using OneCLI as their proxy; the SDK sends its
- *     short-lived access token unchanged.
- *   - API key: entered once in this local masked prompt (never chat), written
- *     to the same kind of handoff file, and stored as the same generic secret.
+ *     calls `Cursor.auth.login({ store: null })`, which mints an expiring user
+ *     API key into a mode-0600 handoff file. Setup reads it, hands it to the
+ *     gateway, and deletes the file.
+ *   - API key: entered once in this local masked prompt (never chat).
+ * The same key is stored for two routes: `api2.cursor.sh/auth/exchange_user_api_key`,
+ * where the SDK swaps it for a short-lived runtime token, and
+ * `api.cursor.com/v1/models`, for model discovery. The container only ever
+ * sends the placeholder below.
  *
- * Session-isolation invariant: login is a host setup step; the container sends
- * placeholder `CURSOR_API_KEY` for the exchange, then holds only the returned
- * short-lived access token. Do not import `@cursor/sdk` from setup — the login
- * helper lives under agent-runner so the SDK stays out of the host lockfile.
+ * Do not import `@cursor/sdk` from setup — the login helper lives under
+ * agent-runner so the SDK stays out of the host lockfile.
  */
 import { execFileSync, spawn } from 'child_process';
 import fs from 'fs';
@@ -31,30 +27,46 @@ import path from 'path';
 import * as p from '@clack/prompts';
 import k from 'kleur';
 
+import {
+  getCredentialStore,
+  type GatewayCredentialConnection,
+  type GatewayCredentialTarget,
+} from '../gateways/credential-store.js';
 import { brightSelect } from '../lib/bright-select.js';
 import { brandBody } from '../lib/theme.js';
 import * as setupLog from '../logs.js';
+import { isPinnedBunVersion, pinnedBunVersion } from '../../scripts/provider-contract-verifier.js';
 import { registerSetupProvider } from './registry.js';
 
-// Not public SDK API — copied from the @cursor/sdk@1.0.28 key-exchange and
-// model-catalog hosts. Re-verify both routes when bumping CURSOR_SDK_VERSION.
-const CURSOR_HOST_PATTERN = 'api2.cursor.sh';
-const CURSOR_PATH_PATTERN = '/auth/exchange_user_api_key';
-const CURSOR_MODELS_HOST_PATTERN = 'api.cursor.com';
-const CURSOR_MODELS_PATH_PATTERN = '/v1/models';
-const CURSOR_SECRET_ROUTES = [
+/** Must equal `CURSOR_API_KEY_PLACEHOLDER` in src/providers/cursor.ts (a test keeps them in sync). */
+export const CURSOR_CREDENTIAL_PLACEHOLDER = 'cursor_placeholder_nanoclaw';
+
+const BEARER = { headerName: 'Authorization', valueFormat: 'Bearer {value}' };
+
+// Not public SDK API: the @cursor/sdk 1.0.28 key-exchange and model-catalog
+// routes. Re-verify both when bumping CURSOR_SDK_VERSION. The exchange is
+// path-scoped because the SDK's RPCs to the same host carry the short-lived
+// token it returns, which a host-wide entry would overwrite.
+export const CURSOR_CREDENTIAL_TARGETS: readonly GatewayCredentialTarget[] = [
   {
     name: 'Cursor',
-    hostPattern: CURSOR_HOST_PATTERN,
-    pathPattern: CURSOR_PATH_PATTERN,
+    kind: 'api-key',
+    host: 'api2.cursor.sh',
+    path: '/auth/exchange_user_api_key',
+    proxyValue: CURSOR_CREDENTIAL_PLACEHOLDER,
+    injection: BEARER,
   },
   {
     name: 'Cursor models',
-    hostPattern: CURSOR_MODELS_HOST_PATTERN,
-    pathPattern: CURSOR_MODELS_PATH_PATTERN,
+    kind: 'api-key',
+    host: 'api.cursor.com',
+    path: '/v1/models',
+    proxyValue: CURSOR_CREDENTIAL_PLACEHOLDER,
+    injection: BEARER,
   },
-] as const;
-/** `force` re-vaults even when both routes exist (key rotation); the picker and provider-auth step never set it. */
+];
+
+/** `force` re-saves even when both entries exist (key rotation); the picker and provider-auth step never set it. */
 export interface CursorAuthOptions {
   force?: boolean;
 }
@@ -62,55 +74,59 @@ export interface CursorAuthOptions {
 const CURSOR_LOGIN_HELPER = path.join('container', 'agent-runner', 'src', 'providers', 'cursor-auth.ts');
 const CURSOR_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const CURSOR_SDK_VERSION = '1.0.28';
-const LOCAL_BIN = path.join(os.homedir(), '.local', 'bin');
 
-function onecliEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PATH: [LOCAL_BIN, process.env.PATH].filter(Boolean).join(path.delimiter),
-  };
+export async function cursorCredentialConnections(root = process.cwd()): Promise<GatewayCredentialConnection[]> {
+  const store = await getCredentialStore(root);
+  if (!store.connection) throw new Error('The selected gateway does not support provider credential connections.');
+  const connect = store.connection.bind(store);
+  return CURSOR_CREDENTIAL_TARGETS.map((target) => connect(target));
 }
 
-export interface OnecliSecret {
-  id: string;
-  name: string;
-  type: string;
-  hostPattern: string | null;
-  pathPattern?: string | null;
-}
-
-export function listCursorSecrets(): OnecliSecret[] {
-  const out = execFileSync('onecli', ['secrets', 'list'], {
-    encoding: 'utf-8',
-    env: onecliEnv(),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const parsed = JSON.parse(out) as { data?: unknown };
-  if (!Array.isArray(parsed.data)) throw new Error('OneCLI returned an invalid secret list');
-  return parsed.data as OnecliSecret[];
-}
-
-export function findCursorSecret(secrets: OnecliSecret[]): OnecliSecret | undefined {
-  return secrets.find((s) => {
-    const hostPattern = (s.hostPattern ?? '').toLowerCase();
-    return hostPattern === CURSOR_HOST_PATTERN && s.pathPattern === CURSOR_PATH_PATTERN;
-  });
-}
-
-export function findCursorModelsSecret(secrets: OnecliSecret[]): OnecliSecret | undefined {
-  return secrets.find((s) => {
-    const hostPattern = (s.hostPattern ?? '').toLowerCase();
-    return hostPattern === CURSOR_MODELS_HOST_PATTERN && s.pathPattern === CURSOR_MODELS_PATH_PATTERN;
-  });
-}
-
-export function cursorSecretExists(): boolean {
-  try {
-    const secrets = listCursorSecrets();
-    return findCursorSecret(secrets) !== undefined && findCursorModelsSecret(secrets) !== undefined;
-  } catch {
-    return false;
+/** True only when both entries exist and the gateway can keep them as they are. */
+export async function cursorCredentialsConnected(connections: GatewayCredentialConnection[]): Promise<boolean> {
+  for (const connection of connections) {
+    if (!(await connection.find())?.reusable) return false;
   }
+  return true;
+}
+
+/**
+ * Store one key for both hosts. The seam cannot roll back a save, so a
+ * failure after the first one says which entry already took the new key.
+ */
+export async function saveCursorKey(key: string, connections: GatewayCredentialConnection[]): Promise<void> {
+  const value = key.trim();
+  if (!value) throw new Error('Cannot save an empty Cursor key.');
+  const saved: string[] = [];
+  for (const [index, connection] of connections.entries()) {
+    const name = CURSOR_CREDENTIAL_TARGETS[index]?.name ?? `entry ${index + 1}`;
+    try {
+      await connection.find();
+      await connection.save(value);
+    } catch (err) {
+      if (saved.length === 0) throw err;
+      throw new Error(
+        `Saved the new key for ${saved.join(', ')}, but saving it for ${name} failed (${gatewayError(err)}). Re-run provider-auth; if it then reports Cursor as already connected while requests still fail, remove both Cursor entries in your gateway first.`,
+      );
+    }
+    saved.push(name);
+  }
+}
+
+/** The login helper runs under the container's pinned Bun, through pnpm when the host has no matching Bun. */
+export function loginHelperCommand(root = process.cwd()): { command: string; prefix: string[] } {
+  try {
+    const version = execFileSync('bun', ['--version'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    if (isPinnedBunVersion(root, String(version).trim())) return { command: 'bun', prefix: [] };
+  } catch {
+    // No Bun on the host: use the pinned one below.
+  }
+  return { command: 'pnpm', prefix: [`--package=bun@${pinnedBunVersion(root)}`, 'dlx', 'bun'] };
+}
+
+/** Gateway adapters throw operator-facing messages; keep the first line only. */
+function gatewayError(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).split('\n')[0];
 }
 
 function ensureAnswer<T>(value: T | symbol): T {
@@ -127,23 +143,26 @@ export function looksLikeCursorApiKey(value: string): boolean {
 }
 
 export async function runCursorAuthStep(options: CursorAuthOptions = {}): Promise<void> {
-  let secrets: OnecliSecret[];
+  let connections: GatewayCredentialConnection[];
+  let connected: boolean;
   try {
-    secrets = listCursorSecrets();
+    connections = await cursorCredentialConnections();
+    connected = await cursorCredentialsConnected(connections);
   } catch (err) {
-    setupLog.step('auth', 'failed', 0, {
-      PROVIDER: 'cursor',
-      ERROR: `onecli_list_failed: ${String(err)}`,
-    });
-    p.log.error(
-      brandBody(
-        "Couldn't read the OneCLI vault. Make sure OneCLI is running (`onecli version`) before signing in to Cursor.",
-      ),
-    );
+    setupLog.step('auth', 'failed', 0, { PROVIDER: 'cursor', ERROR: `gateway_lookup_failed: ${gatewayError(err)}` });
+    p.log.error(brandBody(`Couldn't read the credential gateway before signing in to Cursor: ${gatewayError(err)}`));
     process.exit(1);
   }
 
-  if (!options.force && findCursorSecret(secrets) && findCursorModelsSecret(secrets)) {
+  if (!options.force && connected) {
+    try {
+      // Lets the gateway finish anything an interrupted earlier save left undone.
+      for (const connection of connections) await connection.keep();
+    } catch (err) {
+      setupLog.step('auth', 'failed', 0, { PROVIDER: 'cursor', ERROR: `gateway_keep_failed: ${gatewayError(err)}` });
+      p.log.error(brandBody(`Couldn't confirm the stored Cursor key with the credential gateway: ${gatewayError(err)}`));
+      process.exit(1);
+    }
     p.log.success(brandBody('Your Cursor account is already connected.'));
     setupLog.step('auth', 'skipped', 0, { REASON: 'cursor-secret-already-present', PROVIDER: 'cursor' });
     return;
@@ -187,19 +206,23 @@ export async function runCursorAuthStep(options: CursorAuthOptions = {}): Promis
     );
     if (!confirmed) return runCursorAuthStep(options);
     setupLog.step('auth', 'skipped', 0, { REASON: 'user-skipped', PROVIDER: 'cursor' });
-    p.log.warn(brandBody('Cursor sign-in skipped. Add a Cursor secret to OneCLI before using Cursor groups.'));
+    p.log.warn(
+      brandBody(
+        'Cursor sign-in skipped. Run `pnpm exec tsx setup/index.ts --step provider-auth cursor` before using Cursor groups.',
+      ),
+    );
     return;
   }
 
   if (method === 'api') {
-    await runCursorApiKeyAuth(options.force === true);
+    await runCursorApiKeyAuth(connections);
     return;
   }
 
-  await runCursorLoginAuth(method, { replaceExisting: options.force === true });
+  await runCursorLoginAuth(method, connections);
 }
 
-async function runCursorApiKeyAuth(replaceExisting: boolean): Promise<void> {
+async function runCursorApiKeyAuth(connections: GatewayCredentialConnection[]): Promise<void> {
   const key = ensureAnswer(
     await p.password({
       message: 'Enter your Cursor API key locally (cursor_… / crsr_… / key_…; never put it in chat)',
@@ -209,23 +232,33 @@ async function runCursorApiKeyAuth(replaceExisting: boolean): Promise<void> {
   ) as string;
 
   try {
-    vaultCursorKey(key.trim(), { replaceExisting });
+    await saveCursorKey(key, connections);
   } catch (err) {
-    setupLog.step('auth', 'failed', 0, { PROVIDER: 'cursor', METHOD: 'api', ERROR: String(err) });
-    p.log.error(
-      brandBody(
-        "Couldn't save your Cursor key to the vault. Make sure OneCLI is running (`onecli version`), then retry.",
-      ),
-    );
+    setupLog.step('auth', 'failed', 0, { PROVIDER: 'cursor', METHOD: 'api', ERROR: gatewayError(err) });
+    p.log.error(brandBody(`Couldn't save your Cursor key to the credential gateway: ${gatewayError(err)}`));
     process.exit(1);
   }
   setupLog.step('auth', 'success', 0, { PROVIDER: 'cursor', METHOD: 'api' });
   p.log.success(brandBody('Cursor account connected.'));
 }
 
+/** Read the helper's handoff file, refusing one that is missing, empty or not private. */
+function readHandoffKey(keyPath: string): { key: string } | { error: 'handoff_missing' | 'handoff_insecure' } {
+  try {
+    if (!fs.existsSync(keyPath)) return { error: 'handoff_missing' };
+    const stat = fs.statSync(keyPath);
+    if (stat.size === 0) return { error: 'handoff_missing' };
+    if (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o600) return { error: 'handoff_insecure' };
+    const key = fs.readFileSync(keyPath, 'utf-8').trim();
+    return key ? { key } : { error: 'handoff_missing' };
+  } catch {
+    return { error: 'handoff_missing' };
+  }
+}
+
 export async function runCursorLoginAuth(
   method: 'browser' | 'url',
-  options: { replaceExisting?: boolean } = {},
+  connections: GatewayCredentialConnection[],
 ): Promise<void> {
   if (method === 'browser') {
     p.log.step(brandBody('Opening the Cursor SDK sign-in flow…'));
@@ -242,47 +275,34 @@ export async function runCursorLoginAuth(
   const removeHandoff = (): void => fs.rmSync(handoffDir, { recursive: true, force: true });
 
   const start = Date.now();
-  const helperArgs = [CURSOR_LOGIN_HELPER, '--output', keyPath];
+  const helper = loginHelperCommand();
+  const helperArgs = [...helper.prefix, CURSOR_LOGIN_HELPER, '--output', keyPath];
   if (method === 'url') helperArgs.push('--no-browser');
   let failure: { details: Record<string, string>; message: string } | undefined;
   try {
-    const code = await runInherit('bun', helperArgs);
+    const code = await runInherit(helper.command, helperArgs);
     if (code !== 0) {
       failure = {
         details: { EXIT_CODE: String(code) },
         message: "Couldn't complete the Cursor SDK sign-in. Re-run setup and try again.",
       };
     } else {
-      let handoffError: 'handoff_missing' | 'handoff_insecure' | undefined;
-      try {
-        if (!fs.existsSync(keyPath)) {
-          handoffError = 'handoff_missing';
-        } else {
-          const stat = fs.statSync(keyPath);
-          if (stat.size === 0) handoffError = 'handoff_missing';
-          else if (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o600) {
-            handoffError = 'handoff_insecure';
-          }
-        }
-      } catch {
-        handoffError = 'handoff_missing';
-      }
-      if (handoffError) {
+      const handoff = readHandoffKey(keyPath);
+      if ('error' in handoff) {
         failure = {
-          details: { ERROR: handoffError },
+          details: { ERROR: handoff.error },
           message:
-            handoffError === 'handoff_insecure'
-              ? 'Cursor login wrote a credential file with unsafe permissions; it was deleted without vaulting.'
-              : 'Cursor login succeeded but the secure vault handoff was empty.',
+            handoff.error === 'handoff_insecure'
+              ? 'Cursor login wrote a credential file with unsafe permissions; it was deleted without saving.'
+              : 'Cursor login succeeded but the secure handoff file was empty.',
         };
       } else {
         try {
-          vaultCursorKeyFile(keyPath, options);
+          await saveCursorKey(handoff.key, connections);
         } catch (err) {
           failure = {
-            details: { ERROR: String(err) },
-            message:
-              "Couldn't save your Cursor credentials to the vault. Make sure OneCLI is running (`onecli version`), then retry.",
+            details: { ERROR: gatewayError(err) },
+            message: `Couldn't save your Cursor credentials to the credential gateway: ${gatewayError(err)}`,
           };
         }
       }
@@ -307,134 +327,9 @@ export async function runCursorLoginAuth(
   setupLog.step('auth', 'success', durationMs, { PROVIDER: 'cursor', METHOD: method });
   p.log.success(
     brandBody(
-      'Cursor account connected — the long-lived credential is in your OneCLI vault; the SDK uses a short-lived runtime token inside the container. Browser-minted keys expire after 90 days.',
+      'Cursor account connected — the long-lived key is in your credential gateway; the SDK uses a short-lived runtime token inside the container. Browser-minted keys expire after 90 days.',
     ),
   );
-}
-
-export function vaultCursorKey(key: string, options: { replaceExisting?: boolean } = {}): void {
-  const handoffDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-vault-key-'));
-  fs.chmodSync(handoffDir, 0o700);
-  const keyPath = path.join(handoffDir, 'api-key');
-  try {
-    fs.writeFileSync(keyPath, key, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
-    fs.chmodSync(keyPath, 0o600);
-    vaultCursorKeyFile(keyPath, options);
-  } finally {
-    fs.rmSync(handoffDir, { recursive: true, force: true });
-  }
-}
-
-function routeMatches(secret: OnecliSecret, route: (typeof CURSOR_SECRET_ROUTES)[number]): boolean {
-  return (secret.hostPattern ?? '').toLowerCase() === route.hostPattern && secret.pathPattern === route.pathPattern;
-}
-
-function createdSecretId(out: string): string {
-  const parsed = JSON.parse(out) as { id?: unknown };
-  if (typeof parsed.id !== 'string' || parsed.id.length === 0) {
-    throw new Error('OneCLI created a secret but returned no id');
-  }
-  return parsed.id;
-}
-
-function deleteSecretBestEffort(id: string): void {
-  try {
-    execFileSync('onecli', ['secrets', 'delete', '--id', id], {
-      env: onecliEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    // Preserve the original create failure. A later rerun sees the surviving
-    // exact route and fills only what is still missing.
-  }
-}
-
-function deleteSecret(id: string): void {
-  execFileSync('onecli', ['secrets', 'delete', '--id', id], {
-    env: onecliEnv(),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
-/**
- * Create only missing Cursor routes and roll back entries created by this call
- * if a later route fails. Existing working routes are never deleted.
- */
-export function vaultCursorKeyFile(keyPath: string, options: { replaceExisting?: boolean } = {}): string[] {
-  const existing = listCursorSecrets();
-  const knownIds = new Set(existing.map((secret) => secret.id));
-  const createdIds: string[] = [];
-
-  try {
-    for (const route of CURSOR_SECRET_ROUTES) {
-      if (!options.replaceExisting && existing.some((secret) => routeMatches(secret, route))) continue;
-      const out = execFileSync(
-        'onecli',
-        [
-          'secrets',
-          'create',
-          '--name',
-          route.name,
-          '--type',
-          'generic',
-          '--file',
-          keyPath,
-          '--host-pattern',
-          route.hostPattern,
-          '--path-pattern',
-          route.pathPattern,
-          '--header-name',
-          'Authorization',
-          '--value-format',
-          'Bearer {value}',
-        ],
-        {
-          encoding: 'utf-8',
-          env: onecliEnv(),
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
-      try {
-        createdIds.push(createdSecretId(out));
-      } catch (err) {
-        // Reconcile malformed CLI output so a secret that was created before
-        // stdout was corrupted can still be removed transactionally.
-        try {
-          for (const secret of listCursorSecrets()) {
-            if (!knownIds.has(secret.id) && routeMatches(secret, route)) createdIds.push(secret.id);
-          }
-        } catch {
-          // The original malformed response remains the actionable failure.
-        }
-        throw err;
-      }
-    }
-  } catch (err) {
-    for (const id of [...createdIds].reverse()) deleteSecretBestEffort(id);
-    throw err;
-  }
-
-  if (options.replaceExisting) {
-    const staleIds = existing
-      .filter((secret) => CURSOR_SECRET_ROUTES.some((route) => routeMatches(secret, route)))
-      .map((secret) => secret.id);
-    const failedDeletes: string[] = [];
-    for (const id of staleIds) {
-      try {
-        deleteSecret(id);
-      } catch {
-        failedDeletes.push(id);
-      }
-    }
-    if (failedDeletes.length > 0) {
-      // Keep the newly created routes. Rolling them back after some old routes
-      // were already deleted could leave Cursor with no complete credential.
-      throw new Error(
-        `Cursor credentials were rotated, but ${failedDeletes.length} stale OneCLI secret(s) could not be deleted; retry --force`,
-      );
-    }
-  }
-  return createdIds;
 }
 
 export function runInherit(

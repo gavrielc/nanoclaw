@@ -9,6 +9,9 @@ const HOST_SEAM_VERSION = 1;
 // container paths, same modes, same late (allowlisted-extra) mount slot.
 registerProviderHostContract('cursor', {
   seamVersion: HOST_SEAM_VERSION,
+  // The SDK's key exchange, agent RPCs and model catalog. Not public SDK API;
+  // re-verify when bumping @cursor/sdk.
+  modelDomains: ['cursor.sh', 'cursor.com'],
   projectDocument: {
     fileName: 'AGENTS.md',
     containerPath: '/workspace/agent/AGENTS.md',

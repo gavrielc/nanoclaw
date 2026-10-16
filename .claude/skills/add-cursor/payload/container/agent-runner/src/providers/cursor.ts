@@ -18,9 +18,8 @@
  * `cursor.gateway-proxy.test.ts`.
  *
  * This module never imports the runtime contract (provider-contracts/cursor.ts):
- * registration is two-step, so it compiles and runs on a core that predates the
- * contract seam. The contract attaches itself through registerProviderContract
- * and reuses the section functions exported here.
+ * registration is two-step. The contract attaches itself through
+ * registerProviderContract and reuses the section functions exported here.
  */
 import { randomUUID } from 'crypto';
 import fs from 'fs';
@@ -41,7 +40,7 @@ import type {
 } from '@cursor/sdk';
 
 import { memoryContextForSessionStart, type MemorySessionHookRegistration } from '../memory/session-hook.js';
-import { archiveProviderExchange } from './exchange-archive.js';
+import { archiveProviderExchange } from '../provider-contracts/exchange-archive.js';
 import { registerProvider } from './provider-registry.js';
 import type {
   AgentProvider,
@@ -82,7 +81,9 @@ function knownBodyLength(body: BodyInit | null | undefined): number | null {
 export function createContentLengthFetch(fetchImpl: typeof fetch): typeof fetch {
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const length = knownBodyLength(init?.body);
-    const nextInit = length == null ? init : { ...init, headers: new Headers(init?.headers) };
+    // An init that carries headers replaces a Request's own, so start from those.
+    const base = init?.headers ?? (input instanceof Request ? input.headers : undefined);
+    const nextInit = length == null ? init : { ...init, headers: new Headers(base) };
     if (length != null) {
       const headers = (nextInit as RequestInit).headers as Headers;
       if (!headers.has('content-length')) headers.set('content-length', String(length));
@@ -113,6 +114,8 @@ interface ProxyPolicy {
   /** null when HTTPS_PROXY is set but unparseable: nothing can match it. */
   proxyHost: string | null;
   proxyPort: string | null;
+  /** The proxy URL's scheme; the CONNECT tunnel speaks plain `http:` only. */
+  proxyProtocol: string | null;
   /** Basic credentials from the proxy URL, when it has them. */
   proxyAuthorization: string | null;
   noProxy: string[];
@@ -152,19 +155,31 @@ function proxyPolicy(env: NodeJS.ProcessEnv): ProxyPolicy | null {
     return {
       proxyHost: normalizeHost(url.hostname),
       proxyPort: url.port || defaultPort(url.protocol),
+      proxyProtocol: url.protocol,
       proxyAuthorization: proxyAuthorizationHeader(url),
       noProxy,
     };
   } catch {
-    return { proxyHost: null, proxyPort: null, proxyAuthorization: null, noProxy };
+    return { proxyHost: null, proxyPort: null, proxyProtocol: null, proxyAuthorization: null, noProxy };
   }
 }
 
-/** Standard NO_PROXY semantics: `*`, exact host, or domain suffix (leading dot optional). */
-function matchesNoProxy(host: string, noProxy: string[]): boolean {
+/** `host`, `host:port`, `[v6]` or `[v6]:port`; a bare IPv6 address has no port. */
+function noProxyEntry(entry: string): { host: string; port: string | null } {
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(entry);
+  if (bracketed) return { host: bracketed[1], port: bracketed[2] ?? null };
+  const hostPort = /^([^:]+):(\d+)$/.exec(entry);
+  if (hostPort) return { host: hostPort[1], port: hostPort[2] };
+  return { host: entry, port: null };
+}
+
+/** Standard NO_PROXY semantics: `*`, exact host, or domain suffix (leading dot optional); a port limits the entry to it. */
+function matchesNoProxy(host: string, port: string, noProxy: string[]): boolean {
   return noProxy.some((entry) => {
     if (entry === '*') return true;
-    const bare = entry.replace(/:\d+$/, '').replace(/^\./, '');
+    const parsed = noProxyEntry(entry);
+    if (parsed.port !== null && parsed.port !== port) return false;
+    const bare = parsed.host.replace(/^\./, '');
     return bare.length > 0 && (host === bare || host.endsWith(`.${bare}`));
   });
 }
@@ -172,7 +187,7 @@ function matchesNoProxy(host: string, noProxy: string[]): boolean {
 function permitsDial(policy: ProxyPolicy, host: string, port: string | number): boolean {
   const target = normalizeHost(host);
   if (policy.proxyHost !== null && target === policy.proxyHost && String(port) === policy.proxyPort) return true;
-  return matchesNoProxy(target, policy.noProxy);
+  return matchesNoProxy(target, String(port), policy.noProxy);
 }
 
 function wantsHttp2(protocols: unknown): boolean {
@@ -352,6 +367,12 @@ function connectViaHttpProxy(
   callback: (err: Error | null, socket?: tls.TLSSocket) => void,
 ): void {
   const authority = `${target.host}:${target.port}`;
+  if (policy.proxyProtocol !== 'http:') {
+    // CONNECT and any Proxy-Authorization would cross a TLS proxy's port in the clear.
+    const err = new Error(`Cursor SDK proxy tunnel to ${authority} needs an http:// proxy URL; refusing`);
+    process.nextTick(() => callback(err));
+    return;
+  }
   const proxySocket = net.connect({ host: policy.proxyHost!, port: Number(policy.proxyPort) });
   let settled = false;
   const fail = (err: Error): void => {
@@ -360,7 +381,10 @@ function connectViaHttpProxy(
     proxySocket.destroy();
     callback(err);
   };
+  const onClose = (): void =>
+    fail(new Error(`Cursor SDK proxy tunnel to ${authority} closed before answering CONNECT`));
   proxySocket.on('error', fail);
+  proxySocket.once('close', onClose);
   let buffered = Buffer.alloc(0);
   proxySocket.on('data', function onData(chunk: Buffer) {
     buffered = Buffer.concat([buffered, chunk]);
@@ -375,6 +399,7 @@ function connectViaHttpProxy(
     if (settled) return;
     settled = true;
     proxySocket.off('error', fail);
+    proxySocket.off('close', onClose);
     const rest = buffered.subarray(end + 4);
     if (rest.length > 0) proxySocket.unshift(rest);
     const tlsOptions: tls.ConnectionOptions = {
@@ -922,10 +947,10 @@ export class CursorProvider implements AgentProvider {
             return;
           } else if (result.status === 'error') {
             // `text` is model output. The channel notice comes from `error`,
-            // which the poll-loop delivers; model text is not that notice.
-            const notice = result.error?.message || result.result || streamed || 'Cursor run failed';
-            const modelText = result.error?.message ? result.result || streamed || null : null;
-            yield failedResult(notice, modelText);
+            // which the poll-loop delivers as is, so model text (which may
+            // hold scratchpad) never becomes it.
+            const notice = result.error?.message || 'Cursor run failed';
+            yield failedResult(notice, result.result || streamed || null);
           } else {
             yield { type: 'result', text: result.result ?? (streamed || null) };
           }

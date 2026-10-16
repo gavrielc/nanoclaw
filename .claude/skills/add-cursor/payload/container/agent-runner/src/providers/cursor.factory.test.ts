@@ -138,6 +138,25 @@ describe('mapMcpServers / stream helpers', () => {
     expect(actual).toBe(response);
   });
 
+  it("keeps a Request's own headers when only the body is replaced", async () => {
+    let received: RequestInit | undefined;
+    const wrapped = createContentLengthFetch((async (_input, init) => {
+      received = init;
+      return new Response('{}');
+    }) as typeof fetch);
+
+    const request = new Request('https://api2.cursor.sh/rpc', {
+      method: 'POST',
+      headers: { authorization: 'Bearer cursor_placeholder_nanoclaw', 'content-type': 'application/json' },
+    });
+    await wrapped(request, { body: '{}' });
+
+    const headers = new Headers(received?.headers);
+    expect(headers.get('authorization')).toBe('Bearer cursor_placeholder_nanoclaw');
+    expect(headers.get('content-type')).toBe('application/json');
+    expect(headers.get('content-length')).toBe('2');
+  });
+
   it('does not touch the proxy environment while wrapping requests', async () => {
     process.env.NO_PROXY = 'localhost';
     process.env.no_proxy = 'localhost';
@@ -610,6 +629,12 @@ describe('CursorProvider', () => {
         result: { id: 'run-error', status: 'error' as const, result: 'partial', error: { message: 'model failed' } },
         streamText: 'streamed',
         expected: { type: 'result', text: 'partial', isError: true, error: 'model failed' },
+      },
+      {
+        // Model text never becomes the channel notice: it may hold scratchpad.
+        result: { id: 'run-error-bare', status: 'error' as const, result: '<internal>draft</internal>' },
+        streamText: '',
+        expected: { type: 'result', text: '<internal>draft</internal>', isError: true, error: 'Cursor run failed' },
       },
       {
         result: { id: 'run-cancelled', status: 'cancelled' as const },

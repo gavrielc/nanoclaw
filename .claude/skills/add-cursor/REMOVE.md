@@ -13,6 +13,10 @@ ncl groups config update --id <group-id> --provider claude
 ncl groups restart --id <group-id>
 ```
 
+If a group's config also sets a Cursor model (for example `composer-2.5`), add `--model <model>` with a model the new provider accepts to that update; Claude cannot run a Cursor model name.
+
+If `.env` has `DEFAULT_AGENT_PROVIDER=cursor`, change that key to `claude` (or another installed provider) now, so groups created after the restart do not pick the removed provider.
+
 ## 2. Delete the barrel imports
 
 Delete (do not comment out) the `import './cursor.js';` line from each of:
@@ -47,7 +51,7 @@ rm -f src/providers/cursor.ts \
       setup/providers/cursor-registration.test.ts
 ```
 
-`container/agent-runner/src/providers/exchange-archive.ts` and its test are shared with the Codex provider; remove them only if `/add-codex` is not installed either.
+Leave `container/agent-runner/src/provider-contracts/exchange-archive.ts` in place: it is core's shared exchange archive, not a skill file.
 
 This skill itself (`.claude/skills/add-cursor/`) stays — it ships with trunk so the provider can be re-added later.
 
@@ -59,9 +63,9 @@ cd container/agent-runner && bun remove @cursor/sdk && cd -
 
 Do **not** edit `container/cli-tools.json` — this skill never added a CLI there.
 
-## 5. Vault secrets (optional)
+## 5. Gateway credentials (optional)
 
-The Cursor secrets in the OneCLI vault grant nothing once the provider is gone. To remove them: `onecli secrets list`, then `onecli secrets delete --id <id>` for both the `api2.cursor.sh/auth/exchange_user_api_key` and `api.cursor.com/v1/models` entries.
+The `Cursor` (`api2.cursor.sh/auth/exchange_user_api_key`) and `Cursor models` (`api.cursor.com/v1/models`) entries in the credential gateway grant nothing once the provider is gone. They are user data: remove them through your gateway's own tools only if the operator asks.
 
 ## 6. Per-group state (optional)
 
@@ -72,7 +76,7 @@ Each cursor group keeps its Cursor agent store, hooks, and self-authored skills 
 ```bash
 pnpm run build
 pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
-./container/build.sh
+./container/build.sh build
 pnpm test
 cd container/agent-runner && bun test
 ```
