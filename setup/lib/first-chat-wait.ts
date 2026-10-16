@@ -65,7 +65,8 @@ export async function waitForFirstReply(opts: WaitOptions): Promise<FirstReplyWa
     }
     ping.stop();
     const outcome = await ping.outcome;
-    return { outcome, keptWaiting, skipped: outcome.result !== 'ok' };
+    // Stopping can still turn up a reply or a failure the client had printed.
+    return { outcome, keptWaiting, skipped: outcome.result === 'no_reply' };
   }
 }
 

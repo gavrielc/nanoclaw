@@ -105,6 +105,15 @@ describe('waitForFirstReply', () => {
     await expect(done).resolves.toEqual({ outcome: { result: 'ok' }, keptWaiting: 0, skipped: false });
   });
 
+  it('does not count a skip as skipped when stopping finds a failure', async () => {
+    let resolve!: (outcome: PingOutcome) => void;
+    const outcome = new Promise<PingOutcome>((r) => (resolve = r));
+    const ping = { outcome, stop: vi.fn(() => resolve({ result: 'auth_error' })) };
+    const done = waitForFirstReply({ ping, interactive: true, ask: async () => 'skip' as const });
+    await vi.advanceTimersByTimeAsync(FIRST_WAIT_MS);
+    await expect(done).resolves.toEqual({ outcome: { result: 'auth_error' }, keptWaiting: 0, skipped: false });
+  });
+
   it('returns at once when the chat client ends early', async () => {
     const { ping, reply } = fakePing();
     const { ask } = answers();

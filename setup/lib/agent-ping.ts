@@ -162,6 +162,8 @@ function outcomeSoFar(stdout: string, stderr: string): PingOutcome {
 
 // The client's own deadline should win, so its exit code is the one read.
 const GUARD_GRACE_MS = 5_000;
+// After a kill, how long to wait for the client's close before settling.
+const DRAIN_MS = 2_000;
 
 /** Start the setup ping. The chat client gives up after `deadlineMs`; stop() ends it sooner. */
 export function startCliPing(deadlineMs: number): CliPing {
@@ -176,6 +178,8 @@ export function startCliPing(deadlineMs: number): CliPing {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let stopped = false;
+    let drain: NodeJS.Timeout | undefined;
     const kill = (): void => {
       child.kill('SIGKILL');
     };
@@ -183,20 +187,21 @@ export function startCliPing(deadlineMs: number): CliPing {
       if (settled) return;
       settled = true;
       clearTimeout(guard);
+      clearTimeout(drain);
       process.off('exit', kill);
       resolve(result);
     };
+    // Settle on close, so output already in the pipe is read before deciding.
+    const halt = (): void => {
+      if (settled || stopped) return;
+      stopped = true;
+      kill();
+      drain = setTimeout(() => settle(outcomeSoFar(stdout, stderr)), DRAIN_MS);
+    };
     // A client left behind would hold the CLI chat slot for its whole deadline.
     process.once('exit', kill);
-    const guard = setTimeout(() => {
-      kill();
-      settle(outcomeSoFar(stdout, stderr));
-    }, deadlineMs + GUARD_GRACE_MS);
-    stop = () => {
-      if (settled) return;
-      kill();
-      settle(outcomeSoFar(stdout, stderr));
-    };
+    const guard = setTimeout(halt, deadlineMs + GUARD_GRACE_MS);
+    stop = halt;
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf-8');
@@ -204,7 +209,7 @@ export function startCliPing(deadlineMs: number): CliPing {
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf-8');
     });
-    child.on('close', (code) => settle(pingOutcome(code, stdout, stderr)));
+    child.on('close', (code) => settle(stopped ? outcomeSoFar(stdout, stderr) : pingOutcome(code, stdout, stderr)));
     child.on('error', () => settle({ result: 'socket_error' }));
   });
   return { outcome, stop: () => stop() };

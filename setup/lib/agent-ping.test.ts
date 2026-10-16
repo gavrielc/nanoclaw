@@ -23,10 +23,10 @@ const { children, spawnEnv } = vi.hoisted(() => ({
 vi.mock('child_process', () => ({
   spawn: (_cmd: string, _args: string[], opts?: { env?: Record<string, string | undefined> }) => {
     spawnEnv.push(opts?.env);
-    const child = Object.assign(new EventEmitter(), {
+    const child: FakeChild = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
-      kill: vi.fn(),
+      kill: vi.fn(() => setImmediate(() => child.emit('close', null))),
     });
     children.push(child);
     return child;
@@ -141,6 +141,17 @@ describe('startCliPing', () => {
     children.at(-1)?.stdout.emit('data', raw('pong'));
     ping.stop();
     await expect(ping.outcome).resolves.toEqual({ result: 'ok' });
+  });
+
+  it('reads output that drains after the kill before deciding', async () => {
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.kill.mockImplementation(() => undefined);
+    child.stdout.emit('data', raw('Done part one.'));
+    ping.stop();
+    child.stdout.emit('data', raw('Spending limit reached', true));
+    child.emit('close', null);
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
   });
 
   it('kills a chat client that outlives its own deadline', async () => {
