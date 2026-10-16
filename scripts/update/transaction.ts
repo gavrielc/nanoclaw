@@ -3,8 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import type { GatewayCatalogEntry } from '../../setup/gateways/catalog.js';
 import { getInstallSlug } from '../../src/install-slug.js';
 import { refreshInstalledSkills, type SkillsRefreshReport } from '../update-skills.js';
+import { stampChannel, type UpdateChannel } from './channel.js';
 import {
   createCommandRunner,
   defaultServiceEnvironment,
@@ -49,6 +51,7 @@ export interface UpdateState {
   stageRoot: string;
   stageBranch: string;
   upstreamRef: string;
+  channel?: UpdateChannel;
   strategy: 'merge' | 'rebase' | 'cherry-pick';
   originalHead: string;
   targetHead?: string;
@@ -244,6 +247,7 @@ function refreshPreparedState(state: UpdateState, runtime: UpdateRuntime): void 
 export interface PrepareOptions {
   projectRoot: string;
   upstreamRef: string;
+  channel?: UpdateChannel;
   strategy?: UpdateState['strategy'];
   commits?: string[];
 }
@@ -283,6 +287,7 @@ export function prepareUpdate(options: PrepareOptions, runtime = createUpdateRun
     stageRoot,
     stageBranch,
     upstreamRef: options.upstreamRef,
+    channel: options.channel,
     strategy,
     originalHead,
     backupBranch,
@@ -345,31 +350,52 @@ export async function validateUpdate(
     commitStageChanges(state, runtime, 'chore: refresh installed skill payloads');
     refreshPreparedState(state, runtime);
 
-    if (hasChanged(state, 'src/gateway-providers') || hasChanged(state, 'setup/gateways')) {
+    // Gateway host code is materialized from its skill, so a payload-only change must refresh it too.
+    // The manifest is what puts a skill in the gateway catalog.
+    const changedGatewaySkills = new Set(
+      state.changedFiles
+        .map((file) => /^\.claude\/skills\/([^/]+)\//.exec(file)?.[1])
+        .filter((skill): skill is string => !!skill)
+        .filter((skill) => fs.existsSync(path.join(state.stageRoot, '.claude/skills', skill, 'gateway.json'))),
+    );
+    const checks: string[] = [];
+    const gatewayCoreChanged = hasChanged(state, 'src/gateway-providers') || hasChanged(state, 'setup/gateways');
+    state.gatewaySelection = undefined;
+    if (gatewayCoreChanged || changedGatewaySkills.size > 0) {
       const { loadGatewayCatalog, resolveGatewaySelection } = await runtime.loadGateway(state.stageRoot);
-      const kind = resolveGatewaySelection(
-        state.projectRoot,
-        undefined,
-        path.join(state.stageRoot, '.claude', 'skills'),
-      );
-      const entry = loadGatewayCatalog(state.stageRoot).gateways.find((candidate) => candidate.kind === kind);
-      if (!entry) throw new Error(`Unknown gateway provider: ${kind}`);
-      state.gatewaySelection = kind;
-      const gateway = { name: kind, skillName: path.basename(entry.skillPath), kind: 'gateway' as const };
-      const report = await refreshInstalledSkills(state.stageRoot, [gateway.skillName], { include: [gateway] });
-      state.skillRefresh.skills.push(...report.skills);
-      state.skillRefresh.selected.push(...report.selected);
-      state.skillRefresh.success &&= report.success;
-      if (!report.success) {
-        throw new Error(
-          `Gateway skill did not fully apply: ${report.skills.flatMap((skill) => skill.errors).join('; ')}`,
+      let entry: GatewayCatalogEntry | undefined;
+      try {
+        const kind = resolveGatewaySelection(
+          state.projectRoot,
+          undefined,
+          path.join(state.stageRoot, '.claude', 'skills'),
         );
+        entry = loadGatewayCatalog(state.stageRoot).gateways.find((candidate) => candidate.kind === kind);
+        if (!entry) throw new Error(`Unknown gateway provider: ${kind}`);
+      } catch (err) {
+        // Skill-only change: don't block the update over a gateway it can't resolve; say so instead.
+        if (gatewayCoreChanged) throw err;
+        checks.push(`gateway payload refresh skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
-      commitStageChanges(state, runtime, 'chore: materialize selected gateway');
-      refreshPreparedState(state, runtime);
+      // Skill-only change: refresh just the selected gateway, and only if its own skill changed.
+      if (entry && (gatewayCoreChanged || changedGatewaySkills.has(path.basename(entry.skillPath)))) {
+        const kind = entry.kind;
+        state.gatewaySelection = kind;
+        const gateway = { name: kind, skillName: path.basename(entry.skillPath), kind: 'gateway' as const };
+        const report = await refreshInstalledSkills(state.stageRoot, [gateway.skillName], { include: [gateway] });
+        state.skillRefresh.skills.push(...report.skills);
+        state.skillRefresh.selected.push(...report.selected);
+        state.skillRefresh.success &&= report.success;
+        if (!report.success) {
+          throw new Error(
+            `Gateway skill did not fully apply: ${report.skills.flatMap((skill) => skill.errors).join('; ')}`,
+          );
+        }
+        commitStageChanges(state, runtime, 'chore: materialize selected gateway');
+        refreshPreparedState(state, runtime);
+      }
     }
 
-    const checks: string[] = [];
     // Cheap, and it names the offending path while nothing is stopped yet.
     assertMutableRootsResolvable(state.projectRoot);
     checks.push('mutable-state roots resolvable');
@@ -905,6 +931,7 @@ export async function finishUpdate(
       ['exec', 'tsx', 'scripts/upgrade-state.ts', 'set', '', 'update-nanoclaw'],
       state.projectRoot,
     );
+    if (state.channel) stampChannel(state.projectRoot, { channel: state.channel, ref: state.upstreamRef });
     if (state.service?.active) {
       runtime.startService(state.service, state.projectRoot);
       if (!(await runtime.verifyHealth(state.service, state.projectRoot))) {
@@ -1040,6 +1067,7 @@ export function summarizeState(state: UpdateState): Record<string, unknown> {
     originalHead: state.originalHead,
     targetHead: state.targetHead,
     upstreamRef: state.upstreamRef,
+    channel: state.channel,
     backupBranch: state.backupBranch,
     backupTag: state.backupTag,
     stageRoot: state.stageRoot,
