@@ -10,6 +10,7 @@ import path from 'path';
 import { promisify } from 'util';
 
 import { TEMPLATES_DIR } from '../config.js';
+import { log } from '../log.js';
 import { isValidTemplateRef, resolveLocalTemplate } from './local-dir.js';
 import { parsePluginManifest, PLUGIN_MANIFEST_FILE } from './manifest.js';
 import { parseTemplate } from './parse.js';
@@ -51,6 +52,8 @@ export function cloneArgs(dir: string): string[] {
   return [
     '-c',
     'core.symlinks=false',
+    '-c',
+    'core.hooksPath=/dev/null',
     'clone',
     '--depth',
     '1',
@@ -67,26 +70,30 @@ export async function cloneRegistry(): Promise<ClonedRegistry> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tpl-'));
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1' };
   try {
-    await execFileAsync('git', cloneArgs(dir), { timeout: 60_000, env });
+    await execFileAsync('git', cloneArgs(dir), { timeout: 20_000, env });
     const { stdout } = await execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD'], { env });
     return { dir, commit: stdout.trim(), cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
+    // git's stderr can name proxies, mirrors and temp paths: host log only,
+    // never in the error an agent sees.
     const stderr = String((err as { stderr?: unknown }).stderr ?? '').trim();
-    const detail = stderr.split('\n').pop();
-    throw new Error(`Could not clone the template library${detail ? `: ${detail}` : ''}`, { cause: err });
+    log.warn('Template library clone failed', { detail: stderr.split('\n').pop() });
+    throw new Error('Could not clone the template library', { cause: err });
   }
 }
 
 export function listTemplatesFromDir(dir: string): TemplateEntry[] {
   if (!fs.existsSync(dir)) return [];
   const rootName = path.basename(path.resolve(dir));
-  const rels = (fs.readdirSync(dir, { recursive: true }) as string[]).map((entry) => entry.split(path.sep).join('/'));
+  // Dot folders are never templates (.git, a fetch's staging copy), and nothing
+  // inside one counts toward the legacy-layout check either.
+  const rels = (fs.readdirSync(dir, { recursive: true }) as string[])
+    .map((entry) => entry.split(path.sep).join('/'))
+    .filter((rel) => !rel.split('/').some((segment) => segment.startsWith('.')));
 
   const refs = new Set<string>();
   for (const rel of rels) {
-    // Dot folders are never templates: .git, and a fetch's staging copy.
-    if (rel.split('/').some((segment) => segment.startsWith('.'))) continue;
     if (rel === PLUGIN_MANIFEST_FILE) refs.add('.');
     else if (rel.endsWith(`/${PLUGIN_MANIFEST_FILE}`)) refs.add(rel.slice(0, -(PLUGIN_MANIFEST_FILE.length + 1)));
   }
@@ -159,7 +166,7 @@ export function templateDescription(ref: string, base: string = TEMPLATES_DIR): 
 
 /** True when a well-formed ref already has a local copy. */
 export function hasLocalTemplate(ref: string, base: string = TEMPLATES_DIR): boolean {
-  return isValidTemplateRef(ref) && fs.existsSync(path.join(base, ref));
+  return isValidTemplateRef(ref) && fs.existsSync(path.join(base, ref, PLUGIN_MANIFEST_FILE));
 }
 
 /**
@@ -188,7 +195,12 @@ export async function ensureTemplateLocal(
     try {
       copyPluginDir(libraryTemplateDir(registry.dir, ref), staging);
       parseTemplate(staging);
-      if (!fs.existsSync(dest)) fs.renameSync(staging, dest);
+      try {
+        fs.renameSync(staging, dest);
+      } catch (err) {
+        // A concurrent fetch of the same ref won the rename: its copy is the same template.
+        if (!fs.existsSync(dest)) throw err;
+      }
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
     }

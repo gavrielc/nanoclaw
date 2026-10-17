@@ -23,7 +23,8 @@ consequences:
 
 Templates are purely additive and require no DB migration. **Templates
 are stamped only from a local directory**: `templates/` at the
-project root by default (committed but shipped empty), or whatever
+project root by default (only its README is committed; everything else there
+is gitignored), or whatever
 `NANOCLAW_TEMPLATES_DIR` points at (a local path only). The public registry
 ([`nanocoai/nanoclaw-templates`](https://github.com/nanocoai/nanoclaw-templates))
 is a copy source: setup and an agent's `create_agent` can fetch a chosen

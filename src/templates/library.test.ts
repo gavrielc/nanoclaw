@@ -4,8 +4,11 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { execFileSync } from 'child_process';
+
 import {
   cloneArgs,
+  cloneRegistry,
   copyTemplate,
   ensureTemplateLocal,
   fetchTemplateIndex,
@@ -64,6 +67,11 @@ describe('listTemplatesFromDir / copyTemplate', () => {
     // A leftover fetch staging copy is never offered as a template.
     fs.mkdirSync(path.join(source, 'sales', '.sdr.fetch-abc123'), { recursive: true });
     fs.writeFileSync(path.join(source, 'sales', '.sdr.fetch-abc123', 'plugin.json'), '{"name":"sdr"}');
+    fs.mkdirSync(path.join(source, 'sales', '.sdr.fetch-abc123', 'ai.nanoco.nanoclaw', 'context'), { recursive: true });
+    fs.writeFileSync(
+      path.join(source, 'sales', '.sdr.fetch-abc123', 'ai.nanoco.nanoclaw', 'context', 'instructions.md'),
+      'Leftover.',
+    );
 
     expect(listTemplatesFromDir(source)).toEqual([{ ref: 'sales/sdr', name: 'sdr' }]);
 
@@ -89,6 +97,53 @@ describe('listTemplatesFromDir / copyTemplate', () => {
     expect(args.slice(0, 2)).toEqual(['-c', 'core.symlinks=false']);
     expect(args).toContain('--branch');
     expect(args.slice(-3)).toEqual(['--', 'https://github.com/nanocoai/nanoclaw-templates', '/tmp/x']);
+  });
+
+  it('runs git with symlinks off, no hooks and no LFS, and keeps git stderr out of the error', async () => {
+    const bin = path.join(root, 'bin');
+    const record = path.join(root, 'git-calls');
+    fs.mkdirSync(bin);
+    // A stand-in git: records each call, "clones" by making the target dir, answers rev-parse.
+    fs.writeFileSync(
+      path.join(bin, 'git'),
+      [
+        '#!/bin/sh',
+        `printf '%s|LFS=%s\\n' "$*" "$GIT_LFS_SKIP_SMUDGE" >> '${record}'`,
+        'case "$*" in *rev-parse*) echo c0ffee ;; *) mkdir -p "$(eval echo \\${$#})" ;; esac',
+        'if [ -n "$FAIL_CLONE" ]; then echo "fatal: unable to access proxy.internal:3128" >&2; exit 128; fi',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}:${originalPath}`;
+    try {
+      const clone = await cloneRegistry();
+      clone.cleanup();
+      const calls = fs.readFileSync(record, 'utf8').trim().split('\n');
+      expect(calls[0]).toMatch(/^-c core\.symlinks=false -c core\.hooksPath=\/dev\/null clone .*\|LFS=1$/);
+      expect(clone.commit).toBe('c0ffee');
+
+      process.env.FAIL_CLONE = '1';
+      const failure = await cloneRegistry().catch((err: Error) => err);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe('Could not clone the template library');
+    } finally {
+      process.env.PATH = originalPath;
+      delete process.env.FAIL_CLONE;
+    }
+  });
+
+  it('keeps fetched templates out of git, but not the README', () => {
+    const ignored = (p: string): boolean => {
+      try {
+        execFileSync('git', ['check-ignore', '-q', p]);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(ignored('templates/sales/sdr/plugin.json')).toBe(true);
+    expect(ignored('templates/README.md')).toBe(false);
   });
 
   it('emits the migration error for a pre-plugin template layout', () => {

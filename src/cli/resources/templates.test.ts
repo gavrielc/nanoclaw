@@ -90,6 +90,17 @@ describe('ncl templates list', () => {
     ]);
   });
 
+  it('reuses a fetched library index for later listings', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(JSON.stringify({ schema: 1, categories: {} })));
+
+    await dispatch({ id: 'a', command: 'templates-list', args: { registry: true } }, agent);
+    await dispatch({ id: 'b', command: 'templates-list', args: { registry: true } }, agent);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('fetches the library index once for a burst of listings, failures included', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('blackholed'));
 
