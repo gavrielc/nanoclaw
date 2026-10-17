@@ -140,8 +140,12 @@ export type McpServerConfig =
   | { type: 'http'; url: string; headers?: Record<string, string> };
 
 export interface AgentQuery {
-  /** Push a follow-up message into the active query. */
-  push(message: string): void;
+  /**
+   * Push a follow-up message into the active query. `id` names this input so
+   * a provider that can tell which inputs a turn answered can report it back
+   * in `result.answered`; providers that cannot may ignore it.
+   */
+  push(message: string, id?: string): void;
 
   /** Signal that no more input will be sent. */
   end(): void;
@@ -160,8 +164,14 @@ export type ProviderEvent =
    * `text` is model output; `error` is an optional user-facing provider error
    * (e.g. a billing/quota notice), kept separate from model scratchpad and
    * raw diagnostics. Failures without `error` receive a generic notice.
+   *
+   * `answered` lists the ids (from `push`) of every input this turn consumed.
+   * A provider may answer several waiting inputs in one turn — the Claude SDK
+   * does when more than one is queued at a turn boundary — so one result can
+   * cover several pushes. Absent when the provider cannot tell; the poll-loop
+   * then assumes one result per input.
    */
-  | { type: 'result'; text: string | null; isError?: boolean; error?: string }
+  | { type: 'result'; text: string | null; isError?: boolean; error?: string; answered?: string[] }
   /**
    * An assistant text segment emitted mid-turn (e.g. between tool calls).
    * The SDK's final `result` carries only the LAST assistant text, so a
