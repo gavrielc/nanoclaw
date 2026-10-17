@@ -276,14 +276,14 @@ describe('the library index', () => {
   });
 
   it('fetches the index, and reports an HTTP failure plainly', async () => {
-    const ok = vi.fn(async () => new Response(JSON.stringify(index)));
+    const ok = vi.fn(async () => new Response(JSON.stringify(index))) as unknown as typeof fetch;
     expect((await fetchTemplateIndex(ok)).map((t) => t.ref)).toEqual([
       'data/analyst',
       'data/no-description',
       'sales/sdr',
     ]);
 
-    const notFound = vi.fn(async () => new Response('', { status: 404 }));
+    const notFound = vi.fn(async () => new Response('', { status: 404 })) as unknown as typeof fetch;
     await expect(fetchTemplateIndex(notFound)).rejects.toThrow('HTTP 404');
   });
 });
