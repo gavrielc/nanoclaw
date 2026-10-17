@@ -4,6 +4,19 @@ import path from 'path';
 import { TEMPLATES_DIR } from '../config.js';
 
 /**
+ * Grammar-only ref check (no disk, no network): `/`-separated plain segments,
+ * so a ref that passes can never escape the templates base. Agent-supplied
+ * refs go through this before anything is read or fetched.
+ */
+export function isValidTemplateRef(ref: string): boolean {
+  return (
+    ref.length > 0 &&
+    ref.length <= 128 &&
+    ref.split('/').every((segment) => /^[A-Za-z0-9._-]+$/.test(segment) && segment !== '.' && segment !== '..')
+  );
+}
+
+/**
  * Resolve a LOCAL template ref to an absolute directory under `base`
  * (TEMPLATES_DIR by default). Lexical containment only — no realpathSync, no
  * symlink resolution (out of threat model). Mirrors ensureWithinBase() in
