@@ -44,7 +44,7 @@ import {
   getMessagingGroupByPlatform,
 } from '../../db/messaging-groups.js';
 import { log } from '../../log.js';
-import { templateDescription } from '../../templates/registry.js';
+import { templateDescription } from '../../templates/library.js';
 import type { MessagingGroup, MessagingGroupAgent, Session } from '../../types.js';
 import {
   createDestination,

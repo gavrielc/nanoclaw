@@ -72,6 +72,8 @@ describe('isValidTemplateRef', () => {
       'sales/',
       ' sales/sdr',
       'a\\b',
+      '.hidden/x',
+      'sales/-x',
       'x'.repeat(129),
     ]) {
       expect(isValidTemplateRef(ref)).toBe(false);

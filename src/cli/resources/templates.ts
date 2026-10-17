@@ -10,8 +10,27 @@ import {
   hasLocalTemplate,
   listTemplatesFromDir,
   templateDescription,
-} from '../../templates/registry.js';
+  type LibraryTemplate,
+} from '../../templates/library.js';
+import { isValidTemplateRef } from '../../templates/local-dir.js';
 import { registerResource } from '../crud.js';
+
+// The verb runs inside the host's delivery loop: one fetch (or one failure)
+// every few minutes keeps a slow or blocked network from stalling delivery.
+const INDEX_MEMO_MS = 5 * 60_000;
+let indexMemo: { at: number; result: Promise<LibraryTemplate[]> } | undefined;
+
+function libraryIndex(): Promise<LibraryTemplate[]> {
+  if (!indexMemo || Date.now() - indexMemo.at > INDEX_MEMO_MS) {
+    indexMemo = { at: Date.now(), result: fetchTemplateIndex() };
+  }
+  return indexMemo.result;
+}
+
+/** Tests only: the next listing fetches again. */
+export function _forgetLibraryIndex(): void {
+  indexMemo = undefined;
+}
 
 interface TemplateRow {
   ref: string;
@@ -40,10 +59,11 @@ registerResource({
       examples: ['ncl templates list', 'ncl templates list --registry'],
       handler: async (args): Promise<TemplateRow[]> => {
         if (args.registry) {
-          return (await fetchTemplateIndex()).map((t) => ({ ...t, local: hasLocalTemplate(t.ref) }));
+          return (await libraryIndex()).map((t) => ({ ...t, local: hasLocalTemplate(t.ref) }));
         }
+        // Only refs create_agent accepts, so an agent is never offered one it cannot use.
         return listTemplatesFromDir(TEMPLATES_DIR)
-          .filter((t) => t.ref !== '.')
+          .filter((t) => isValidTemplateRef(t.ref))
           .map((t) => ({ ...t, description: templateDescription(t.ref) ?? '' }));
       },
       formatHuman: (data) => {

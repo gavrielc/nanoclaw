@@ -29,7 +29,7 @@ import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import { createAgentFromTemplate } from '../../templates/create-agent.js';
 import { isValidTemplateRef } from '../../templates/local-dir.js';
-import { ensureTemplateLocal, hasLocalTemplate } from '../../templates/registry.js';
+import { ensureTemplateLocal, hasLocalTemplate } from '../../templates/library.js';
 import type { AgentGroup, Session } from '../../types.js';
 import { requestApproval } from '../approvals/index.js';
 import { createDestination, getDestinationByName, normalizeName } from './db/agent-destinations.js';
@@ -176,8 +176,9 @@ async function createFromTemplate(
   options?: CreateAgentOptions,
 ): Promise<void> {
   let fetched: boolean;
+  let commit: string | undefined;
   try {
-    ({ fetched } = await ensureTemplateLocal(template));
+    ({ fetched, commit } = await ensureTemplateLocal(template));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await notify(`Cannot create agent "${name}" from template "${template}": ${msg}. Nothing was created.`);
@@ -209,6 +210,7 @@ async function createFromTemplate(
     localName,
     template,
     fetched,
+    commit,
     parent: sourceGroup.id,
   });
 }

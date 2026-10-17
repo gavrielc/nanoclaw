@@ -107,7 +107,7 @@ import {
   listTemplatesFromDir,
   type ClonedRegistry,
   type TemplateEntry,
-} from '../src/templates/registry.js';
+} from '../src/templates/library.js';
 import {
   applyTemplatePick,
   clearTemplatePick,

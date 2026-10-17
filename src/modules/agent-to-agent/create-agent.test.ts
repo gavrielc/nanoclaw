@@ -92,7 +92,7 @@ vi.mock('../../session-manager.js', () => ({
 }));
 // The template library and stamper have their own tests; here they are the
 // seams the template branch must call in the right order.
-vi.mock('../../templates/registry.js', () => ({
+vi.mock('../../templates/library.js', () => ({
   ensureTemplateLocal: (...a: unknown[]) => mockEnsureTemplateLocal(...a),
   hasLocalTemplate: (ref: string) => ref === 'local/one',
 }));
@@ -148,7 +148,7 @@ function liveGrant(approvalId: string, payload: Record<string, unknown>): Pendin
 beforeEach(() => {
   vi.clearAllMocks();
   liveApprovals.clear();
-  mockEnsureTemplateLocal.mockResolvedValue({ dir: '/tmp/templates/sales/sdr', fetched: true });
+  mockEnsureTemplateLocal.mockResolvedValue({ dir: '/tmp/templates/sales/sdr', fetched: true, commit: 'c0ffee' });
   mockCreateAgentFromTemplate.mockResolvedValue({ group: { id: 'ag-sdr', name: 'SDR', folder: 'sdr' }, report: [] });
 });
 
@@ -356,27 +356,36 @@ describe('create_agent — from a template', () => {
     expect(local.question).toContain('template "local/one" (already on this machine)');
   });
 
-  it('an approval covers only the template it was given for', async () => {
+  it('approving the stored hold builds the agent from that template', async () => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
-    const plain = liveGrant('appr-tpl-1', { name: 'SDR', instructions: null });
-    const templated = { name: 'SDR', instructions: null, template: 'sales/sdr' };
+    await runCreateAgent({ name: 'SDR', instructions: 'ignored', template: 'sales/sdr' });
+    // The replay runs with the stored payload, as the approvals response handler does.
+    const stored = (mockRequestApproval.mock.calls[0][0] as { payload: Record<string, unknown> }).payload;
+    const approval = liveGrant('appr-tpl-1', stored);
 
     await approvalHandlers.get('create_agent')!({
       session: SESSION,
-      payload: templated,
+      payload: JSON.parse(approval.payload),
+      approval,
+      userId: 'telegram:admin',
+      notify: vi.fn(),
+    });
+
+    expect(mockCreateAgentFromTemplate).toHaveBeenCalledWith('sales/sdr', { name: 'SDR', provider: 'claude' });
+  });
+
+  it('an approval for a plain create never covers a templated request', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const plain = liveGrant('appr-tpl-2', { name: 'SDR', instructions: null });
+
+    await approvalHandlers.get('create_agent')!({
+      session: SESSION,
+      payload: { name: 'SDR', instructions: null, template: 'sales/sdr' },
       approval: plain,
       userId: 'telegram:admin',
       notify: vi.fn(),
     });
-    expect(mockCreateAgentFromTemplate).not.toHaveBeenCalled();
 
-    await approvalHandlers.get('create_agent')!({
-      session: SESSION,
-      payload: templated,
-      approval: liveGrant('appr-tpl-2', templated),
-      userId: 'telegram:admin',
-      notify: vi.fn(),
-    });
-    expect(mockCreateAgentFromTemplate).toHaveBeenCalledTimes(1);
+    expect(mockCreateAgentFromTemplate).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  cloneArgs,
   copyTemplate,
   ensureTemplateLocal,
   fetchTemplateIndex,
@@ -12,7 +13,7 @@ import {
   parseTemplateIndex,
   templateDescription,
   type ClonedRegistry,
-} from './registry.js';
+} from './library.js';
 
 let root: string;
 
@@ -41,14 +42,14 @@ function fakeClone(source: string): { clone: () => Promise<ClonedRegistry>; call
       calls++;
       const dir = fs.mkdtempSync(path.join(root, 'clone-'));
       fs.cpSync(source, dir, { recursive: true });
-      return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+      return { dir, commit: 'c0ffee', cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
     },
     calls: () => calls,
   };
 }
 
 describe('listTemplatesFromDir / copyTemplate', () => {
-  it('finds nested templates by plugin.json and copies one without git metadata', () => {
+  it('finds nested templates by plugin.json, skipping dot folders, and copies one', () => {
     const source = path.join(root, 'source');
     const destination = path.join(root, 'destination');
     fs.mkdirSync(path.join(source, 'sales', 'sdr'), { recursive: true });
@@ -60,15 +61,34 @@ describe('listTemplatesFromDir / copyTemplate', () => {
       path.join(source, 'sales', 'sdr', 'ai.nanoco.nanoclaw', 'context', 'instructions.md'),
       'Sell well.',
     );
-    fs.mkdirSync(path.join(source, 'sales', 'sdr', '.git'), { recursive: true });
-    fs.writeFileSync(path.join(source, 'sales', 'sdr', '.git', 'config'), 'ignored');
+    // A leftover fetch staging copy is never offered as a template.
+    fs.mkdirSync(path.join(source, 'sales', '.sdr.fetch-abc123'), { recursive: true });
+    fs.writeFileSync(path.join(source, 'sales', '.sdr.fetch-abc123', 'plugin.json'), '{"name":"sdr"}');
 
     expect(listTemplatesFromDir(source)).toEqual([{ ref: 'sales/sdr', name: 'sdr' }]);
 
     copyTemplate(source, 'sales/sdr', destination);
     expect(fs.readFileSync(path.join(destination, 'sales', 'sdr', 'plugin.json'), 'utf8')).toBe('{"name":"sdr"}');
-    expect(fs.existsSync(path.join(destination, 'sales', 'sdr', '.git'))).toBe(false);
     expect(() => copyTemplate(source, '../escape', destination)).toThrow('escapes the templates directory');
+  });
+
+  it('refuses to copy through a symlinked parent folder', () => {
+    const source = path.join(root, 'source');
+    fs.mkdirSync(path.join(root, 'host', 'sdr'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'host', 'sdr', 'plugin.json'), '{"name":"sdr"}');
+    fs.mkdirSync(source, { recursive: true });
+    fs.symlinkSync(path.join(root, 'host'), path.join(source, 'sales'));
+
+    expect(() => copyTemplate(source, 'sales/sdr', path.join(root, 'destination'))).toThrow(
+      'leaves the template library',
+    );
+  });
+
+  it('clones as data: symlinks as plain files, a fixed branch', () => {
+    const args = cloneArgs('/tmp/x');
+    expect(args.slice(0, 2)).toEqual(['-c', 'core.symlinks=false']);
+    expect(args).toContain('--branch');
+    expect(args.slice(-3)).toEqual(['--', 'https://github.com/nanocoai/nanoclaw-templates', '/tmp/x']);
   });
 
   it('emits the migration error for a pre-plugin template layout', () => {
@@ -90,6 +110,18 @@ describe('templateDescription', () => {
     expect(templateDescription('ops/bare', base)).toBeUndefined();
     expect(templateDescription('missing/one', base)).toBeUndefined();
   });
+
+  it('does not read a manifest through a symlink', () => {
+    const base = path.join(root, 'templates');
+    writeTemplate(path.join(root, 'outside'), 'x/real', { description: 'Outside the templates dir' });
+    fs.mkdirSync(path.join(base, 'sales', 'sdr'), { recursive: true });
+    fs.symlinkSync(
+      path.join(root, 'outside', 'x', 'real', 'plugin.json'),
+      path.join(base, 'sales', 'sdr', 'plugin.json'),
+    );
+
+    expect(templateDescription('sales/sdr', base)).toBeUndefined();
+  });
 });
 
 describe('ensureTemplateLocal', () => {
@@ -101,7 +133,7 @@ describe('ensureTemplateLocal', () => {
 
     const result = await ensureTemplateLocal('sales/sdr', { base, clone });
 
-    expect(result).toEqual({ dir: path.join(base, 'sales', 'sdr'), fetched: true });
+    expect(result).toEqual({ dir: path.join(base, 'sales', 'sdr'), fetched: true, commit: 'c0ffee' });
     expect(templateDescription('sales/sdr', base)).toBe('Books meetings');
     expect(fs.readdirSync(path.join(base, 'sales'))).toEqual(['sdr']);
     expect(calls()).toBe(1);
@@ -132,6 +164,28 @@ describe('ensureTemplateLocal', () => {
     expect(fs.existsSync(path.join(base, 'sales', 'nope'))).toBe(false);
   });
 
+  it('refuses a library template with a symlink, and writes nothing', async () => {
+    const library = path.join(root, 'library');
+    const base = path.join(root, 'templates');
+    writeTemplate(library, 'sales/sdr');
+    fs.symlinkSync('/etc/hosts', path.join(library, 'sales', 'sdr', 'hosts'));
+    const { clone } = fakeClone(library);
+
+    await expect(ensureTemplateLocal('sales/sdr', { base, clone })).rejects.toThrow('symlink');
+    expect(fs.existsSync(path.join(base, 'sales', 'sdr'))).toBe(false);
+  });
+
+  it('refuses a library template that does not parse, and writes nothing', async () => {
+    const library = path.join(root, 'library');
+    const base = path.join(root, 'templates');
+    fs.mkdirSync(path.join(library, 'sales', 'sdr'), { recursive: true });
+    fs.writeFileSync(path.join(library, 'sales', 'sdr', 'plugin.json'), '{"name":"NOT VALID"}');
+    const { clone } = fakeClone(library);
+
+    await expect(ensureTemplateLocal('sales/sdr', { base, clone })).rejects.toThrow('plugin.json');
+    expect(fs.readdirSync(path.join(base, 'sales'))).toEqual([]);
+  });
+
   it('rejects a malformed ref before cloning', async () => {
     const { clone, calls } = fakeClone(path.join(root, 'unused'));
 
@@ -148,14 +202,16 @@ describe('the library index', () => {
       data: [
         { ref: 'data/analyst', name: 'analyst', version: '1.0.0', description: 'Checks pipelines' },
         { ref: '../escape', name: 'bad', version: '1.0.0', description: 'Dropped' },
-        { ref: 'data/no-description', name: 'x' },
+        { ref: 'data/no-description', name: 'nodesc' },
+        { ref: 'data/no-name' },
       ],
     },
   };
 
-  it('flattens the categories, sorted by ref, dropping malformed entries', () => {
+  it('flattens the categories by ref, drops malformed entries, keeps a missing description as empty', () => {
     expect(parseTemplateIndex(index)).toEqual([
       { ref: 'data/analyst', name: 'analyst', description: 'Checks pipelines' },
+      { ref: 'data/no-description', name: 'nodesc', description: '' },
       { ref: 'sales/sdr', name: 'sdr', description: 'Books meetings' },
     ]);
   });
@@ -166,7 +222,11 @@ describe('the library index', () => {
 
   it('fetches the index, and reports an HTTP failure plainly', async () => {
     const ok = vi.fn(async () => new Response(JSON.stringify(index)));
-    expect((await fetchTemplateIndex(ok)).map((t) => t.ref)).toEqual(['data/analyst', 'sales/sdr']);
+    expect((await fetchTemplateIndex(ok)).map((t) => t.ref)).toEqual([
+      'data/analyst',
+      'data/no-description',
+      'sales/sdr',
+    ]);
 
     const notFound = vi.fn(async () => new Response('', { status: 404 }));
     await expect(fetchTemplateIndex(notFound)).rejects.toThrow('HTTP 404');

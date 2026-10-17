@@ -1,4 +1,4 @@
-/** Setup's template steps: the wizard's pick, and installing it through ncl. Library mechanics: src/templates/registry.ts. */
+/** Setup's template steps: the wizard's pick, and installing it through ncl. Library mechanics: src/templates/library.ts. */
 import { groupsCarryingPlugin } from '../src/templates/restamp.js';
 import type { AgentGroup } from '../src/types.js';
 import { upsertEnvVar } from './set-env.js';

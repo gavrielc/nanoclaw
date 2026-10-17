@@ -12,12 +12,15 @@ import { promisify } from 'util';
 import { TEMPLATES_DIR } from '../config.js';
 import { isValidTemplateRef, resolveLocalTemplate } from './local-dir.js';
 import { parsePluginManifest, PLUGIN_MANIFEST_FILE } from './manifest.js';
+import { parseTemplate } from './parse.js';
+import { copyPluginDir } from './plugin-dir.js';
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_TEMPLATES_SOURCE = 'https://github.com/nanocoai/nanoclaw-templates';
+const LIBRARY_REPO = 'nanocoai/nanoclaw-templates';
+const LIBRARY_BRANCH = 'main';
 // Generated and kept in sync with the templates by that repo's CI.
-const INDEX_URL = 'https://raw.githubusercontent.com/nanocoai/nanoclaw-templates/main/index.json';
+const INDEX_URL = `https://raw.githubusercontent.com/${LIBRARY_REPO}/${LIBRARY_BRANCH}/index.json`;
 
 export interface TemplateEntry {
   ref: string;
@@ -30,6 +33,8 @@ export interface LibraryTemplate extends TemplateEntry {
 
 export interface ClonedRegistry {
   dir: string;
+  /** The library commit the clone holds. */
+  commit: string;
   cleanup: () => void;
 }
 
@@ -38,19 +43,39 @@ export interface ClonedRegistry {
 // point the operator at a re-fetch.
 const LEGACY_MARKER = 'context/instructions.md';
 
+/**
+ * The clone command. Library content is data: symlinks check out as plain
+ * files, and Git LFS never runs (a commit's .lfsconfig could point it anywhere).
+ */
+export function cloneArgs(dir: string): string[] {
+  return [
+    '-c',
+    'core.symlinks=false',
+    'clone',
+    '--depth',
+    '1',
+    '--branch',
+    LIBRARY_BRANCH,
+    '--',
+    `https://github.com/${LIBRARY_REPO}`,
+    dir,
+  ];
+}
+
 /** Shallow-clone the library into a temp dir. Async because the host runs it mid-delivery. */
 export async function cloneRegistry(): Promise<ClonedRegistry> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tpl-'));
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1' };
   try {
-    await execFileAsync('git', ['clone', '--depth', '1', '--', DEFAULT_TEMPLATES_SOURCE, dir], {
-      timeout: 60_000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
+    await execFileAsync('git', cloneArgs(dir), { timeout: 60_000, env });
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD'], { env });
+    return { dir, commit: stdout.trim(), cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
-    throw new Error('Could not clone the template library', { cause: err });
+    const stderr = String((err as { stderr?: unknown }).stderr ?? '').trim();
+    const detail = stderr.split('\n').pop();
+    throw new Error(`Could not clone the template library${detail ? `: ${detail}` : ''}`, { cause: err });
   }
-  return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
 export function listTemplatesFromDir(dir: string): TemplateEntry[] {
@@ -60,6 +85,8 @@ export function listTemplatesFromDir(dir: string): TemplateEntry[] {
 
   const refs = new Set<string>();
   for (const rel of rels) {
+    // Dot folders are never templates: .git, and a fetch's staging copy.
+    if (rel.split('/').some((segment) => segment.startsWith('.'))) continue;
     if (rel === PLUGIN_MANIFEST_FILE) refs.add('.');
     else if (rel.endsWith(`/${PLUGIN_MANIFEST_FILE}`)) refs.add(rel.slice(0, -(PLUGIN_MANIFEST_FILE.length + 1)));
   }
@@ -94,22 +121,36 @@ function isWithinTemplate(ref: string, templateRefs: Set<string>): boolean {
   }
 }
 
-/** Copy a list-derived registry template into the local template library. */
-export function copyTemplate(srcDir: string, ref: string, destDir: string): string {
+/**
+ * A template's folder inside a cloned library. Its real path must stay inside
+ * the clone, so a symlinked parent folder cannot pull in a host directory.
+ */
+function libraryTemplateDir(libraryDir: string, ref: string): string {
   if (ref === '.') throw new Error('Cannot copy the registry root as a template');
-  const from = resolveLocalTemplate(ref, srcDir);
+  const dir = resolveLocalTemplate(ref, libraryDir);
+  if (!fs.realpathSync(dir).startsWith(fs.realpathSync(libraryDir) + path.sep)) {
+    throw new Error(`Template "${ref}" leaves the template library`);
+  }
+  return dir;
+}
+
+/**
+ * Copy a list-derived registry template into the local template library,
+ * through the hardened plugin copier (no symlinks, special files or oversize trees).
+ */
+export function copyTemplate(srcDir: string, ref: string, destDir: string): string {
   const to = path.resolve(destDir, ref);
-  fs.mkdirSync(path.dirname(to), { recursive: true });
-  fs.cpSync(from, to, { recursive: true, filter: (src) => path.basename(src) !== '.git' });
+  copyPluginDir(libraryTemplateDir(srcDir, ref), to);
   return to;
 }
 
 /** A local template's manifest description; undefined when it has none or the manifest is unreadable. */
 export function templateDescription(ref: string, base: string = TEMPLATES_DIR): string | undefined {
   try {
-    const raw: unknown = JSON.parse(
-      fs.readFileSync(path.join(resolveLocalTemplate(ref, base), PLUGIN_MANIFEST_FILE), 'utf8'),
-    );
+    const manifest = path.join(resolveLocalTemplate(ref, base), PLUGIN_MANIFEST_FILE);
+    // Never read through a symlink: it could point anywhere on the host.
+    if (!fs.lstatSync(manifest).isFile()) return undefined;
+    const raw: unknown = JSON.parse(fs.readFileSync(manifest, 'utf8'));
     return parsePluginManifest(raw).description;
   } catch {
     return undefined;
@@ -129,7 +170,7 @@ export function hasLocalTemplate(ref: string, base: string = TEMPLATES_DIR): boo
 export async function ensureTemplateLocal(
   ref: string,
   opts: { base?: string; clone?: () => Promise<ClonedRegistry> } = {},
-): Promise<{ dir: string; fetched: boolean }> {
+): Promise<{ dir: string; fetched: boolean; commit?: string }> {
   if (!isValidTemplateRef(ref)) throw new Error(`Invalid template ref: "${ref}"`);
   const base = opts.base ?? TEMPLATES_DIR;
   const dest = path.join(base, ref);
@@ -140,20 +181,21 @@ export async function ensureTemplateLocal(
     if (!fs.existsSync(path.join(registry.dir, ref, PLUGIN_MANIFEST_FILE))) {
       throw new Error(`"${ref}" is not in the template library`);
     }
-    // Copy next to the destination, then rename: a crash mid-copy must not
-    // leave a partial template that would win as the local copy from then on.
+    // Stage in a hidden sibling and rename only a copy that parses: a crash or
+    // a bad template must never leave something that wins as the local copy.
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    const staging = fs.mkdtempSync(`${dest}.fetch-`);
+    const staging = fs.mkdtempSync(path.join(path.dirname(dest), `.${path.basename(dest)}.fetch-`));
     try {
-      copyTemplate(registry.dir, ref, staging);
-      if (!fs.existsSync(dest)) fs.renameSync(path.join(staging, ref), dest);
+      copyPluginDir(libraryTemplateDir(registry.dir, ref), staging);
+      parseTemplate(staging);
+      if (!fs.existsSync(dest)) fs.renameSync(staging, dest);
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
     }
+    return { dir: dest, fetched: true, commit: registry.commit };
   } finally {
     registry.cleanup();
   }
-  return { dir: dest, fetched: true };
 }
 
 /** The library's index: every template's ref, name and description, sorted by ref. */
@@ -177,16 +219,15 @@ export function parseTemplateIndex(raw: unknown): LibraryTemplate[] {
   return Object.values(index.categories)
     .flat()
     .filter(isLibraryTemplate)
-    .map(({ ref, name, description }) => ({ ref, name, description }))
+    .map(({ ref, name, description }) => ({
+      ref,
+      name,
+      description: typeof description === 'string' ? description : '',
+    }))
     .sort((a, b) => a.ref.localeCompare(b.ref));
 }
 
-function isLibraryTemplate(entry: unknown): entry is LibraryTemplate {
-  const e = entry as Partial<LibraryTemplate> | null;
-  return (
-    typeof e?.ref === 'string' &&
-    isValidTemplateRef(e.ref) &&
-    typeof e.name === 'string' &&
-    typeof e.description === 'string'
-  );
+function isLibraryTemplate(entry: unknown): entry is TemplateEntry & { description?: unknown } {
+  const e = entry as Partial<TemplateEntry> | null;
+  return typeof e?.ref === 'string' && isValidTemplateRef(e.ref) && typeof e.name === 'string';
 }

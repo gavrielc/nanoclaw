@@ -14,7 +14,7 @@ import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/i
 import { updateContainerConfigScalars, ensureContainerConfig } from '../../db/container-configs.js';
 import { dispatch } from '../dispatch.js';
 import type { CallerContext } from '../frame.js';
-import './templates.js';
+import { _forgetLibraryIndex } from './templates.js';
 
 const agent: CallerContext = { caller: 'agent', agentGroupId: 'ag-1', sessionId: 'chat-1', messagingGroupId: 'mg-1' };
 
@@ -32,6 +32,7 @@ function writeTemplate(ref: string, description: string): void {
 }
 
 beforeEach(async () => {
+  _forgetLibraryIndex();
   fs.rmSync(TEST_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
   const db = await initTestDb();
@@ -54,6 +55,7 @@ afterEach(async () => {
 describe('ncl templates list', () => {
   it('lists the templates on this machine for a group-scoped agent, without the network', async () => {
     writeTemplate('sales/sdr', 'Books meetings');
+    writeTemplate('_drafts/x', 'Not a ref create_agent accepts');
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
     const resp = await dispatch({ id: '1', command: 'templates-list', args: {} }, agent);
@@ -86,6 +88,18 @@ describe('ncl templates list', () => {
       { ref: 'data/analyst', name: 'analyst', description: 'Checks pipelines', local: false },
       { ref: 'sales/sdr', name: 'sdr', description: 'Books meetings', local: true },
     ]);
+  });
+
+  it('fetches the library index once for a burst of listings, failures included', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('blackholed'));
+
+    const results = await Promise.all(
+      [1, 2, 3].map((n) => dispatch({ id: `r${n}`, command: 'templates-list', args: { registry: true } }, agent)),
+    );
+    const again = await dispatch({ id: 'r4', command: 'templates-list', args: { registry: true } }, agent);
+
+    expect([...results, again].every((r) => !r.ok)).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('is closed to an agent whose CLI access is disabled', async () => {
