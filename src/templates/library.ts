@@ -181,7 +181,16 @@ export async function ensureTemplateLocal(
   if (!isValidTemplateRef(ref)) throw new Error(`Invalid template ref: "${ref}"`);
   const base = opts.base ?? TEMPLATES_DIR;
   const dest = path.join(base, ref);
-  if (fs.existsSync(dest)) return { dir: dest, fetched: false };
+  if (fs.existsSync(dest)) {
+    // The same test the approval card uses (hasLocalTemplate), so the card never
+    // promises a download that this then skips.
+    if (!fs.existsSync(path.join(dest, PLUGIN_MANIFEST_FILE))) {
+      throw new Error(
+        `templates/${ref} exists but is not a template (no ${PLUGIN_MANIFEST_FILE}); remove it to fetch "${ref}"`,
+      );
+    }
+    return { dir: dest, fetched: false };
+  }
 
   const registry = await (opts.clone ?? cloneRegistry)();
   try {

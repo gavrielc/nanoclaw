@@ -12,6 +12,7 @@ import {
   copyTemplate,
   ensureTemplateLocal,
   fetchTemplateIndex,
+  hasLocalTemplate,
   listTemplatesFromDir,
   parseTemplateIndex,
   templateDescription,
@@ -239,6 +240,16 @@ describe('ensureTemplateLocal', () => {
 
     await expect(ensureTemplateLocal('sales/sdr', { base, clone })).rejects.toThrow('plugin.json');
     expect(fs.readdirSync(path.join(base, 'sales'))).toEqual([]);
+  });
+
+  it('refuses a local folder that is not a template instead of skipping the fetch', async () => {
+    const base = path.join(root, 'templates');
+    fs.mkdirSync(path.join(base, 'sales', 'sdr', 'context'), { recursive: true });
+    const { clone, calls } = fakeClone(path.join(root, 'unused'));
+
+    await expect(ensureTemplateLocal('sales/sdr', { base, clone })).rejects.toThrow('is not a template');
+    expect(hasLocalTemplate('sales/sdr', base)).toBe(false);
+    expect(calls()).toBe(0);
   });
 
   it('rejects a malformed ref before cloning', async () => {
