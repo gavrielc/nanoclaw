@@ -42,7 +42,7 @@ const MID_WRITE_BACKOFF_MS = 10;
  * return materialized rows (`.get()`/`.all()`), and may run more than once.
  */
 export function readInbound<T>(read: (db: Database) => T, path = DEFAULT_INBOUND_PATH): T {
-  if (_testMode && _inbound) return read(_inbound);
+  if (_testMode && _inbound && path === DEFAULT_INBOUND_PATH) return read(_inbound);
   const deadline = Date.now() + MID_WRITE_RETRY_MS;
   for (;;) {
     const db = new Database(path, { readonly: true });
@@ -60,7 +60,10 @@ export function readInbound<T>(read: (db: Database) => T, path = DEFAULT_INBOUND
   }
 }
 
-/** Tests only: the in-memory inbound DB from `initTestSessionDb()`, for seeding rows. */
+/**
+ * Tests only: the in-memory inbound DB from `initTestSessionDb()`, for seeding rows.
+ * Keep it exported: provider test files already installed from older payloads import it.
+ */
 export function getInboundDb(): Database {
   if (!_testMode || !_inbound) throw new Error('getInboundDb() is test-only; read through readInbound()');
   return _inbound;
