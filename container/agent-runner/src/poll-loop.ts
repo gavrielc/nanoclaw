@@ -384,7 +384,7 @@ export async function processQuery(
   // (chat runs, mid-turn delivery providers only). A frame-local count, never
   // keyed by content: it feeds the result door's nudge decision ("did this
   // turn deliver anything?"). Reset at the turn boundary (the 'result'
-  // event) — NOT at the follow-up push seam: query.push() does not end the
+  // event) — NOT at the follow-up push seam: query.push(WithId)() does not end the
   // in-flight turn, and its result's nudge decision still describes the
   // turn that is streaming.
   let midTurnSent = 0;
@@ -431,7 +431,7 @@ export async function processQuery(
     taskBlockNudged: boolean;
     nudgedWindow?: SeqWindow;
     /**
-     * Id of the pushed provider input for this turn, when `query.push` was
+     * Id of the pushed provider input for this turn, when `query.pushWithId` was
      * given one. The provider reports the ids a result consumed so a turn that
      * answered several folded inputs can drop the turns that no longer need a
      * reply.
@@ -545,7 +545,8 @@ export async function processQuery(
         const keptIds = keep.map((m) => m.id);
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
-        query.push(prompt, keptIds.length === 1 ? keptIds[0] : undefined);
+        if (keptIds.length === 1 && query.pushWithId) query.pushWithId(prompt, keptIds[0]);
+        else query.push(prompt);
         archivePrompts.push(prompt);
         const next: QueuedTurn = {
           routing: extractRouting(keep),

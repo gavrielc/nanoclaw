@@ -140,12 +140,18 @@ export type McpServerConfig =
   | { type: 'http'; url: string; headers?: Record<string, string> };
 
 export interface AgentQuery {
+  /** Push a follow-up message into the active query. */
+  push(message: string): void;
+
   /**
-   * Push a follow-up message into the active query. `id` names this input so
-   * a provider that can tell which inputs a turn answered can report it back
-   * in `result.answered`; providers that cannot may ignore it.
+   * Push a follow-up and name this input. A provider that can tell which
+   * inputs a turn answered reports them back in `result.answered`. Providers
+   * without this capability are not required to implement it; callers must
+   * fall back to `push`. Kept separate from `push` so adding input ids does
+   * not change the `push` contract every provider (including branch-backed
+   * fork-skill payloads) already implements.
    */
-  push(message: string, id?: string): void;
+  pushWithId?(message: string, id: string): void;
 
   /** Signal that no more input will be sent. */
   end(): void;
@@ -165,7 +171,7 @@ export type ProviderEvent =
    * (e.g. a billing/quota notice), kept separate from model scratchpad and
    * raw diagnostics. Failures without `error` receive a generic notice.
    *
-   * `answered` lists the ids (from `push`) of every input this turn consumed.
+   * `answered` lists the ids (from `pushWithId`) of every input this turn consumed.
    * A provider may answer several waiting inputs in one turn — the Claude SDK
    * does when more than one is queued at a turn boundary — so one result can
    * cover several pushes. Absent when the provider cannot tell; the poll-loop

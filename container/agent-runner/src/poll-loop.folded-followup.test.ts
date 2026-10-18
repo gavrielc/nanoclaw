@@ -57,6 +57,7 @@ async function run(folded: boolean): Promise<Record<string, string | null>> {
   }
   const query: AgentQuery = {
     push: (m) => void pushes.push(m),
+    pushWithId: (m) => void pushes.push(m),
     end: () => {},
     events: events(),
     abort: () => {},
