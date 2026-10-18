@@ -13,6 +13,38 @@ seed.exec('CREATE TABLE messages_in (id TEXT PRIMARY KEY, seq INTEGER)');
 seed.exec("INSERT INTO messages_in VALUES ('m1', 2)");
 seed.close();
 
+// A writer killed mid-transaction leaves a hot journal and no lock: the state
+// a container reader sees when it cannot see the host's live write lock.
+const hotPath = path.join(dir, 'hot.db');
+const hot = new Database(hotPath);
+hot.exec('PRAGMA journal_mode = DELETE');
+hot.exec('CREATE TABLE messages_in (id TEXT, seq INTEGER)');
+hot.close();
+Bun.spawnSync([
+  process.execPath,
+  '-e',
+  `const { Database } = require('bun:sqlite');
+   const db = new Database(${JSON.stringify(hotPath)});
+   db.exec('PRAGMA cache_size = 1');
+   db.exec('BEGIN');
+   const insert = db.prepare('INSERT INTO messages_in VALUES (?, ?)');
+   for (let i = 0; i < 2000; i++) insert.run('x'.repeat(200) + i, i);
+   process.kill(process.pid, 'SIGKILL');`,
+]);
+// Bun on macOS uses the system SQLite, which reads past a hot journal; Linux
+// Bun (the agent image, CI) bundles one that refuses, which is the case under test.
+const reportsHotJournal = (() => {
+  const db = new Database(hotPath, { readonly: true });
+  try {
+    db.prepare('SELECT count(*) FROM messages_in').get();
+    return false;
+  } catch {
+    return true;
+  } finally {
+    db.close();
+  }
+})();
+
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 function sqliteError(code: string): Error {
@@ -55,6 +87,21 @@ describe('readInbound', () => {
     expect(() => readInbound(flaky.read, dbPath)).toThrow('SQLITE_READONLY_ROLLBACK');
     expect(Date.now() - started).toBeGreaterThanOrEqual(1000);
     expect(flaky.attempts()).toBeGreaterThan(1);
+  });
+
+  test.skipIf(!reportsHotJournal)('retries the real hot-journal error by its extended code', () => {
+    let attempts = 0;
+    let thrown: unknown;
+    try {
+      readInbound((db) => {
+        attempts++;
+        return db.prepare('SELECT count(*) FROM messages_in').get();
+      }, hotPath);
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as { code?: string }).code).toBe('SQLITE_READONLY_ROLLBACK');
+    expect(attempts).toBeGreaterThan(1);
   });
 
   test('opens the file read-only', () => {
