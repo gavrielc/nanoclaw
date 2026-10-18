@@ -20,6 +20,7 @@ vi.mock('../log.js', () => ({
 }));
 
 import { closeDb, getAllAgentGroups, initTestDb, runMigrations } from '../db/index.js';
+import { createAgentGroup } from '../db/agent-groups.js';
 import { getContainerConfig } from '../db/container-configs.js';
 import { findTaskSessions } from '../db/sessions.js';
 import { PERSONA_PREPEND_FILE } from '../group-persona.js';
@@ -136,6 +137,34 @@ describe('createAgentFromTemplate', () => {
 
     await expect(createAgentFromTemplate('sales/sdr', { name: 'SDR Collide' })).rejects.toThrow(/collide on id slug/);
     expect(await getAllAgentGroups()).toHaveLength(0);
+  });
+
+  it('takes a fresh folder when a never-spawned group holds the name (row, no folder yet)', async () => {
+    await createAgentGroup({
+      id: 'ag-unspawned',
+      name: 'Analyst',
+      folder: 'analyst',
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+
+    const { group: g } = await createAgentFromTemplate('sales/sdr', { name: 'Analyst' });
+    expect(g.folder).toMatch(/^analyst-[0-9a-f]{8}$/);
+    expect(fs.existsSync(path.join(GROUPS_DIR, 'analyst'))).toBe(false);
+  });
+
+  it('refuses a colliding name whose suffixed folder would be too long to spawn', async () => {
+    const name = 'a'.repeat(60);
+    await createAgentGroup({
+      id: 'ag-long',
+      name,
+      folder: name,
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+
+    await expect(createAgentFromTemplate('sales/sdr', { name })).rejects.toThrow(/Invalid group folder/);
+    expect(await getAllAgentGroups()).toHaveLength(1);
   });
 
   it('writes context extras at their template-relative paths', async () => {

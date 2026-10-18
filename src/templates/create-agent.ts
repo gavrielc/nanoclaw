@@ -4,7 +4,7 @@ import path from 'path';
 
 import { CONTAINER_PLUGINS_DIR } from '../container-config.js';
 import { DATA_DIR, GROUPS_DIR, TIMEZONE } from '../config.js';
-import { createAgentGroup } from '../db/agent-groups.js';
+import { createAgentGroup, getAgentGroupByFolder } from '../db/agent-groups.js';
 import {
   ensureContainerConfig,
   updateContainerConfigJson,
@@ -12,7 +12,7 @@ import {
 } from '../db/container-configs.js';
 import type { McpServerConfig } from '../container-config.js';
 import { isValidTimezone } from '../timezone.js';
-import { assertValidGroupFolder, resolveGroupFolderPath } from '../group-folder.js';
+import { assertValidGroupFolder, groupFolderExistsOnDisk } from '../group-folder.js';
 import { stageGroupPersona } from '../group-persona.js';
 import { log } from '../log.js';
 import { normalizeName } from '../modules/agent-to-agent/db/agent-destinations.js';
@@ -104,7 +104,11 @@ export async function createAgentFromTemplate(ref: string, opts?: CreateAgentOpt
   const name = opts?.name ?? tpl.agentName ?? path.basename(dir);
   let folder = normalizeName(name);
   assertValidGroupFolder(folder);
-  if (fs.existsSync(resolveGroupFolderPath(folder))) folder = `${folder}-${randomUUID().slice(0, 8)}`;
+  // A group made by setup or a migration has its row before its folder (made at first spawn).
+  if (groupFolderExistsOnDisk(folder) || (await getAgentGroupByFolder(folder))) {
+    folder = `${folder}-${randomUUID().slice(0, 8)}`;
+    assertValidGroupFolder(folder);
+  }
 
   const group: AgentGroup = { id, name, folder, agent_provider: null, created_at: new Date().toISOString() };
   await createAgentGroup(group);
