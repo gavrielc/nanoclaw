@@ -97,10 +97,7 @@ export function stageOnecliFile(dataDir: string, kind: 'ca' | 'combined' | 'stub
     if (!validate()) throw new Error(`OneCLI staged file validation failed after publish: ${destination}`);
     return destination;
   } finally {
-    try {
-      fs.unlinkSync(temporary);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
+    // force ignores ENOENT: a successful rename already removed the file.
+    fs.rmSync(temporary, { force: true });
   }
 }
