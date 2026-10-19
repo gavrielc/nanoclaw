@@ -603,6 +603,11 @@ describe('add-dial-tool: removal', () => {
     return /```bash\n([\s\S]*?)```/.exec(doc.slice(at))![1];
   })();
 
+  it('stops when the secret list command fails with no output', () => {
+    writeStub('onecli', 'echo unauthorized >&2; exit 1');
+    expect(sh(REMOVE).status).not.toBe(0);
+  });
+
   it('stops instead of reporting success when the secret list cannot be read', () => {
     writeStub('onecli', `echo '{"data":null}'`);
     expect(sh(REMOVE).status).not.toBe(0);

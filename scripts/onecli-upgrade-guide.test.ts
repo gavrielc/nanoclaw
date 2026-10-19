@@ -486,6 +486,43 @@ esac
     expect(r.status).not.toBe(0);
   });
 
+  it('a failed secret list (no output) stops the delete', () => {
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'onecli'), `#!/bin/sh\necho "unauthorized" >&2\nexit 1\n`, { mode: 0o755 });
+    const r = spawnSync('sh', ['-c', del!.body], {
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://gw:1' },
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('deleted');
+  });
+
+  it.each(['sh', 'bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'true']).status === 0))(
+    'deletes each Dial key separately under %s',
+    (shell) => {
+      const bin = path.join(home, 'bin');
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(
+        path.join(bin, 'onecli'),
+        `#!/bin/sh\necho "$*" >> "${home}/onecli.log"\ncase "$1 $2" in "secrets list") echo '{"data":[{"id":"d1","name":"Dial API","hostPattern":"api.getdial.ai"},{"id":"d2","name":"Old Dial","hostPattern":"api.getdial.ai"}]}' ;; esac\n`,
+        { mode: 0o755 },
+      );
+      fs.rmSync(path.join(home, 'onecli.log'), { force: true });
+      const r = spawnSync(shell, ['-c', del!.body], {
+        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://gw:1' },
+        encoding: 'utf8',
+      });
+      expect(r.status).toBe(0);
+      const deletes = fs
+        .readFileSync(path.join(home, 'onecli.log'), 'utf8')
+        .trim()
+        .split('\n')
+        .filter((l) => l.startsWith('secrets delete'));
+      expect(deletes).toEqual(['secrets delete --id d1', 'secrets delete --id d2']);
+    },
+  );
+
   it('an install already upgraded with the key in place deletes it now, before the re-run', () => {
     const after = guide.slice(guide.indexOf('If you have already upgraded with the key in place'));
     expect(after.split('\n')[0]).toMatch(/delete it now with the command above, then re-run `\/add-dial-tool`/);
