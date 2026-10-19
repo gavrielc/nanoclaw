@@ -28,7 +28,8 @@
  * On connect new agent (handler in index.ts):
  *   - Prompt for a free-text agent name via DM
  *   - On reply: create the agent group + filesystem, then wire
- *     and replay as above
+ *     and replay as above. A name whose folder can't be a group folder
+ *     creates nothing; the approver is told and asked for another name.
  *
  * On reject:
  *   - Set `messaging_groups.denied_at = now()` so the router stops
@@ -51,7 +52,7 @@ import { createAgentGroup, getAgentGroup, getAgentGroupByFolder, getAllAgentGrou
 import { getChannelAdapter } from '../../channels/channel-registry.js';
 import { getMessagingGroup, updateMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';
-import { groupFolderExistsOnDisk } from '../../group-folder.js';
+import { groupFolderExistsOnDisk, isValidGroupFolder } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import type { InboundEvent, ResolvedConversation } from '../../channels/adapter.js';
@@ -414,9 +415,10 @@ export async function buildAgentSelectionOptions(
 
 /**
  * Create a new agent group and initialize its filesystem. Handles
- * folder-name collisions with numeric suffixes.
+ * folder-name collisions with numeric suffixes. Returns null, writing nothing,
+ * when the final folder can't be a group folder (too long or reserved).
  */
-export async function createNewAgentGroup(name: string): Promise<AgentGroup> {
+export async function createNewAgentGroup(name: string): Promise<AgentGroup | null> {
   let folder = toFolder(name);
   const baseFolder = folder;
   let suffix = 2;
@@ -427,6 +429,11 @@ export async function createNewAgentGroup(name: string): Promise<AgentGroup> {
   while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
     folder = `${baseFolder}-${suffix}`;
     suffix++;
+  }
+  // Checked after the suffix: a name that fits can still overflow once deduped.
+  if (!isValidGroupFolder(folder)) {
+    log.warn('Channel registration: new agent refused, invalid folder', { name, folder });
+    return null;
   }
 
   const agId = `ag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

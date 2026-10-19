@@ -654,6 +654,32 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   if (!row) return true;
 
   const ag = await createNewAgentGroup(text);
+  if (!ag) {
+    const adapter = getDeliveryAdapter();
+    if (!adapter) return true;
+    // Nothing was written; re-arm so the approver's next reply is the name.
+    awaitingNameInput.set(userId, pending);
+    try {
+      await adapter.deliver(
+        event.channelType,
+        event.platformId,
+        null,
+        'chat-sdk',
+        JSON.stringify({
+          text: `⚠️ Can't create an agent named "${text}": the name is too long or reserved. Nothing was created. Reply with another name:`,
+        }),
+        undefined,
+        event.instance,
+      );
+    } catch (err) {
+      log.error('Channel registration: name re-prompt delivery failed', {
+        messagingGroupId: row.messaging_group_id,
+        err,
+      });
+      awaitingNameInput.delete(userId);
+    }
+    return true;
+  }
   log.info('Channel registration: new agent group created', {
     messagingGroupId: row.messaging_group_id,
     agentGroupId: ag.id,

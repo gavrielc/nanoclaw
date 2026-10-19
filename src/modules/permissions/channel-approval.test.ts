@@ -791,6 +791,64 @@ describe('unknown-channel registration flow', () => {
     const mgaCount = await countRows('SELECT COUNT(*) AS c FROM messaging_group_agents');
     expect(mgaCount).toBe(0);
   });
+
+  it('a name too long for a folder creates nothing and asks again; the next name is created', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { getResponseHandlers } = await import('../../response-registry.js');
+    const nameReply = (id: string, text: string) =>
+      routeInbound({
+        channelType: 'telegram',
+        platformId: 'dm-owner',
+        threadId: null,
+        message: {
+          id,
+          kind: 'chat' as const,
+          content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text }),
+          timestamp: now(),
+        },
+      });
+
+    await expectAsyncDelivery(() => routeInbound(groupMention('chat-long-name')));
+    const pending = (await getDb().get<{ messaging_group_id: string }>(
+      'SELECT messaging_group_id FROM pending_channel_approvals',
+    ))!;
+    for (const handler of getResponseHandlers()) {
+      const claimed = await handler({
+        questionId: pending.messaging_group_id,
+        value: 'new_agent',
+        userId: 'owner',
+        channelType: 'telegram',
+        platformId: 'dm-owner',
+        threadId: null,
+      });
+      if (claimed) break;
+    }
+
+    const longName = 'a'.repeat(70);
+    const agentGroupsBefore = await countRows('SELECT COUNT(*) AS c FROM agent_groups');
+    await nameReply('name-reply-long', longName);
+
+    expect(await countRows('SELECT COUNT(*) AS c FROM agent_groups')).toBe(agentGroupsBefore);
+    expect(fs.existsSync(path.join(TEST_DIR, 'groups', longName))).toBe(false);
+    expect(await countRows('SELECT COUNT(*) AS c FROM messaging_group_agents')).toBe(0);
+    expect(await countRows('SELECT COUNT(*) AS c FROM pending_channel_approvals')).toBe(1);
+    const refusal = JSON.parse(deliverMock.mock.calls.at(-1)![4] as string).text as string;
+    expect(refusal).toContain('Nothing was created');
+    expect(refusal).toContain('Reply with another name');
+
+    // The prompt is re-armed: the next reply is taken as the name.
+    await nameReply('name-reply-retry', 'Newbie');
+
+    const created = await getDb().get<{ id: string }>("SELECT id FROM agent_groups WHERE name = 'Newbie'");
+    expect(created).toBeDefined();
+    expect(
+      await countRows(
+        'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?',
+        pending.messaging_group_id,
+        created!.id,
+      ),
+    ).toBe(1);
+  });
 });
 
 describe('no-owner / no-agent failure modes', () => {
@@ -834,9 +892,18 @@ describe('createNewAgentGroup — disk-aware folder dedupe (A4)', () => {
 
     const ag = await createNewAgentGroup('My Agent');
 
-    expect(ag.folder).toBe('my-agent-2');
+    expect(ag?.folder).toBe('my-agent-2');
     // Residue untouched.
     expect(fs.readFileSync(path.join(residue, 'memory.md'), 'utf8')).toBe('old group memory\n');
+  });
+
+  it('refuses, writing nothing, when the suffix takes the folder past 63 characters', async () => {
+    const name = 'b'.repeat(62);
+    fs.mkdirSync(path.join(TEST_DIR, 'groups', name), { recursive: true });
+
+    expect(await createNewAgentGroup(name)).toBeNull();
+    expect(await countRows('SELECT COUNT(*) AS c FROM agent_groups WHERE name = ?', name)).toBe(0);
+    expect(fs.existsSync(path.join(TEST_DIR, 'groups', `${name}-2`))).toBe(false);
   });
 });
 
