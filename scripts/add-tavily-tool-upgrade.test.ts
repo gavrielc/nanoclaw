@@ -33,18 +33,27 @@ function run(secretName: string, attachExit = 0, extraSecret = '', grantsUnknown
     `#!/usr/bin/env bash
 echo "onecli $*" >> "$CALLS"
 case "$1 $2" in
-  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"sec-model","name":"Anthropic","hostPattern":"api.anthropic.com"},{"id":"sec-tavily","name":"${secretName}","hostPattern":"mcp.tavily.com"}${extraSecret}]}' ;;
+  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"sec-model","name":"Anthropic","hostPattern":"api.anthropic.com"},{"id":"sec-tavily","name":"${secretName}","hostPattern":"mcp.tavily.com","createdAt":"2026-10-19T18:00:00Z","preview":"tvly-...abcd"}${extraSecret}]}' ;;
   "agents list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"oc-other","identifier":"ag-other"},{"id":"oc-research","identifier":"ag-research"}]}' ;;
   "agents grants") ${grantsUnknown ? 'echo "unexpected argument grants" >&2; exit 80' : `exit ${attachExit}`} ;;
 esac
 `,
     { mode: 0o755 },
   );
-  const r = spawnSync('sh', ['-c', ATTACH.replaceAll('{{AGENT_GROUP_ID}}', 'ag-research')], {
-    env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls },
-    encoding: 'utf8',
-  });
-  return { status: r.status, stderr: r.stderr, lines: fs.readFileSync(calls, 'utf8').trim().split('\n') };
+  const r = spawnSync(
+    'sh',
+    ['-c', `${ATTACH.replaceAll('{{AGENT_GROUP_ID}}', 'ag-research')}\nrc=$?\necho still-here\nexit $rc`],
+    {
+      env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls },
+      encoding: 'utf8',
+    },
+  );
+  return {
+    status: r.status,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    lines: fs.readFileSync(calls, 'utf8').trim().split('\n'),
+  };
 }
 
 describe('Tavily paid-key upgrade on OneCLI grants', () => {
@@ -79,6 +88,58 @@ describe('Tavily paid-key upgrade on OneCLI grants', () => {
     expect(run('Tavily', 0, '', true).status).not.toBe(0);
     expect(doc).not.toMatch(/already injects the key/);
     expect(doc).toMatch(/docs\/onecli-upgrades\.md/);
+  });
+
+  it.each(['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'true']).status === 0))(
+    'attaches the single key when pasted into %s',
+    (shell) => {
+      run('Tavily');
+      fs.writeFileSync(calls, '');
+      const r = spawnSync(shell, ['-c', ATTACH.replaceAll('{{AGENT_GROUP_ID}}', 'ag-research')], {
+        env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls },
+        encoding: 'utf8',
+      });
+      expect(r.status).toBe(0);
+      expect(fs.readFileSync(calls, 'utf8')).toContain(
+        'onecli agents grants attach-secret --id oc-research --secret-id sec-tavily',
+      );
+    },
+  );
+
+  it('runs in a subshell, so a refusal never closes the user shell', () => {
+    expect(ATTACH.trim().startsWith('(')).toBe(true);
+    expect(ATTACH.trim().endsWith(')')).toBe(true);
+    expect(run('Tavily', 1).stdout).toContain('still-here');
+  });
+
+  it('with two keys, lists each with its creation time (never its preview) and names this group agent', () => {
+    const { stderr } = run(
+      'Tavily',
+      0,
+      ',{"id":"sec-other-group","name":"Tavily","hostPattern":"mcp.tavily.com","createdAt":"2026-10-01T09:00:00Z","preview":"tvly-...wxyz"}',
+    );
+    expect(stderr).toContain('2026-10-19T18:00:00Z');
+    expect(stderr).toContain('2026-10-01T09:00:00Z');
+    expect(stderr).not.toContain('tvly-');
+    expect(stderr).toContain('--id oc-research');
+  });
+
+  it('with no key yet, says to save it through the link first', () => {
+    fs.writeFileSync(
+      path.join(root, 'bin', 'onecli'),
+      `#!/usr/bin/env bash\ncase "$1 $2" in "secrets list") echo '{"data":[]}' ;; "agents list") echo '{"data":[{"id":"oc-research","identifier":"ag-research"}]}' ;; esac\n`,
+      { mode: 0o755 },
+    );
+    const r = spawnSync('sh', ['-c', ATTACH.replaceAll('{{AGENT_GROUP_ID}}', 'ag-research')], {
+      env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}` },
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/save it through the link/);
+  });
+
+  it('never says the key is injected before it is attached', () => {
+    expect(doc).not.toMatch(/injected at the gateway/);
   });
 
   it('comes after the key is saved and before the server is re-registered without the keyless header', () => {

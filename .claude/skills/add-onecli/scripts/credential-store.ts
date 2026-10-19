@@ -19,8 +19,9 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
   };
   return {
     connection: (target) => createProviderCredentialConnection(target, root),
+    connectionPaths: true,
     // Connected means Codex groups will be granted a credential: a live
-    // recorded one, or one saved under Codex's name or type, which is recorded.
+    // recorded one, or one saved under Codex's name, which is then recorded.
     async has(provider) {
       check(provider);
       let secrets: Array<{ id?: string; name?: string; type?: string }>;
