@@ -47,7 +47,6 @@ describe('extractAttachments', () => {
         filename: 'cat.png',
         mime: 'image/png',
         path: '/workspace/inbox/m1/cat.png',
-        url: undefined,
       },
     ]);
   });
@@ -72,17 +71,9 @@ describe('extractAttachments', () => {
     ]);
   });
 
-  it('keeps a url-only attachment (no staged file) so the provider can decide', () => {
+  it('skips a url-only attachment: only staged files are handed over', () => {
     insertChat('m1', { text: 'link', attachments: [{ name: 'remote.png', url: 'https://example.test/remote.png' }] });
-    expect(extractAttachments(getPendingMessages())).toEqual([
-      {
-        sourceMessageId: 'm1',
-        filename: 'remote.png',
-        mime: undefined,
-        path: undefined,
-        url: 'https://example.test/remote.png',
-      },
-    ]);
+    expect(extractAttachments(getPendingMessages())).toEqual([]);
   });
 
   it('prefers the host-sanitized name over raw filename, and mimeType over mime', () => {
@@ -104,7 +95,6 @@ describe('extractAttachments', () => {
         filename: 'host-sanitized.png',
         mime: 'image/png',
         path: '/workspace/inbox/m1/host-sanitized.png',
-        url: undefined,
       },
     ]);
   });
@@ -120,12 +110,11 @@ describe('extractAttachments', () => {
         filename: 'doc.pdf',
         mime: 'application/pdf',
         path: '/workspace/inbox/m1/doc.pdf',
-        url: undefined,
       },
     ]);
   });
 
-  it('skips an attachment with neither a staged file nor a url', () => {
+  it('skips an attachment without a staged file', () => {
     insertChat('m1', {
       text: 'unfetchable',
       attachments: [
@@ -151,7 +140,6 @@ describe('extractAttachments', () => {
         filename: 'cat.png',
         mime: 'image/png',
         path: '/workspace/inbox/m1/cat.png',
-        url: undefined,
       },
     ]);
   });
@@ -170,7 +158,6 @@ describe('extractAttachments', () => {
         filename: 'cat.png',
         mime: undefined,
         path: '/workspace/inbox/m1/cat.png',
-        url: undefined,
       },
     ]);
   });

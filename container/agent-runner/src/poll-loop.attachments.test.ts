@@ -44,7 +44,6 @@ function photo(id: string): PromptAttachment {
     filename: 'cat.png',
     mime: 'image/png',
     path: `/workspace/inbox/${id}/cat.png`,
-    url: undefined,
   };
 }
 

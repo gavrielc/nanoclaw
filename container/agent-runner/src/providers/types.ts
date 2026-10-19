@@ -112,10 +112,8 @@ export interface PromptAttachment {
   filename?: string;
   /** MIME type as reported by the channel. Absent for adapters that omit it. */
   mime?: string;
-  /** Absolute path inside the container, when the file was staged to the inbox. */
-  path?: string;
-  /** Remote URL, when the channel only supplied a link. */
-  url?: string;
+  /** Absolute path inside the container of the file the host staged to the inbox. */
+  path: string;
 }
 
 export interface QueryInput {

@@ -448,10 +448,9 @@ export function extractAttachments(messages: MessageInRow[]): PromptAttachment[]
       // otherwise throw on property access and take the whole batch with it.
       if (!a || typeof a !== 'object') continue;
       const localPath = nonEmptyString(a.localPath);
-      const url = nonEmptyString(a.url);
-      // An entry with neither a staged file nor a URL is unfetchable for every
-      // provider; the prompt text still describes it, so skip it here.
-      if (!localPath && !url) continue;
+      // Only a file the host staged is handed over; a link-only entry stays
+      // in the prompt text, which still describes it.
+      if (!localPath) continue;
       out.push({
         // The host stages a message's files under `inbox/<message id>/`.
         sourceMessageId: msg.id,
@@ -460,8 +459,7 @@ export function extractAttachments(messages: MessageInRow[]): PromptAttachment[]
         // channel — same precedence formatAttachments uses.
         filename: nonEmptyString(a.name) ?? nonEmptyString(a.filename),
         mime: nonEmptyString(a.mimeType) ?? nonEmptyString(a.mime),
-        path: localPath ? `/workspace/${localPath}` : undefined,
-        url,
+        path: `/workspace/${localPath}`,
       });
     }
   }
