@@ -143,6 +143,52 @@ export function savedProviderCredentials(
   return duplicates.length ? { ids: [], duplicates } : { ids: [...byName.values()].flat(), duplicates };
 }
 
+/** Several secrets under a provider's saved name and none recorded; the message lists them. */
+export class DuplicateSavedCredentialsError extends Error {}
+
+/**
+ * Once per provider, for an install that saved credentials before ids were
+ * recorded: record the ones saved under NanoClaw's names. Run it under the
+ * record lock. Anything recorded wins, even an id `secrets` does not list (a
+ * login newer than that list, or a deleted secret its login must replace).
+ */
+export function adoptSavedProviderCredentials(
+  record: ProviderCredentialRecord,
+  provider: string,
+  secrets: Array<{ id?: unknown; name?: unknown }>,
+): void {
+  if (record.matched.includes(provider)) return;
+  if (!record.providers[provider]?.length) {
+    const saved = savedProviderCredentials(provider, secrets);
+    if (saved.duplicates.length) {
+      throw new DuplicateSavedCredentialsError(
+        `several OneCLI secrets share a name the ${provider} login saves (${saved.duplicates.join(', ')}) and none is recorded: ` +
+          `run that login again to record the one to use, or delete the extra secrets`,
+      );
+    }
+    record.providers[provider] = saved.ids;
+  }
+  record.matched.push(provider);
+}
+
+/**
+ * For setup: whether groups running `provider` will be granted a credential in
+ * `secrets`. Adopts saved names as above; duplicates count as not connected,
+ * so the login runs and records its own.
+ */
+export async function hasProviderCredential(
+  dataDir: string,
+  provider: string,
+  secrets: Array<{ id?: unknown; name?: unknown }>,
+): Promise<boolean> {
+  const live = new Set(secrets.map((s) => s.id));
+  const record = readProviderCredentials(dataDir);
+  if (record.providers[provider]?.some((id) => live.has(id))) return true;
+  if (!savedProviderCredentials(provider, secrets).ids.length) return false;
+  const after = await updateProviderCredentials(dataDir, (r) => adoptSavedProviderCredentials(r, provider, secrets));
+  return after.providers[provider]?.some((id) => live.has(id)) ?? false;
+}
+
 /** Pulls the secret id out of `onecli secrets create` output (JSON, possibly with a `hint` key). */
 export function createdSecretId(output: string): string | null {
   try {

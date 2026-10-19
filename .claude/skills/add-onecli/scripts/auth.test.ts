@@ -111,3 +111,45 @@ it('a recorded Claude key counts as connected and another same-named key is not 
   expect(prompts.select).not.toHaveBeenCalled();
   expect(record()).toEqual({ claude: ['sec-own'] });
 });
+
+const writeFile = (value: object) => {
+  fs.mkdirSync(path.join(root, 'data', 'onecli'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'data', 'onecli', 'provider-credentials.json'), JSON.stringify(value));
+};
+
+it('a recorded Claude key that left the vault is not replaced by a same-named key', async () => {
+  writeFile({ providers: { claude: ['sec-gone'] }, matched: ['claude'] });
+  child.exec.mockReturnValueOnce(JSON.stringify({ data: [{ id: 'sec-other', name: 'Anthropic' }] }));
+  prompts.select.mockResolvedValueOnce('skip');
+  await run();
+  expect(prompts.select).toHaveBeenCalledOnce();
+  expect(record()).toEqual({ claude: ['sec-gone'] });
+});
+
+it('a login recorded while setup reads the vault is not widened by the name match', async () => {
+  child.exec.mockImplementationOnce(() => {
+    writeFile({ providers: { claude: ['sec-own'] }, matched: [] });
+    return JSON.stringify({ data: [{ id: 'sec-legacy', name: 'Anthropic' }] });
+  });
+  prompts.select.mockResolvedValueOnce('skip');
+  await run();
+  expect(record()).toEqual({ claude: ['sec-own'] });
+});
+
+it('a subscription sign-in that sees two new Anthropic secrets records neither and says so', async () => {
+  child.exec
+    .mockReturnValueOnce(JSON.stringify({ data: [] }))
+    .mockReturnValueOnce(JSON.stringify({ data: [] }))
+    .mockReturnValueOnce(
+      JSON.stringify({
+        data: [
+          { id: 'sec-x', name: 'Anthropic' },
+          { id: 'sec-y', name: 'Anthropic' },
+        ],
+      }),
+    );
+  prompts.select.mockResolvedValueOnce('subscription');
+  child.spawn.mockReturnValueOnce({ status: 0 });
+  await expect(run()).rejects.toThrow(/more than one/);
+  expect(fs.existsSync(path.join(root, 'data', 'onecli', 'provider-credentials.json'))).toBe(false);
+});

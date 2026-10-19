@@ -478,6 +478,52 @@ describe('OneCLI gateway package', () => {
     expect(readRecord(data)).toEqual({ providers: { claude: ['sec-recorded'] }, matched: ['claude'] });
   });
 
+  it('a recorded id that left the vault is not replaced by a name match, even before the match ran', async () => {
+    writeRecord(data, { claude: ['sec-gone'] }, []);
+    const gateway = fakeGateway({ vault: [{ id: 'sec-other', name: 'Anthropic' }] });
+    await expect(grant(gateway)).resolves.toEqual([]);
+    expect(readRecord(data)).toEqual({ providers: { claude: ['sec-gone'] }, matched: ['claude'] });
+  });
+
+  it.each([
+    ['under the lock', false],
+    ['with the lock held', true],
+  ])('a login recorded after the vault was read keeps its id although that read misses it (%s)', async (_n, held) => {
+    if (held) {
+      fs.mkdirSync(path.join(data, 'onecli'), { recursive: true });
+      fs.writeFileSync(path.join(data, 'onecli', 'provider-credentials.json.lock'), 'other-host 1');
+    }
+    const gateway = fakeGateway({ vault: [{ id: 'sec-other', name: 'Anthropic' }] });
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await gateway.fetch(url, init);
+      // This install's login saves and records sec-own after the vault list was taken.
+      if (new URL(String(url)).pathname === '/v1/secrets') writeRecord(data, { claude: ['sec-own'] }, []);
+      return res;
+    }) as typeof fetch;
+    await expect(
+      grantProviderCredentials('g1', 'claude', { baseUrl: 'http://gw.test', fetchImpl, dataDir: data }),
+    ).resolves.toEqual([]);
+    expect(gateway.calls.some((c) => c.includes('sec-other'))).toBe(false);
+    if (!held) expect(readRecord(data)).toEqual({ providers: { claude: ['sec-own'] }, matched: ['claude'] });
+  });
+
+  it('duplicate names do not fail the spawn when a login records one of them meanwhile', async () => {
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-a', name: 'Anthropic' },
+        { id: 'sec-b', name: 'Anthropic' },
+      ],
+    });
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await gateway.fetch(url, init);
+      if (new URL(String(url)).pathname === '/v1/secrets') await recordProviderCredentials(data, 'claude', ['sec-a']);
+      return res;
+    }) as typeof fetch;
+    await expect(
+      grantProviderCredentials('g1', 'claude', { baseUrl: 'http://gw.test', fetchImpl, dataDir: data }),
+    ).resolves.toEqual(['sec-a']);
+  });
+
   it('a match another host finished meanwhile is not repeated (checked again under the lock)', async () => {
     const gateway = fakeGateway({
       vault: [

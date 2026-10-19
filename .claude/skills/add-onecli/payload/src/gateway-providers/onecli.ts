@@ -5,10 +5,10 @@ import { OneCLI, ApprovalClient, type ContainerConfig, type ApprovalRequest } fr
 import { DATA_DIR } from '../config.js';
 import { combinedCaBundle, stageOnecliFile } from './onecli-files.js';
 import {
+  adoptSavedProviderCredentials,
   providerCredentialFile,
   readProviderCredentials,
   RecordLockedError,
-  savedProviderCredentials,
   updateProviderCredentials,
   type ProviderCredentialRecord,
 } from './onecli-provider-credentials.js';
@@ -189,22 +189,8 @@ export async function grantProviderCredentials(
   const vault = await list('/v1/secrets');
   const live = new Set(vault.map((secret) => secret.id).filter((id): id is string => typeof id === 'string'));
   if (!record.matched.includes(provider)) {
-    // Once per provider, for an install that saved credentials before ids were
-    // recorded: adopt them by name. Recorded ids always win, and duplicate names
-    // are refused rather than guessed (one may be another install's).
-    const recorded = (record.providers[provider] ?? []).some((id) => live.has(id));
-    const saved = recorded ? { ids: [], duplicates: [] } : savedProviderCredentials(provider, vault);
-    if (saved.duplicates.length) {
-      throw new Error(
-        `several OneCLI secrets share a name the ${provider} login saves (${saved.duplicates.join(', ')}) and none is recorded: ` +
-          `run that login again to record the one to use, or delete the extra secrets`,
-      );
-    }
-    const adopt = (r: ProviderCredentialRecord) => {
-      if (r.matched.includes(provider)) return;
-      if (!(r.providers[provider] ?? []).some((id) => live.has(id))) r.providers[provider] = saved.ids;
-      r.matched.push(provider);
-    };
+    // Duplicate saved names throw here, after the record is read again.
+    const adopt = (r: ProviderCredentialRecord) => adoptSavedProviderCredentials(r, provider, vault);
     try {
       record = await updateProviderCredentials(dataDir, adopt, { lockTimeoutMs: 1_000 });
     } catch (err) {
@@ -227,10 +213,13 @@ export async function grantProviderCredentials(
     if (!res.ok) throw new Error(`attaching secret ${id} returned ${res.status}`);
   }
   if (ids.length === 0) {
-    log.warn('No model credential is recorded for this provider; the group gets none until its login is run again', {
-      agentGroupId: identifier,
-      provider,
-    });
+    log.warn(
+      'No model credential recorded for this provider is in the OneCLI vault; the group gets none until its login is run again',
+      {
+        agentGroupId: identifier,
+        provider,
+      },
+    );
   }
   return missing;
 }

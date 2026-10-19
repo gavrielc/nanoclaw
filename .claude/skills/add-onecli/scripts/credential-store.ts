@@ -1,9 +1,8 @@
 import { createProviderCredentialConnection } from './provider-credentials.js';
 import {
   createdSecretId,
-  readProviderCredentials,
+  hasProviderCredential,
   recordProviderCredentials,
-  savedProviderCredentials,
 } from '../payload/src/gateway-providers/onecli-provider-credentials.js';
 import { getProviderModelEndpoint } from '../../../../src/provider-contracts/index.js';
 import { execFileSync } from 'node:child_process';
@@ -20,9 +19,7 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
   return {
     connection: (target) => createProviderCredentialConnection(target, root),
     connectionPaths: true,
-    // Connected means Codex groups will be granted a credential: a live recorded
-    // one, or, for an install that recorded none, one saved under Codex's name,
-    // which is then recorded. Duplicate names count as not connected.
+    // Connected means Codex groups will be granted a recorded credential.
     async has(provider) {
       check(provider);
       let secrets: Array<{ id?: string; name?: string; type?: string }>;
@@ -37,12 +34,7 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
       } catch {
         throw new Error('Cannot read the selected OneCLI vault; check that OneCLI is running.');
       }
-      const data = path.join(root, 'data');
-      const recorded = new Set(readProviderCredentials(data).providers[provider] ?? []);
-      if (secrets.some((s) => s.id && recorded.has(s.id))) return true;
-      const saved = savedProviderCredentials(provider, secrets);
-      if (saved.ids.length) await recordProviderCredentials(data, provider, saved.ids);
-      return saved.ids.length > 0;
+      return hasProviderCredential(path.join(root, 'data'), provider, secrets);
     },
     async save(provider, credential) {
       check(provider);
