@@ -14,12 +14,14 @@ import { DATA_DIR } from './config.js';
 import { getMessagingGroup } from './db/messaging-groups.js';
 import { isUniqueViolation } from './db/errors.js';
 import {
+  bindUnboundSession,
   createSession,
   findSystemSession,
   findSessionByAgentGroup,
   findSessionForAgent,
   getSession,
   taskThreadId,
+  unbindSession,
   updateSession,
 } from './db/sessions.js';
 import { log } from './log.js';
@@ -113,6 +115,20 @@ export async function resolveSession(
     if (sessionMode === 'agent-shared') {
       const existing = await findSessionByAgentGroup(agentGroupId);
       if (existing) {
+        // A session kept without a chat (its chat was deleted) takes the chat that
+        // resumes it; cards and questions route only to the bound chat.
+        if (messagingGroupId && !existing.messaging_group_id) {
+          if (await bindUnboundSession(existing.id, messagingGroupId)) {
+            try {
+              await writeSessionRouting(agentGroupId, existing.id);
+            } catch (err) {
+              // Unbound again, so the next message that resumes it retries the routing.
+              await unbindSession(existing.id, messagingGroupId);
+              throw err;
+            }
+            existing.messaging_group_id = messagingGroupId;
+          }
+        }
         return { session: existing, created: false };
       }
     } else if (messagingGroupId) {

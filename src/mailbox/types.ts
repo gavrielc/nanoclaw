@@ -142,6 +142,8 @@ export interface OutboundMailbox {
   writeDirect(message: DirectOutboundMessage): Promise<void>;
   getOutboundHistory(limit: number): MailboxHistoryMessage[];
   getTopLevelOutbound(limit: number): MailboxTimelineMessage[];
+  /** True once this session has messaged another agent, which routes its replies back here. */
+  hasAgentMessages(): boolean;
 }
 
 export interface MailboxSession extends InboundMailbox, OutboundMailbox {}

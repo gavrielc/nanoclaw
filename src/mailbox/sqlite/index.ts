@@ -416,6 +416,8 @@ export function wrapSqliteOutbound(
           )
           .all(limit) as MailboxTimelineMessage[]
       ).map((row) => ({ ...row, timestamp: sqliteTimestamp(row.timestamp) })),
+    hasAgentMessages: () =>
+      readable().prepare("SELECT 1 FROM messages_out WHERE channel_type = 'agent' LIMIT 1").get() !== undefined,
   };
 }
 
