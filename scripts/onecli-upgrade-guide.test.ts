@@ -408,3 +408,16 @@ describe('OneCLI upgrade guide: restoring the backup', () => {
     expect(dockerLog()).not.toContain('compose up -d');
   });
 });
+
+describe('OneCLI upgrade guide: skills that wrote standing instructions', () => {
+  it('tells /add-tavily-tool installs to re-run its Phase 5 after the conversion check', () => {
+    const guide = fs.readFileSync(GUIDE, 'utf8');
+    const check = guide.indexOf('grep grant-conversion');
+    const verify = guide.indexOf('## 3. Verify');
+    const line = guide
+      .slice(check, verify)
+      .split('\n')
+      .find((l) => l.includes('/add-tavily-tool'));
+    expect(line).toMatch(/re-run its Phase 5/);
+  });
+});
