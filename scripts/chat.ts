@@ -24,7 +24,13 @@ const FAILURE_NOTICE_FIELD = 'failureNotice';
 // reads the failure flag and text without parsing display output.
 const RAW_LINES = process.env.NANOCLAW_CHAT_RAW_LINES === '1';
 const SILENCE_MS = 2000; // exit after this much quiet time following the first reply
-const TOTAL_TIMEOUT_MS = 120_000; // hard stop
+// Hard stop before the first reply. The setup ping sets its own: it keeps
+// waiting for a slow first reply as long as the user chooses to.
+const timeoutOverride = Number(process.env.NANOCLAW_CHAT_TIMEOUT_MS);
+const TOTAL_TIMEOUT_MS =
+  Number.isInteger(timeoutOverride) && timeoutOverride > 0 && timeoutOverride <= 2 ** 31 - 1
+    ? timeoutOverride
+    : 120_000;
 
 function socketPath(): string {
   return path.join(DATA_DIR, 'cli.sock');

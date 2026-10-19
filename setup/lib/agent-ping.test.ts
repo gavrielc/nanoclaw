@@ -8,10 +8,11 @@ import {
   pingOutcome,
   sanitizeDetail,
   GENERIC_FAILURE_NOTICE,
+  firstChatEventProps,
   logFirstChat,
-  pingCliAgent,
   pingFailureCopy,
   PING_AGENT_FOLDER,
+  startCliPing,
 } from './agent-ping.js';
 
 vi.mock('../logs.js', () => ({ step: vi.fn() }));
@@ -23,10 +24,10 @@ const { children, spawnEnv } = vi.hoisted(() => ({
 vi.mock('child_process', () => ({
   spawn: (_cmd: string, _args: string[], opts?: { env?: Record<string, string | undefined> }) => {
     spawnEnv.push(opts?.env);
-    const child = Object.assign(new EventEmitter(), {
+    const child: FakeChild = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
-      kill: vi.fn(),
+      kill: vi.fn(() => setImmediate(() => child.emit('close', null))),
     });
     children.push(child);
     return child;
@@ -106,18 +107,103 @@ it('logs ok as success without a hint', () => {
   expect(setupLog.step).toHaveBeenCalledWith('first-chat', 'success', 500, { RESULT: 'ok' });
 });
 
-describe('pingCliAgent timeout', () => {
+it('logs how often the user kept waiting', () => {
+  logFirstChat({ result: 'ok' }, 250_000, { keptWaiting: 1, skipped: false, stage: 'waiting_for_reply' });
+  expect(setupLog.step).toHaveBeenCalledWith('first-chat', 'success', 250_000, { RESULT: 'ok', KEPT_WAITING: 1 });
+});
+
+it('logs a skipped wait with the stage it stopped at', () => {
+  logFirstChat({ result: 'no_reply' }, 480_000, { keptWaiting: 3, skipped: true, stage: 'waiting_for_reply' });
+  expect(setupLog.step).toHaveBeenCalledWith('first-chat', 'failed', 480_000, {
+    RESULT: 'no_reply',
+    HINT: expect.stringContaining('skipped'),
+    KEPT_WAITING: 3,
+    SKIPPED: true,
+    STAGE: 'waiting_for_reply',
+  });
+});
+
+describe('startCliPing', () => {
   afterEach(() => {
     vi.useRealTimers();
     children.length = 0;
   });
 
-  it('reports no_reply when nothing was printed by the deadline', async () => {
+  it('hands the chat client the deadline and reports no_reply when stopped', async () => {
+    const ping = startCliPing(600_000);
+    expect(spawnEnv.at(-1)?.NANOCLAW_CHAT_TIMEOUT_MS).toBe('600000');
+    ping.stop();
+    expect(children.at(-1)?.kill).toHaveBeenCalledWith('SIGKILL');
+    await expect(ping.outcome).resolves.toEqual({ result: 'no_reply' });
+  });
+
+  it('lets a client with a reply finish its silence window, so a notice right behind it decides', async () => {
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.stdout.emit('data', raw('Done part one.'));
+    ping.stop();
+    expect(child.kill).not.toHaveBeenCalled();
+    child.stdout.emit('data', raw('Spending limit reached', true));
+    child.emit('close', 4);
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
+  });
+
+  it('keeps a reply when the client then goes quiet', async () => {
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.stdout.emit('data', raw('pong'));
+    ping.stop();
+    child.emit('close', 0);
+    await expect(ping.outcome).resolves.toEqual({ result: 'ok' });
+  });
+
+  it('kills a client that never finishes its silence window', async () => {
     vi.useFakeTimers();
-    const result = pingCliAgent(1000);
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.stdout.emit('data', raw('pong'));
+    ping.stop();
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(child.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(ping.outcome).resolves.toEqual({ result: 'ok' });
+  });
+
+  it('still reads what drains after the grace kill', async () => {
+    vi.useFakeTimers();
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.kill.mockImplementation(() => undefined);
+    child.stdout.emit('data', raw('Done part one.'));
+    ping.stop();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    child.stdout.emit('data', raw('Spending limit reached', true));
+    child.emit('close', null);
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
+  });
+
+  it('kills a client with no reply at once and still reads what drains', async () => {
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.kill.mockImplementation(() => undefined);
+    ping.stop();
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    child.stdout.emit('data', raw('Spending limit reached', true));
+    child.emit('close', null);
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
+  });
+
+  it('kills a chat client that outlives its own deadline', async () => {
+    vi.useFakeTimers();
+    const ping = startCliPing(1000);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(children[0].kill).toHaveBeenCalledWith('SIGKILL');
-    await expect(result).resolves.toEqual({ result: 'no_reply' });
+    expect(children.at(-1)?.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(children.at(-1)?.kill).toHaveBeenCalledWith('SIGKILL');
+    await expect(ping.outcome).resolves.toEqual({ result: 'no_reply' });
   });
 });
 
@@ -168,11 +254,11 @@ describe('ping outcome from raw chat-client lines', () => {
   });
 
   it('runs the chat client in raw-lines mode and attaches the reason', async () => {
-    const result = pingCliAgent(1000);
+    const ping = startCliPing(1000);
     const child = children[children.length - 1];
     child.stdout.emit('data', raw('Credit balance is too low', true));
     child.emit('close', 4);
-    await expect(result).resolves.toEqual({ result: 'agent_failure', detail: 'Credit balance is too low' });
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Credit balance is too low' });
     expect(spawnEnv[spawnEnv.length - 1]?.NANOCLAW_CHAT_RAW_LINES).toBe('1');
   });
 });
@@ -194,5 +280,36 @@ describe('wizard failure copy', () => {
     expect(flat(copy.note)).toContain('It sent no reason.');
     expect(flat(copy.note)).toContain('`logs/nanoclaw.log` and `logs/nanoclaw.error.log`');
     expect(flat(copy.note)).toContain('https://docs.nanoclaw.dev/operate/troubleshooting#start-here');
+  });
+
+  it('names how long setup waited when no reply came', () => {
+    const copy = pingFailureCopy({ result: 'no_reply' }, 240_000);
+    expect(flat(copy.note)).toContain('No reply from your assistant after 4m 0s.');
+    expect(copy.assistMsg).toBe('No reply from the assistant after 4m 0s.');
+  });
+});
+
+describe('first-chat events', () => {
+  it('tells the funnel a skip apart from a failure', () => {
+    expect(
+      firstChatEventProps({ result: 'no_reply' }, { keptWaiting: 2, skipped: true, stage: 'waiting_for_reply' }),
+    ).toEqual({ reason: 'no_reply', skipped: true, kept_waiting: 2, stage: 'waiting_for_reply' });
+  });
+
+  it('keeps a plain failure event as before, plus where it stopped', () => {
+    expect(
+      firstChatEventProps({ result: 'agent_failure' }, { keptWaiting: 0, skipped: false, stage: 'starting_agent' }),
+    ).toEqual({
+      reason: 'agent_failure',
+      stage: 'starting_agent',
+    });
+  });
+
+  it('counts kept waits on a ready assistant', () => {
+    expect(
+      firstChatEventProps({ result: 'ok' }, { keptWaiting: 1, skipped: false, stage: 'waiting_for_reply' }),
+    ).toEqual({
+      kept_waiting: 1,
+    });
   });
 });
