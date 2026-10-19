@@ -22,8 +22,7 @@ To replace an installed payload and update its pins, append `--refresh`; back up
 local payload edits first. Ordinary re-authentication leaves installed files and
 the container image alone. Backend defaults are installation-wide; model and
 reasoning effort can be overridden per group through the existing container
-configuration. Per-group backend/auth selection and structured channel attachment
-transport are separate work.
+configuration. Per-group backend/auth selection is separate work.
 
 Authentication checks the installed files, registration lines, and exact pins
 against this skill's declarations without launching a subprocess or container.
@@ -320,9 +319,10 @@ Put comments on separate lines. These settings affect only OpenCode containers.
 - `OPENCODE_MODEL_INPUT_MODALITIES`: optional comma-separated main-model input
   types from `text,audio,image,video,pdf`.
 - `OPENCODE_NATIVE_ATTACHMENT_MAX_COUNT` / `OPENCODE_NATIVE_ATTACHMENT_MAX_BYTES`:
-  optional limits (default 8 files, 25 MiB per turn) for channel images and PDFs
-  the host staged to the inbox. Those reach the model as file parts; anything
-  over a limit, or of another type, stays a line in the prompt text.
+  optional limits (default 8 files, 25 MiB per turn) for channel files the host
+  staged to the inbox. JPEG, PNG, GIF, WebP and PDF files reach the model as file
+  parts; anything over a limit, of another type, or with an unusual name stays a
+  line in the prompt text.
 
 Custom model limits and modalities apply only to the main model. NanoClaw supplies
 MCP configuration and container policy. See [ARCHITECTURE.md](ARCHITECTURE.md) for

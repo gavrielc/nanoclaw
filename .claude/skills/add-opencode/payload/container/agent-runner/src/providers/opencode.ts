@@ -1,6 +1,6 @@
 import { initializeOpenCodeAuth } from './opencode-auth.js';
 import { spawn, type ChildProcess } from 'child_process';
-import { lstatSync, realpathSync } from 'fs';
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
@@ -121,9 +121,8 @@ export function spawnOpencodeServer(
 
 /**
  * Only host-staged files bound to the source message whose inbox owns them
- * become media. Remote URLs remain prompt text and are never fetched implicitly.
- * Every field is optional and checked at runtime: an entry missing one stays
- * prompt text instead of failing the turn.
+ * become media. Every field is optional and checked at runtime: an entry
+ * missing one stays prompt text instead of failing the turn.
  *
  * Attachments are ALSO described inline in the prompt text the formatter
  * produces, and that text rendering stays the contract every provider relies
@@ -134,27 +133,29 @@ interface OpenCodePromptAttachment {
   sourceMessageId?: string;
   filename?: string;
   path?: string;
-  mime?: string;
-  url?: string;
 }
 
-/** Extension → MIME fallback, for adapters that report no `mimeType`. */
-const ATTACHMENT_MIME_BY_EXT: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.heic': 'image/heic',
-  '.pdf': 'application/pdf',
-};
+/** Bytes read from the start of a file to identify its type. */
+const MEDIA_SNIFF_BYTES = 12;
 
-function attachmentMime(att: OpenCodePromptAttachment): string | undefined {
-  if (typeof att.mime === 'string' && att.mime) return att.mime;
-  const name = att.path || att.filename || '';
-  const dot = name.lastIndexOf('.');
-  return dot < 0 ? undefined : ATTACHMENT_MIME_BY_EXT[name.slice(dot).toLowerCase()];
+/**
+ * The media OpenCode can decode, identified by the file's first bytes rather
+ * than the channel's label: OpenCode rejects the whole prompt when a file part
+ * fails to decode, so anything else stays prompt text.
+ */
+export function sniffMediaType(head: Uint8Array): string | undefined {
+  const start = Buffer.from(head).toString('latin1');
+  if (start.startsWith('\xff\xd8\xff')) return 'image/jpeg';
+  if (start.startsWith('\x89PNG\r\n\x1a\n')) return 'image/png';
+  if (start.startsWith('GIF87a') || start.startsWith('GIF89a')) return 'image/gif';
+  if (start.startsWith('RIFF') && start.slice(8, 12) === 'WEBP') return 'image/webp';
+  if (start.startsWith('%PDF-')) return 'application/pdf';
+  return undefined;
 }
+
+// File parts only for plain filenames and message ids; anything else stays prompt text.
+const PLAIN_FILENAME = /^[\w .()+-]+$/;
+const PLAIN_MESSAGE_ID = /^[\w.:@$=+-]+$/;
 
 export interface NativeAttachmentLimits {
   maxCount: number;
@@ -164,6 +165,8 @@ export interface NativeAttachmentLimits {
 export interface NativeAttachmentFileInfo {
   realPath: string;
   size: number;
+  /** The file's first bytes (up to MEDIA_SNIFF_BYTES), for type detection. */
+  head: Uint8Array;
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {
@@ -185,13 +188,22 @@ export function resolveNativeAttachmentLimits(): NativeAttachmentLimits {
   };
 }
 
-function inspectNativeAttachment(filePath: string): NativeAttachmentFileInfo | null {
+export function inspectNativeAttachment(filePath: string): NativeAttachmentFileInfo | null {
+  let fd: number | undefined;
   try {
     const stat = lstatSync(filePath);
     if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    return { realPath: realpathSync(filePath), size: stat.size };
+    const realPath = realpathSync(filePath);
+    fd = openSync(realPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const opened = fstatSync(fd);
+    if (!opened.isFile()) return null;
+    const head = Buffer.alloc(MEDIA_SNIFF_BYTES);
+    const read = readSync(fd, head, 0, head.length, 0);
+    return { realPath, size: opened.size, head: head.subarray(0, read) };
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -223,12 +235,11 @@ function isSafeComponent(value: unknown): value is string {
  * server shares this container's filesystem (spawnOpencodeServer), so the path
  * resolves.
  *
- * Only images and PDFs are forwarded; PDFs go through even though a given
- * backend may reject them, since the alternative is silently withholding a
- * document the user did send. Anything skipped is still described in the
- * prompt text, so it is never lost — just not handed over as media.
+ * Only JPEG, PNG, GIF, WebP and PDF files are forwarded (see sniffMediaType).
+ * Anything skipped is still described in the prompt text, so it is never lost —
+ * just not handed over as media.
  *
- * `exists` is injectable so tests can drive resolvability without touching disk.
+ * `inspect` is injectable so tests can drive the filesystem without touching disk.
  */
 export function buildAttachmentFileParts(
   attachments: OpenCodePromptAttachment[] | undefined,
@@ -244,20 +255,20 @@ export function buildAttachmentFileParts(
     }
     const { sourceMessageId, filename, path: filePath } = att;
     if (!isSafeComponent(sourceMessageId) || !isSafeComponent(filename) || typeof filePath !== 'string') continue;
+    if (!PLAIN_MESSAGE_ID.test(sourceMessageId) || !PLAIN_FILENAME.test(filename)) continue;
     const expectedRoot = `/workspace/inbox/${sourceMessageId}`;
     const expectedPath = `${expectedRoot}/${filename}`;
     if (path.resolve(filePath) !== expectedPath) {
       log(`Attachment path is not bound to its source message, not sent as media: ${filename}`);
       continue;
     }
-    const mime = attachmentMime(att);
-    if (!mime) continue;
-    if (!mime.startsWith('image/') && mime !== 'application/pdf') continue;
     const info = inspect(filePath);
     if (!info || !isPathInside(expectedRoot, info.realPath) || path.basename(info.realPath) !== filename) {
       log(`Attachment has no safe regular file, not sent as media: ${filename}`);
       continue;
     }
+    const mime = sniffMediaType(info.head);
+    if (!mime) continue;
     if (info.size < 0 || totalBytes + info.size > limits.maxBytes) {
       log(`Native attachment byte limit reached (${limits.maxBytes}); ${filename} stays prompt text only`);
       continue;
