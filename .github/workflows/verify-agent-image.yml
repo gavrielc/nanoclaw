@@ -53,50 +53,45 @@ jobs:
               r = subprocess.run(['git', 'show', f'{sha}:{path}'], capture_output=True)
               return r.stdout if r.returncode == 0 else None
 
-          def load(sha, path):
-              raw = show(sha, path)
-              return json.loads(raw) if raw else {}
-
           def fail(msg, detail=''):
               print(f'::error::{msg}')
               if detail:
                   print(detail, file=sys.stderr)
               sys.exit(1)
 
-          def digest_pinned(ref, where):
-              if not isinstance(ref, str) or '@sha256:' not in ref:
-                  fail(f'{where} is not digest-pinned: {ref!r}',
-                       'A mutable tag is fetched once and never re-checked, so what installs run\n'
-                       'would drift from what was reviewed here.')
+          # json.loads keeps the last of two equal keys and release-image.sh the
+          # first, so a duplicate would verify one ref while installs pull another.
+          def no_duplicates(pairs):
+              keys = [k for k, _ in pairs]
+              dupes = sorted({k for k in keys if keys.count(k) > 1})
+              if dupes:
+                  fail(f'Duplicate keys: {dupes}.')
+              return dict(pairs)
+
+          def load(sha, path):
+              raw = show(sha, path)
+              return json.loads(raw, object_pairs_hook=no_duplicates) if raw else {}
 
           head, base = os.environ['HEAD_SHA'], os.environ['BASE_SHA']
           targets = []
 
-          # The versions.json pin: its lock must match this branch's bun.lock.
-          # Older long-lived branches may predate versions.json; an empty old pin
-          # still gets the new one fully verified.
-          new_pin = load(head, 'versions.json').get('agent-image', '')
-          old_pin = load(base, 'versions.json').get('agent-image', '')
-          if new_pin != old_pin:
-              # A per-platform object is deliberately not verified here: its entries
-              # must move together and are reviewed by hand.
-              if not isinstance(new_pin, str) or not new_pin:
-                  fail('The agent-image pin was removed or is no longer a single reference.',
-                       'A per-platform pin has to be reviewed and verified by hand.')
-              digest_pinned(new_pin, 'The agent-image pin')
-              lock = hashlib.sha256(open('container/agent-runner/bun.lock', 'rb').read()).hexdigest()
-              targets.append({'ref': new_pin, 'old': old_pin if isinstance(old_pin, str) else '',
-                              'lock': lock, 'release': '', 'revision': ''})
+          # Every image must come from the repository the base branch already pins:
+          # the login below hands that registry's password to the hosts named here.
+          base_pin = load(base, 'versions.json').get('agent-image', '')
+          repo = base_pin.rsplit('@', 1)[0] if isinstance(base_pin, str) and '@' in base_pin else ''
 
-          # agent-images.json: each new or moved entry must be the image built from
-          # exactly that release — its tag's commit and that commit's bun.lock.
-          new_list, old_list = load(head, 'agent-images.json'), load(base, 'agent-images.json')
-          for release, ref in sorted(new_list.items()):
-              if old_list.get(release) == ref:
-                  continue
+          def checked(ref, where):
+              if not repo or not isinstance(ref, str) or not re.fullmatch(re.escape(repo) + r'@sha256:[0-9a-f]{64}', ref):
+                  fail(f'{where} must be {repo or "<the base pin repository>"}@sha256:<digest>, got {ref!r}.',
+                       'A mutable tag is fetched once and never re-checked, and another registry would\n'
+                       'receive the login below.')
+              return ref
+
+          # The image built from exactly this release: its tag's commit and that
+          # commit's bun.lock.
+          def release_target(release, ref, old):
               if not re.fullmatch(r'v\d+\.\d+\.\d+', release):
                   fail(f'agent-images.json key {release!r} is not a release tag.')
-              digest_pinned(ref, f'agent-images.json entry {release}')
               r = subprocess.run(['git', 'rev-parse', '--verify', '--quiet', f'refs/tags/{release}^{{commit}}'],
                                  capture_output=True, text=True)
               if r.returncode != 0:
@@ -104,9 +99,42 @@ jobs:
               lock_bytes = show(release, 'container/agent-runner/bun.lock')
               if lock_bytes is None:
                   fail(f'{release} has no container/agent-runner/bun.lock.')
-              targets.append({'ref': ref, 'old': old_list.get(release, ''),
-                              'lock': hashlib.sha256(lock_bytes).hexdigest(),
-                              'release': release, 'revision': r.stdout.strip()})
+              return {'ref': ref, 'old': old, 'lock': hashlib.sha256(lock_bytes).hexdigest(),
+                      'release': release, 'revision': r.stdout.strip()}
+
+          new_list, old_list = load(head, 'agent-images.json'), load(base, 'agent-images.json')
+          raw_list = show(head, 'agent-images.json')
+          if raw_list is not None and raw_list != (json.dumps(dict(sorted(new_list.items())), indent=2) + '\n').encode():
+              fail('agent-images.json is not in canonical form.',
+                   'Write it as json.dumps(dict(sorted(entries)), indent=2) plus a newline, as\n'
+                   'refresh-agent-image does, so release-image.sh reads exactly what this verified.')
+
+          # The versions.json pin. A release can never carry its own image, so the
+          # pin can move to an image listed for a release, checked against that
+          # release; anything else must match this branch's bun.lock. Older branches
+          # may predate versions.json; an empty old pin still gets the new one verified.
+          new_pin = load(head, 'versions.json').get('agent-image', '')
+          if new_pin != base_pin:
+              # A per-platform object is deliberately not verified here: its entries
+              # must move together and are reviewed by hand.
+              if not isinstance(new_pin, str) or not new_pin:
+                  fail('The agent-image pin was removed or is no longer a single reference.',
+                       'A per-platform pin has to be reviewed and verified by hand.')
+              checked(new_pin, 'The agent-image pin')
+              old = base_pin if isinstance(base_pin, str) else ''
+              listed = {ref: release for release, ref in new_list.items()}
+              if new_pin in listed:
+                  targets.append(release_target(listed[new_pin], new_pin, old))
+              else:
+                  lock = hashlib.sha256(open('container/agent-runner/bun.lock', 'rb').read()).hexdigest()
+                  targets.append({'ref': new_pin, 'old': old, 'lock': lock, 'release': '', 'revision': ''})
+
+          # agent-images.json: each new or moved entry.
+          for release, ref in sorted(new_list.items()):
+              if old_list.get(release) == ref:
+                  continue
+              targets.append(release_target(release, checked(ref, f'agent-images.json entry {release}'),
+                                            old_list.get(release, '')))
 
           json.dump(targets, open('/tmp/targets.json', 'w'), indent=2)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:

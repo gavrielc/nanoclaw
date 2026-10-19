@@ -111,7 +111,9 @@ the official remote's `main` (`upstream`, or `origin` when it is `nanocoai/nanoc
 new release's image is listed, it takes the previous release's image, which may warn about a
 lockfile mismatch; `--refresh` (below) moves the install onto the new one once it's listed.
 With no listed release at all, the pull falls back to the `agent-image` pin in `versions.json`.
-`NANOCLAW_AGENT_IMAGE_REF` overrides all of this.
+`NANOCLAW_AGENT_IMAGE_REF` overrides all of this. A fork that pointed the `versions.json` pin at
+its own mirror should move that reference to `NANOCLAW_AGENT_IMAGE_REF`, since the list comes
+first.
 
 ## Architecture
 
