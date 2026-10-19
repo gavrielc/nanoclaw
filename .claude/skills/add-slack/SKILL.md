@@ -1,207 +1,211 @@
 ---
 name: add-slack
-description: Add Slack as a channel. Can replace WhatsApp entirely or run alongside it. Uses Socket Mode (no public URL needed).
+description: Add Slack channel integration via Chat SDK.
 ---
 
 # Add Slack Channel
 
-This skill adds Slack support to NanoClaw, then walks through interactive setup.
+Adds Slack support via the Chat SDK bridge. Trunk ships no channels — this skill
+copies the Slack channel layer (adapter, shared lib, bot-inbound guard,
+provisioning core, container skills) in from the `channels` branch. The **Apply**
+steps carry `nc:` directive fences (an agent applies the prose, a parser the
+directives); all idempotent.
 
-## Phase 1: Pre-flight
+This is the base Slack experience: one bot, DM and channel chat. The Slack
+**agents** feature — child bots provisioned from `create_agent`, shared rooms,
+canvases, DM onboarding — ships separately in `/slack-a2a-rooms` +
+`/slack-agent-flow`, in-tree under `.claude/skills/` (their canonical home;
+the channels branch keeps a compatibility copy for older checkouts). The
+setup wizard applies them automatically, and they can be applied on top of
+this install at any time.
+Existing classic installs that want the Slack agents experience should use
+`/migrate-slack-agents` rather than re-running this skill (classic keeps
+working; that migration is optional).
 
-### Check if already applied
+## Apply
 
-Check if `src/channels/slack.ts` exists. If it does, skip to Phase 3 (Setup). The code changes are already in place.
+### 1. Copy the channel payload
 
-### Ask the user
-
-**Do they already have a Slack app configured?** If yes, collect the Bot Token and App Token now. If no, we'll create one in Phase 3.
-
-## Phase 2: Apply Code Changes
-
-### Ensure channel remote
-
-```bash
-git remote -v
+Fetch the `channels` branch and copy the payload into place (overwrite — the branch is canonical):
+```nc:copy from-branch:channels
+src/channels/slack.ts
+src/channels/slack-lib.ts
+src/channels/slack-lib.test.ts
+src/channels/slack-a2a-guard.ts
+src/channels/slack-a2a-guard.test.ts
+src/channels/slack-raw-text.ts
+src/channels/slack-raw-text.test.ts
+src/channels/slack-registration.test.ts
+src/channels/slack-instances-registration.test.ts
+src/provisioning/slack-app.ts
+src/provisioning/slack-app.test.ts
+container/skills/slack-formatting/SKILL.md
 ```
 
-If `slack` is missing, add it:
+- **Adapter + shared lib** (`slack.ts`, `slack-lib.ts`): bridge registration, wiring defaults, conversation resolver, the native `SLACK_INSTANCES` loop — pinned by the two registration tests.
+- **Bot-inbound guard** (`slack-a2a-guard.ts`): drops bot-authored inbound at the bridge by default; feature skills register a narrower admission policy on its seam.
+- **Raw-text recovery** (`slack-raw-text.ts`): recovers pasted tables, which Slack delivers as attachment blocks in `message.raw` rather than as text — `slack.ts` imports it directly, so it travels with the adapter.
+- **Provisioning core** (`src/provisioning/slack-app.ts`): manifest template, scope/event constants, and the broker + manager-token transports for creating a Slack app programmatically. Nothing on the adapter path imports it — the setup wizard's auto-provision pre-step and feature skills do.
+- **Container skills**: `slack-formatting/` (mrkdwn syntax; synced to `~/.claude/skills`).
 
-```bash
-git remote add slack https://github.com/qwibitai/nanoclaw-slack.git
+The room/canvas/onboarding host modules, their container files, and the Slack
+welcome-tour addendum (it describes rooms, canvases, and the agents access
+model) are part of the agents feature and install with `/slack-agent-flow`,
+not here.
+
+### 2. Register the payload
+
+Append the self-registration imports (each append is skipped if its first
+line is already present). The adapter and the guard, in the channel barrel:
+```nc:append to:src/channels/index.ts
+import './slack.js';
+```
+```nc:append to:src/channels/index.ts
+import './slack-a2a-guard.js';
 ```
 
-### Merge the skill branch
+### 3. Install the adapter package
 
-```bash
-git fetch slack main
-git merge slack/main || {
-  git checkout --theirs package-lock.json
-  git add package-lock.json
-  git merge --continue
-}
+Pinned exactly — the supply-chain policy rejects ranges and `latest`:
+```nc:dep
+@chat-adapter/slack@4.29.0
 ```
 
-This merges in:
-- `src/channels/slack.ts` (SlackChannel class with self-registration via `registerChannel`)
-- `src/channels/slack.test.ts` (46 unit tests)
-- `import './slack.js'` appended to the channel barrel file `src/channels/index.ts`
-- `@slack/bolt` npm dependency in `package.json`
-- `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in `.env.example`
+### 4. Build and validate
 
-If the merge reports conflicts, resolve them by reading the conflicted files and understanding the intent of both sides.
-
-### Validate code changes
-
-```bash
-npm install
-npm run build
-npx vitest run src/channels/slack.test.ts
+The build guards the typed `createChatSdkBridge(...)` call and proves the dependency
+installed; the tests pin registration (barrel import, dependency, the `SLACK_INSTANCES`
+loop), the guard, the shared lib, and the provisioning core.
+```nc:run effect:build
+pnpm run build
+```
+```nc:run effect:test
+pnpm exec vitest run src/channels/slack-registration.test.ts src/channels/slack-instances-registration.test.ts src/channels/slack-lib.test.ts src/channels/slack-a2a-guard.test.ts src/provisioning/slack-app.test.ts
 ```
 
-All tests must pass (including the new Slack tests) and build must be clean before proceeding.
+## Credentials
 
-## Phase 3: Setup
-
-### Create Slack App (if needed)
-
-If the user doesn't have a Slack app, share [SLACK_SETUP.md](SLACK_SETUP.md) which has step-by-step instructions with screenshots guidance, troubleshooting, and a token reference table.
-
-Quick summary of what's needed:
-1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
-2. Enable Socket Mode and generate an App-Level Token (`xapp-...`)
-3. Subscribe to bot events: `message.channels`, `message.groups`, `message.im`
-4. Add OAuth scopes: `chat:write`, `channels:history`, `groups:history`, `im:history`, `channels:read`, `groups:read`, `users:read`
-5. Install to workspace and copy the Bot Token (`xoxb-...`)
-
-Wait for the user to provide both tokens.
-
-### Configure environment
-
-Add to `.env`:
-
-```bash
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_APP_TOKEN=xapp-your-app-token
+Socket Mode (an outbound WebSocket — no public URL, the right default behind NAT)
+vs webhook delivery (needs a public HTTPS Request URL); the adapter picks Socket
+Mode automatically whenever `SLACK_APP_TOKEN` is set.
+```nc:prompt connection validate:^(socket|webhook|provisioned)$ choices:socket|webhook
+How should Slack deliver events? `socket` (Socket Mode — no public URL, recommended for local or behind-NAT installs) or `webhook` (needs a public HTTPS Request URL).
 ```
 
-Channels auto-enable when their credentials are present — no extra configuration needed.
+`provisioned` is never offered interactively (`choices:` limits the select;
+`validate:` stays wider because pre-bound inputs may exceed the offered set) —
+it arrives only via pre-bound `inputs` (a programmatically created app) and
+behaves like Socket Mode minus the walkthrough below.
 
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
+For Socket Mode, tell the user:
+```nc:operator when:connection=socket
+Create the Slack app (Socket Mode):
+1. Go to api.slack.com/apps and create a new app using whichever creation flow is currently available (e.g. starting from scratch or from a manifest). Name it (e.g. "NanoClaw") and pick your workspace.
+2. OAuth & Permissions → add these Bot Token Scopes: chat:write, im:write, channels:history, groups:history, im:history, channels:read, groups:read, mpim:read, users:read, reactions:write, files:read, files:write.
+3. App Home → enable the Messages Tab, and check "Allow users to send Slash commands and messages from the messages tab."
+4. Basic Information → App-Level Tokens → "Generate Token and Scopes" → add the connections:write scope → copy the token (starts with xapp-).
+5. Socket Mode → toggle "Enable Socket Mode" on.
+6. Event Subscriptions → toggle "Enable Events" on, then under "Subscribe to bot events" add: message.channels, message.groups, message.im, app_mention. Save Changes. (No Request URL is needed in Socket Mode.)
+7. Install to Workspace, then copy the Bot User OAuth Token (starts with xoxb-).
 ```
 
-The container reads environment from `data/env/env`, not `.env` directly.
-
-### Build and restart
-
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+For webhook delivery, tell the user:
+```nc:operator when:connection=webhook
+Create the Slack app (webhook delivery):
+1. Go to api.slack.com/apps and create a new app using whichever creation flow is currently available (e.g. starting from scratch or from a manifest). Name it (e.g. "NanoClaw") and pick your workspace.
+2. OAuth & Permissions → add these Bot Token Scopes: chat:write, im:write, channels:history, groups:history, im:history, channels:read, groups:read, mpim:read, users:read, reactions:write, files:read, files:write.
+3. App Home → enable the Messages Tab, and check "Allow users to send Slash commands and messages from the messages tab."
+4. Install to Workspace, then copy the Bot User OAuth Token (starts with xoxb-).
+5. Basic Information → copy the Signing Secret.
 ```
 
-## Phase 4: Registration
-
-### Get Channel ID
-
-Tell the user:
-
-> 1. Add the bot to a Slack channel (right-click channel → **View channel details** → **Integrations** → **Add apps**)
-> 2. In that channel, the channel ID is in the URL when you open it in a browser: `https://app.slack.com/client/T.../C0123456789` — the `C...` part is the channel ID
-> 3. Alternatively, right-click the channel name → **Copy link** — the channel ID is the last path segment
->
-> The JID format for NanoClaw is: `slack:C0123456789`
-
-Wait for the user to provide the channel ID.
-
-### Register the channel
-
-The channel ID, name, and folder name are needed. Use `npx tsx setup/index.ts --step register` with the appropriate flags.
-
-For a main channel (responds to all messages):
-
-```bash
-npx tsx setup/index.ts --step register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_main" --trigger "@${ASSISTANT_NAME}" --channel slack --no-trigger-required --is-main
+Store the secrets in `.env` (the app-level token doubles as the Socket Mode switch, the signing secret authenticates webhook requests):
+```nc:prompt bot_token secret validate:^xoxb-
+Paste the Bot User OAuth Token — OAuth & Permissions, starts with `xoxb-`.
+```
+```nc:prompt app_token secret validate:^xapp- reuse:SLACK_APP_TOKEN when:connection=socket
+Paste the App-Level Token — Basic Information → App-Level Tokens, starts with `xapp-`.
+```
+```nc:prompt app_token secret validate:^xapp- when:connection=provisioned
+Paste the App-Level Token of the provisioned app (starts with `xapp-`).
+```
+```nc:prompt signing_secret secret validate:^[a-fA-F0-9]{16,}$ when:connection=webhook
+Paste the Signing Secret — Basic Information.
+```
+```nc:env-set
+SLACK_BOT_TOKEN={{bot_token}}
+```
+```nc:env-set when:connection=socket
+SLACK_APP_TOKEN={{app_token}}
+```
+```nc:env-set when:connection=provisioned
+SLACK_APP_TOKEN={{app_token}}
+```
+```nc:env-set when:connection=webhook
+SLACK_SIGNING_SECRET={{signing_secret}}
 ```
 
-For additional channels (trigger-only):
+**Additional bot identities (optional).** The adapter natively reads
+`SLACK_INSTANCES=<name>[,…]` from `.env`, registering one `slack-<name>` instance per
+name from suffixed keys (`SLACK_BOT_TOKEN_<NAME>` etc.) — see `/slack-multi-instance`.
 
-```bash
-npx tsx setup/index.ts --step register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel slack
+With webhook delivery, the bridge serves port 3000 at `/webhook/slack`; that
+URL must be publicly reachable and registered with Slack. Tell the user:
+```nc:operator when:connection=webhook
+Set up event delivery (needs a public HTTPS URL for port 3000 — ngrok, a Cloudflare Tunnel, or a reverse proxy on a VPS):
+1. Event Subscriptions → Enable Events. Set the Request URL to https://<your-public-host>/webhook/slack and wait for the challenge to pass.
+2. Subscribe to bot events: message.channels, message.groups, message.im, app_mention. Save Changes.
+3. Interactivity & Shortcuts → toggle Interactivity on, set the same Request URL, Save Changes, then reinstall the app when Slack prompts.
 ```
 
-## Phase 5: Verify
+## Resolve your DM channel
 
-### Test the connection
-
-Tell the user:
-
-> Send a message in your registered Slack channel:
-> - For main channel: Any message works
-> - For non-main: `@<assistant-name> hello` (using the configured trigger word)
->
-> The bot should respond within a few seconds.
-
-### Check logs if needed
-
-```bash
-tail -f logs/nanoclaw.log
+Resolve the owner DM address the owner-wiring step needs; validating the token here, before the restart, fast-fails a bad credential.
+```nc:prompt owner_handle validate:^U[A-Z0-9]{8,}$
+Your Slack member ID (Profile → ⋮ → "Copy member ID"; starts with U).
 ```
+
+`auth.test` confirms the bot token works and captures the bot identity:
+```nc:run capture:connected_as effect:fetch
+curl -sf -X POST https://slack.com/api/auth.test -H "Authorization: Bearer {{bot_token}}" | jq -er '"@" + .user + " in " + .team'
+```
+
+`conversations.open` yields the DM address `slack:<channelId>` (no channel back = the `im:write` scope is missing — add it and reinstall):
+```nc:run capture:platform_id effect:fetch
+curl -s -X POST https://slack.com/api/conversations.open -H "Authorization: Bearer {{bot_token}}" -H "Content-Type: application/json" -d '{"users":"{{owner_handle}}"}' | jq -er '"slack:" + .channel.id'
+```
+
+`owner_handle` and `platform_id` feed the owner-wiring step. Sending works immediately;
+receiving needs the event path (Socket Mode: live after the restart below; webhook: the steps above first).
+
+## Restart
+
+Restart so the service loads the adapter and secrets; wait for its CLI socket before wiring:
+```nc:run effect:restart
+bash setup/lib/restart.sh
+```
+
+## Next Steps
+
+Mid-`/setup`: return to the setup flow. Otherwise wire the channel with `/init-first-agent`
+(or `/manage-channels`). For the Slack agents feature (child bots from
+`create_agent`, shared rooms, canvases), apply the in-tree `/slack-a2a-rooms`
+then `/slack-agent-flow` — the setup wizard does both automatically by default.
+
+## Channel Info
+
+- **type**: `slack`
+- **terminology**: Slack has "workspaces" containing "channels." Channels can be public (#general) or private. The bot can also receive direct messages.
+- **platform-id-format**: `slack:{channelId}` for channels (e.g., `slack:C0123ABC`), `slack:{dmId}` for DMs (e.g., `slack:D0ARWEBLV63`)
+- **how-to-find-id**: Right-click a channel name > "View channel details" — the Channel ID is at the bottom (starts with C). For DMs, the ID starts with D. Or copy the channel link — the ID is the last segment of the URL.
+- **supports-threads**: yes
+- **typical-use**: Interactive chat — team channels or direct messages
+- **default-isolation**: Same agent group for channels where you're the primary user. Separate agent group for channels with different teams or sensitive contexts.
 
 ## Troubleshooting
 
-### Bot not responding
-
-1. Check `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `.env` AND synced to `data/env/env`
-2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
-3. For non-main channels: message must include trigger pattern
-4. Service is running: `launchctl list | grep nanoclaw`
-
-### Bot connected but not receiving messages
-
-1. Verify Socket Mode is enabled in the Slack app settings
-2. Verify the bot is subscribed to the correct events (`message.channels`, `message.groups`, `message.im`)
-3. Verify the bot has been added to the channel
-4. Check that the bot has the required OAuth scopes
-
-### Bot not seeing messages in channels
-
-By default, bots only see messages in channels they've been explicitly added to. Make sure to:
-1. Add the bot to each channel you want it to monitor
-2. Check the bot has `channels:history` and/or `groups:history` scopes
-
-### "missing_scope" errors
-
-If the bot logs `missing_scope` errors:
-1. Go to **OAuth & Permissions** in your Slack app settings
-2. Add the missing scope listed in the error message
-3. **Reinstall the app** to your workspace — scope changes require reinstallation
-4. Copy the new Bot Token (it changes on reinstall) and update `.env`
-5. Sync: `mkdir -p data/env && cp .env data/env/env`
-6. Restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
-
-### Getting channel ID
-
-If the channel ID is hard to find:
-- In Slack desktop: right-click channel → **Copy link** → extract the `C...` ID from the URL
-- In Slack web: the URL shows `https://app.slack.com/client/TXXXXXXX/C0123456789`
-- Via API: `curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/conversations.list" | jq '.channels[] | {id, name}'`
-
-## After Setup
-
-The Slack channel supports:
-- **Public channels** — Bot must be added to the channel
-- **Private channels** — Bot must be invited to the channel
-- **Direct messages** — Users can DM the bot directly
-- **Multi-channel** — Can run alongside WhatsApp or other channels (auto-enabled by credentials)
-
-## Known Limitations
-
-- **Threads are flattened** — Threaded replies are delivered to the agent as regular channel messages. The agent sees them but has no awareness they originated in a thread. Responses always go to the channel, not back into the thread. Users in a thread will need to check the main channel for the bot's reply. Full thread-aware routing (respond in-thread) requires pipeline-wide changes: database schema, `NewMessage` type, `Channel.sendMessage` interface, and routing logic.
-- **No typing indicator** — Slack's Bot API does not expose a typing indicator endpoint. The `setTyping()` method is a no-op. Users won't see "bot is typing..." while the agent works.
-- **Message splitting is naive** — Long messages are split at a fixed 4000-character boundary, which may break mid-word or mid-sentence. A smarter split (on paragraph or sentence boundaries) would improve readability.
-- **No file/image handling** — The bot only processes text content. File uploads, images, and rich message blocks are not forwarded to the agent.
-- **Channel metadata sync is unbounded** — `syncChannelMetadata()` paginates through all channels the bot is a member of, but has no upper bound or timeout. Workspaces with thousands of channels may experience slow startup.
-- **Workspace admin policies not detected** — If the Slack workspace restricts bot app installation, the setup will fail at the "Install to Workspace" step with no programmatic detection or guidance. See SLACK_SETUP.md troubleshooting section.
+- **A token paste is rejected.** Each secret has a fixed shape: the Bot User OAuth Token starts `xoxb-` (OAuth & Permissions, after Install to Workspace), the App-Level Token starts `xapp-` (Basic Information → App-Level Tokens), and the Signing Secret is a hex string (Basic Information). The classic mix-up is pasting a user token (`xoxp-`) instead of the bot token, or the app's Client Secret instead of the Signing Secret.
+- **`auth.test` fails, or `conversations.open` returns no channel.** A failing `auth.test` means the bot token is wrong or the app was never installed to the workspace. An empty `conversations.open` means the `im:write` scope is missing — add it and **reinstall the app**; scope changes only take effect after reinstall, which also mints a new `xoxb-` token to store.
+- **The greeting arrives but your replies vanish.** Sending works with just the bot token; *receiving* needs the event path. Socket Mode: the toggle on, `SLACK_APP_TOKEN` set with `connections:write`, and the bot events (`message.im`, `message.channels`, `message.groups`, `app_mention`) subscribed. Webhook: the Request URL must have passed Slack's challenge and the same events subscribed. Either way, App Home's Messages Tab must be enabled or Slack refuses DMs to the app.
+- **Adapter registered but Slack never connects.** Run `pnpm exec vitest run src/channels/slack-registration.test.ts` — red means the barrel import or the `@chat-adapter/slack` install drifted, so re-run the Apply steps. If green, restart the service (`bash setup/lib/restart.sh`) and check `logs/nanoclaw.error.log`.
+- **Rooms, canvases, or DM onboarding are missing.** Those are the agents feature, not this adapter install — they arrive with `/slack-a2a-rooms` + `/slack-agent-flow` (setup applies both by default). If those skills were applied, check `src/modules/index.ts` carries their module imports, then restart.

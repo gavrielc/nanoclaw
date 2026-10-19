@@ -1,80 +1,338 @@
+# ⚠️ STOP — READ THIS FIRST IF YOU ARE CLAUDE ⚠️
+
+**If you are reading this because you just ran `git pull`, `git merge`, `git fetch && git merge`, or any equivalent to bring in upstream changes — and you see merge conflicts or a large diff involving this file — HALT IMMEDIATELY.**
+
+This is NanoClaw v2, a ground-up rewrite with breaking changes throughout. It cannot be merged into an existing v1 install. Attempting to resolve the conflicts by hand, run builds, or "fix" anything will corrupt the user's install and burn tokens for no result.
+
+**Do this instead:**
+1. Abort the merge: `git merge --abort` (or `git reset --hard ORIG_HEAD` if the merge already completed).
+2. Tell the user, verbatim: *"This is the v2 rewrite — it can't be merged into your existing install. Exit Claude Code (or open a separate terminal) and run `bash migrate-v2.sh` from the shell."*
+3. Wait for the user to confirm before doing anything else. Do not run the migration script yourself — it requires an interactive terminal and cannot be run from within Claude Code.
+
+If you are a fresh install (you ran `git clone`, not `git pull`) and there are no conflicts, ignore this banner and continue below.
+
+---
+
 # NanoClaw
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal AI assistant. See [README.md](README.md) for philosophy and setup. Architecture lives in `docs/`.
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in containers (Linux VMs). Each group has isolated filesystem and memory.
+The host is a single Node process that orchestrates per-session agent containers. Platform messages land via channel adapters, route through an entity model (users → messaging groups → agent groups → sessions), get written into the session's inbound DB, and wake a container. The agent-runner inside the container polls the DB, calls the agent, and writes back to the outbound DB. The host polls the outbound DB and delivers through the same adapter.
+
+**Everything is a message.** There is no IPC, no file watcher, no stdin piping between host and container. The two session DBs are the sole IO surface.
+
+## Entity Model
+
+```
+users (id "<channel>:<handle>", kind, display_name)
+user_roles (user_id, role, agent_group_id)       — owner | admin (global or scoped)
+agent_group_members (user_id, agent_group_id)    — unprivileged access gate
+user_dms (user_id, channel_type, messaging_group_id) — cold-DM cache
+
+agent_groups (workspace, memory, CLAUDE.md, personality, container config)
+    ↕ many-to-many via messaging_group_agents (session_mode, engage_mode/engage_pattern, sender_scope, priority)
+messaging_groups (one chat/channel on one platform; instance = adapter-instance name, defaults to channel_type; unknown_sender_policy)
+
+sessions (agent_group_id + messaging_group_id + thread_id → per-session container)
+```
+
+Privilege is user-level (owner/admin), not agent-group-level. See [docs/isolation-model.md](docs/isolation-model.md) for the three isolation levels (`agent-shared`, `shared`, separate agents).
+
+## Two-DB Session Split
+
+Each session has **two** SQLite files under `data/v2-sessions/<session_id>/`:
+
+- `inbound.db` — host writes, container reads. `messages_in`, delivered, destinations, session_routing.
+- `outbound.db` — container writes, host reads. `messages_out`, processing_ack, session_state, container_state.
+
+Exactly one writer per file — no cross-mount lock contention. Heartbeat is a file touch at `/workspace/.heartbeat`, not a DB update. Host uses even `seq` numbers, container uses odd.
+
+## Central DB
+
+The central database holds everything that isn't per-session: users, user_roles, agent_groups, messaging_groups, wiring, pending_approvals, user_dms, chat_sdk_* (for the Chat SDK bridge), schema_version. SQLite at `data/v2.db` is the default; host code uses the async `DbDriver` boundary. Migrations live at `src/db/migrations/`.
+
+For ad-hoc central queries from skills or scripts, use the in-tree wrapper rather than the `sqlite3` CLI: `pnpm exec tsx scripts/q.ts data/v2.db "<sql>"`. The canonical central path routes through the installed composition; explicit session paths remain direct SQLite. Default output matches `sqlite3 -list` (pipe-separated, no header).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/registry.ts` | Channel registry (self-registration at startup) |
-| `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
-| `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/container-runner.ts` | Spawns agent containers with mounts |
-| `src/task-scheduler.ts` | Runs scheduled tasks |
-| `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
-| `container/skills/` | Skills loaded inside agent containers (browser, status, formatting) |
+| `src/index.ts` | Entry point: init DB, migrations, channel adapters, delivery polls, sweep, shutdown |
+| `src/router.ts` | Inbound routing: messaging group → agent group → session → `inbound.db` → wake |
+| `src/delivery.ts` | Polls `outbound.db`, delivers via adapter, handles system actions (schedule, approvals, etc.) |
+| `src/delivery-guard.ts` | `DeliveryGuardSpec` + `runGuarded` — the guard-consult pipeline for privileged delivery actions (registry stays in `delivery.ts`) |
+| `src/host-sweep.ts` | 60s sweep: `processing_ack` sync, stale detection, due-message wake, recurrence |
+| `src/session-manager.ts` | Resolves sessions; opens `inbound.db` / `outbound.db`; manages heartbeat path |
+| `src/container-runner.ts` | Spawns per-agent-group Docker containers with session DB + outbox mounts; leases the session's gateway contribution and revokes it on exit |
+| `src/container-runtime.ts` | Docker CLI wrapper (runtime binary, host-gateway args, mount args), orphan cleanup |
+| `src/gateway-providers/` | Credential-gateway seam: `GatewayProviderDefinition` + its single registry. One provider per install, selected by `NANOCLAW_GATEWAY_PROVIDER`; overlays append a registration to `installed.ts`. See [docs/gateway-seam.md](docs/gateway-seam.md) |
+| `src/gateway-approval-coordinator.ts` | Core-owned human approval flow every gateway gets: request validation, approver routing, `pending_approvals`, terminal cards, and supervised reconnect of the provider's approval subscription |
+| `src/guard/` | Privileged-action decision seam: `guard(action, input)` → allow \| hold \| deny. Module-edge `guard.ts` adapters (cli, agent-to-agent, self-mod, permissions) define each action's decision; ncl commands + delivery actions demand a guard at registration; approved replays carry the approval row as a grant and re-run the checks. Conformance test: `src/guard/conformance.test.ts` |
+| `src/modules/permissions/access.ts` | `canAccessAgentGroup` — owner / global admin / scoped admin / member resolution against `user_roles` + `agent_group_members` |
+| `src/modules/approvals/primitive.ts` | `pickApprover`, `pickApprovalDelivery`, `requestApproval`, approval-handler registry |
+| `src/command-gate.ts` | Router-side admin command gate — queries `user_roles` directly (no env var, no container-side check) |
+| `src/modules/permissions/user-dm.ts` | Cold-DM resolution + `user_dms` cache |
+| `src/group-init.ts` | Per-agent-group filesystem scaffold (CLAUDE.md, skills) — agent-runner source is a shared read-only mount, not copied per group |
+| `src/db/container-configs.ts` | CRUD for `container_configs` table (per-group container runtime config) |
+| `src/backfill-container-configs.ts` | Migrates legacy `container.json` files into the DB on startup |
+| `src/project-doc-compose.ts` | Composes each group's project document — every instruction source read on the host and inlined into one flat file, no imports |
+| `src/container-restart.ts` | Kill + on-wake respawn for agent group containers |
+| `src/db/` | DB layer — agent_groups, messaging_groups, sessions, container_configs, user_roles, user_dms, pending_*, migrations |
+| `src/channels/` | Channel adapter infra (registry, Chat SDK bridge); specific channel adapters are skill-installed from the `channels` branch |
+| `src/channels/channel-defaults.ts` | Wiring-creation helpers over adapter-declared channel defaults (`resolveWiringDefaults`, `resolveThreadPolicy`, engage validation) |
+| `src/providers/` | Host-side provider container-config (`claude` baked in; `opencode` etc. installed from the `providers` branch) |
+| `setup/gateways/` | Gateway catalog (`gateway.json` discovery), selection/detection, and the skill-driven install used by setup and `/update-nanoclaw` |
+| `container/agent-runner/src/` | Agent-runner: poll loop, formatter, provider abstraction, MCP tools, destinations |
+| `container/skills/` | Container skills mounted into every agent session (`agent-browser`, `frontend-engineer`, `self-customize`, `welcome`; the selected gateway's agent skill and opt-in skills like `vercel-cli`, `slack-formatting` and `whatsapp-formatting` install with the `/add-*` skill that adds their capability) |
+| `groups/<folder>/` | Per-agent-group filesystem (CLAUDE.md, skills) — agent-runner source is a shared read-only mount, not copied per group |
+| `scripts/init-first-agent.ts` | Bootstrap the first DM-wired agent (used by `/init-first-agent` skill) |
+| `scripts/skill-apply.ts` | Deterministic SKILL.md applier — executes `nc:` directive fences; declare/emit core, journaled + idempotent |
+| `scripts/skill-directives.ts` + `scripts/skill-policy.ts` | `nc:` grammar parser + lint; UI-free driver policy derived from document structure (gate confirm, URL offer) |
+| `setup/lib/skill-driver.ts` + `setup/channels/run-channel-skill.ts` | Setup wizard's skill consumer: clack rendering of engine events + the generic channel-install flow |
+| `migrate-v2.sh` + `setup/migrate-v2/` | v1→v2 migration. Standalone script: `bash migrate-v2.sh`. Seeds DB, copies groups/sessions, installs channels, builds container, offers service switchover, then hands off to `/migrate-from-v1` skill for owner setup and CLAUDE.md cleanup. See [docs/migration-dev.md](docs/migration-dev.md). |
+| `nanoclaw.sh --uninstall` + `setup/uninstall/` | Uninstall this copy only (slug-scoped): service, containers + image, `data/`, `logs/`, `groups/`, and whatever the installed gateway skill declares removable. Confirms per group; `--dry-run` previews, `--yes` skips prompts. Other copies and any shared gateway service are untouched. Bypasses bootstrap entirely; `uninstall.sh` is a pointer that execs it. |
 
-## Secrets / Credentials / Proxy (OneCLI)
+## Admin CLI (`ncl`)
 
-API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. Run `onecli --help`.
+`ncl` queries and modifies the central DB — agent groups, messaging groups, wirings, users, roles, and more. On the host it connects via Unix socket (`src/cli/socket-server.ts`); inside containers it uses the session DB transport (`container/agent-runner/src/cli/ncl.ts`).
+
+```
+ncl <resource> <verb> [<id>] [--flags]
+ncl <resource> help
+ncl help
+```
+
+| Resource | Verbs | What it is |
+|----------|-------|------------|
+| groups | list, get, create, update, delete, restart, config get/update, config add-mcp-server/remove-mcp-server, config add-package/remove-package | Agent groups (workspace, personality, container config) |
+| messaging-groups | list, get, create, update, delete | A single chat/channel on one platform |
+| wirings | list, get, create, update, delete | Links a messaging group to an agent group (session mode, triggers) |
+| users | list, get, create, update | Platform identities (`<channel>:<handle>`) |
+| roles | list, grant, revoke | Owner / admin privileges (global or scoped to an agent group) |
+| members | list, add, remove | Unprivileged access gate for an agent group |
+| destinations | list, add, remove | Where an agent group can send messages |
+| sessions | list, get | Active sessions (read-only) |
+| tasks | list, get, create, update, cancel, pause, resume, delete, run, append-log | Scheduled tasks for an agent group |
+| user-dms | list | Cold-DM cache (read-only) |
+| dropped-messages | list | Messages from unregistered senders (read-only) |
+| approvals | list, get | Pending approval requests (read-only) |
+| templates | list | Agent templates on this machine; `--registry` lists the public library |
+
+Key files: `src/cli/dispatch.ts` (dispatcher + approval handler), `src/cli/crud.ts` (generic CRUD registration), `src/cli/resources/` (per-resource definitions).
+
+## Channels and Providers (skill-installed)
+
+Trunk does not ship any specific channel adapter or non-default agent provider. The codebase is the registry/infra; the actual adapters and providers live on long-lived sibling branches and get copied in by skills:
+
+- **`channels` branch** — Discord, Slack, Telegram, WhatsApp, Teams, Linear, GitHub, iMessage, Webex, Resend, Matrix, Google Chat, WhatsApp Cloud, Signal, WeChat, DeltaChat, Emacs (+ helpers, tests, channel-specific setup steps). Installed via `/add-<channel>` skills.
+- **`providers` branch** — OpenCode (and any future non-default agent providers). Installed via `/add-opencode`.
+
+Each `/add-<name>` skill is idempotent: `git fetch origin <branch>` → copy module(s) into the standard paths → append a self-registration import to the relevant barrel → `pnpm install <pkg>@<pinned-version>` → build. Channel skills carry these steps as `nc:` directive fences: setup applies them via the engine (`scripts/skill-apply.ts`), an agent applies the prose — same install either way. See [docs/skill-directives.md](docs/skill-directives.md).
+
+**Channel defaults.** Each adapter declares its wiring-time defaults (`ChannelDefaults`: per DM/group context — engage mode/pattern, thread policy, unknown-sender policy — plus mention signaling). Exactly two levels: the adapter declaration, and the per-wiring override chosen at creation — no per-instance DB config table. Undeclared (stale) adapters resolve through a behavior-faithful fallback, so a trunk update alone changes nothing. See [docs/api-details.md](docs/api-details.md#channel-defaults) and `src/channels/channel-defaults.ts`.
+
+## Self-Modification
+
+One tier of agent self-modification today:
+
+1. **`install_packages` / `add_mcp_server`** — changes to the per-agent-group container config in the DB (apt/npm deps, wire an existing MCP server). Single admin approval per request; on approve, the handler in `src/modules/self-mod/apply.ts` rebuilds the image when needed (`install_packages` only), writes an `on_wake` message, kills the container, and respawns via `onExit` callback. The on-wake message is only picked up by the fresh container's first poll — dying containers can never steal it. `container/agent-runner/src/mcp-tools/self-mod.ts`.
+
+A second tier (direct source-level self-edits via a draft/activate flow) is planned but not yet implemented.
+
+## Container Config
+
+Per-agent-group container runtime config (provider, model, packages, MCP servers, mounts, etc.) lives in the `container_configs` table in the central DB. Materialized to `groups/<folder>/container.json` at spawn time so the container runner can read it. Managed via `ncl groups config get/update` and the self-mod MCP tools.
+
+**`cli_scope`** — controls what the agent can do with `ncl` from inside the container:
+
+| Value | Behavior |
+|-------|----------|
+| `disabled` | Agent never learns about ncl (instructions excluded from CLAUDE.md). Host dispatch rejects any `cli_request`. |
+| `group` (default) | Agent can access `groups`, `sessions`, `destinations`, `members`, `tasks`, `templates` only, scoped to its own agent group. `--id` and group args are auto-filled. Cross-group access rejected. `cli_scope` changes blocked. |
+| `global` | Unrestricted. Set automatically for owner agent groups via `init-first-agent`. |
+
+Key files: `src/db/container-configs.ts`, `src/container-config.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/project-doc-compose.ts` (instructions exclusion).
+
+## Container Restart
+
+`ncl groups restart --id <group-id> [--rebuild] [--message <text>]`. Kills running containers; if `--message` is provided, writes an `on_wake` message and respawns via `onExit` callback. Without `--message`, containers come back on the next user message. From inside a container, `--id` is auto-filled and only the calling session is restarted.
+
+The `on_wake` column on `messages_in` ensures wake messages are only picked up by a fresh container's first poll iteration. This prevents the race where a dying container (still in its SIGTERM grace period) could steal the message. `killContainer` accepts an optional `onExit` callback that fires after the process exits, guaranteeing the old container is gone before the new one spawns.
+
+Key files: `src/container-restart.ts`, `src/container-runner.ts` (`killContainer`), `container/agent-runner/src/db/messages-in.ts` (`getPendingMessages`).
+
+## Secrets / Credentials / Gateways
+
+API keys, OAuth tokens, and auth credentials are managed by a **credential gateway** — never by NanoClaw and never by an agent. Secrets are injected at the network boundary at request time; none are passed in env vars or through chat context.
+
+NanoClaw ships the seam, not a gateway. One gateway is installed per copy from its `/add-<gateway>` skill (`/add-onecli`, `/add-iron-proxy`), and `NANOCLAW_GATEWAY_PROVIDER` in `.env` names the one this copy runs. With none registered the host refuses to start — there is no implicit default and no open-egress fallback.
+
+The container agent learns the gateway's behavior from that gateway's own container skill, which the install copies into `container/skills/`. Only the selected gateway's skills reach an agent, so a container is never told about a proxy it is not behind.
+
+**Read [docs/gateway-seam.md](docs/gateway-seam.md) before touching any of this.** It covers the provider contract, what core owns versus what a provider owns, the availability model, and the `gateway-trust` mount class. Operational detail for a specific gateway — vault modes, approval policy, dashboards — lives in that gateway's skill, not here.
+
+### Approvals
+
+Approval-gating a credentialed action is a **two-sided** flow:
+
+- **Gateway-side**: the gateway decides *when* to hold a request and emit a pending approval. How you configure that is gateway-specific; see the installed skill.
+- **Host-side**: `src/gateway-approval-coordinator.ts` owns the human flow for every gateway — validation, approver resolution via `pickApprover` + `pickApprovalDelivery`, the `pending_approvals` row, the card, click authorization, expiry, and the sweep of rows a previous host left behind. Approvers come from the `user_roles` table: scoped admins for the agent group → global admins → owners. There is no env var like `NANOCLAW_ADMIN_USER_IDS`.
+
+The subscription is supervised: if the provider's bridge ends, holds are denied, running sessions stop, and session admission closes until a reconnect proves the bridge is back. If the gateway has no rule asking for approval, the host side never fires regardless of how it is wired.
 
 ## Skills
 
-Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy and guidelines.
+Five types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy.
 
-- **Feature skills** — merge a `skill/*` branch to add capabilities (e.g. `/add-telegram`, `/add-slack`)
-- **Utility skills** — ship code files alongside SKILL.md (e.g. `/claw`)
-- **Operational skills** — instruction-only workflows, always on `main` (e.g. `/setup`, `/debug`)
-- **Container skills** — loaded inside agent containers at runtime (`container/skills/`)
+- **Channel/provider install skills** — copy the relevant module(s) in from the `channels` or `providers` branch, wire imports, install pinned deps (e.g. `/add-discord`, `/add-slack`, `/add-whatsapp`, `/add-opencode`).
+- **Utility skills** — ship code files alongside `SKILL.md` (e.g. a `scripts/` CLI or helper).
+- **Gateway install skills** — install the one credential gateway this copy runs. Unlike channel and provider skills these carry their implementation in the skill's own `payload/`, on `main` — no registry branch. Discovered by their `gateway.json` (e.g. `/add-onecli`, `/add-iron-proxy`).
+- **Operational skills** — instruction-only workflows (`/setup`, `/debug`, `/customize`, `/init-first-agent`, `/manage-channels`, `/update-nanoclaw`).
+- **Container skills** — loaded inside agent containers at runtime (`container/skills/`: `agent-browser`, `frontend-engineer`, `self-customize`, `welcome`; the selected gateway's agent skill and opt-in skills like `vercel-cli` and the channel formatters are copied in by the `/add-*` skill that adds their capability).
 
 | Skill | When to Use |
 |-------|-------------|
-| `/setup` | First-time installation, authentication, service configuration |
-| `/customize` | Adding channels, integrations, changing behavior |
+| `/setup` | First-time install, auth, service config |
+| `/init-first-agent` | Bootstrap the first DM-wired agent (channel pick → identity → wire → welcome DM) |
+| `/manage-channels` | Wire channels to agent groups with isolation level decisions |
+| `/customize` | Adding channels, integrations, behavior changes |
 | `/debug` | Container issues, logs, troubleshooting |
-| `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
-| `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials to it |
-| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
-| `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
+| `/update-nanoclaw` | Bring upstream updates into a customized install |
+| `/add-onecli`, `/add-iron-proxy` | Install or refresh this copy's credential gateway |
+| `/migrate-memory` | Carry a group's agent memory across a provider switch (operator-run, both directions) |
 
 ## Contributing
 
-Before creating a PR, adding a skill, or preparing any contribution, you MUST read [CONTRIBUTING.md](CONTRIBUTING.md). It covers accepted change types, the four skill types and their guidelines, SKILL.md format rules, PR requirements, and the pre-submission checklist (searching for existing PRs/issues, testing, description format).
+Before creating a PR, adding a skill, or preparing any contribution, you MUST read [CONTRIBUTING.md](CONTRIBUTING.md). It covers accepted change types, the skill types and their guidelines, `SKILL.md` format rules, and the pre-submission checklist.
+
+## PR Hygiene
+
+Before creating a PR, run these checks:
+
+```bash
+git diff upstream/main --stat HEAD
+git log upstream/main..HEAD --oneline
+```
+
+Show the output and wait for approval. Installation-specific files (group files, .claude/settings.json, local configs) should not be included.
 
 ## Development
 
-Run commands directly—don't tell the user to run them.
+Run commands directly — don't tell the user to run them.
 
 ```bash
-npm run dev          # Run with hot reload
-npm run build        # Compile TypeScript
-./container/build.sh # Rebuild agent container
+# Host (Node + pnpm)
+pnpm run dev          # Host via tsx (no watch)
+pnpm run build        # Compile host TypeScript (src/)
+./container/build.sh  # Rebuild agent container image (nanoclaw-agent:latest)
+pnpm test             # Host tests (vitest)
+
+# Agent-runner (Bun — separate package tree under container/agent-runner/)
+cd container/agent-runner && bun install   # After editing agent-runner deps
+cd container/agent-runner && bun test      # Container tests (bun:test)
 ```
+
+Container typecheck is a separate tsconfig — if you edit `container/agent-runner/src/`, run `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` from root (or `bun run typecheck` from `container/agent-runner/`).
 
 Service management:
 ```bash
 # macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+launchctl load   ~/Library/LaunchAgents/com.nanoclaw.plist
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 
 # Linux (systemd)
-systemctl --user start nanoclaw
-systemctl --user stop nanoclaw
-systemctl --user restart nanoclaw
+systemctl --user start|stop|restart nanoclaw
 ```
 
 ## Troubleshooting
 
-**WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
+Check these first when something goes wrong:
+
+| What | Where |
+|------|-------|
+| Host logs | `logs/nanoclaw.error.log` first (delivery failures, crash-loop backoff, warnings), then `logs/nanoclaw.log` for the full routing chain |
+| Setup logs | `logs/setup.log` (overall), `logs/setup-steps/*.log` (per-step: bootstrap, environment, container, gateway, mounts, service, etc.) |
+| Session DBs | `data/v2-sessions/<agent-group>/<session>/` — `inbound.db` (`messages_in`: did the message reach the container?), `outbound.db` (`messages_out`: did the agent produce a response?) |
+
+Note: container logs are lost after the container exits (`--rm` flag). If the agent silently failed inside the container, there's no persistent log to inspect.
+
+## Timestamps
+
+Two rules, no exceptions:
+
+- **Storage**: every timestamp written from JS is `new Date().toISOString()` (ISO-8601 UTC with `Z`). Central SQL receives that timestamp as a parameter; never use `datetime('now')` or `strftime(...)` there because they are SQLite-specific and the naive shape is misparsed as local time by `new Date()`. SQLite-only mailbox SQL may use `strftime('%Y-%m-%dT%H:%M:%fZ','now')`. SQLite-only comparisons wrap both sides in `datetime()`.
+- **Display**: anything shown to an agent or a user renders in the install timezone — `formatLocalTime` (prose) or `formatLocalStamp` (log lines) from `src/timezone.ts` / `container/agent-runner/src/timezone.ts`. `--json` output, DB values, and operator logs stay ISO.
+
+An agent group can override the install timezone (`ncl groups config update --timezone <IANA>`, `""` clears; approval-gated for agent callers). The override grounds that group's scheduling (cron interpretation, `--process-after`, run-log stamps — effective immediately) and the container's `TZ` env (effective on respawn). Host-side operator display (`ncl` human output) stays in the install timezone. Resolution: `resolveGroupTimezone` in `src/container-config.ts` — group override → install global.
+
+## Supply Chain Security (pnpm)
+
+This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspace.yaml`. New package versions must exist on the npm registry for 3 days before pnpm will resolve them.
+
+**Rules — do not bypass without explicit human approval:**
+- **`minimumReleaseAgeExclude`**: Never add entries without human sign-off. If a package must bypass the release age gate, the human must approve and the entry must pin the exact version being excluded (e.g. `package@1.2.3`), never a range.
+- **`onlyBuiltDependencies`**: Never add packages to this list without human approval — build scripts execute arbitrary code during install.
+- **`pnpm install --frozen-lockfile`** should be used in CI, automation, and container builds. Never run bare `pnpm install` in those contexts.
+
+## Docs Index
+
+| Doc | Purpose |
+|-----|---------|
+| [docs/architecture.md](docs/architecture.md) | Full architecture writeup |
+| [docs/api-details.md](docs/api-details.md) | Host API + DB schema details |
+| [docs/db.md](docs/db.md) | DB architecture overview: three-DB model, cross-mount rules, readers/writers map |
+| [docs/db-central.md](docs/db-central.md) | Central DB (`data/v2.db`) — every table + migration system |
+| [docs/db-session.md](docs/db-session.md) | Per-session `inbound.db` + `outbound.db` schemas + seq parity |
+| [docs/agent-runner-details.md](docs/agent-runner-details.md) | Agent-runner internals + MCP tool interface |
+| [docs/gateway-seam.md](docs/gateway-seam.md) | Credential-gateway seam: the provider contract, what core owns, availability, selection |
+| [docs/isolation-model.md](docs/isolation-model.md) | Three-level channel isolation model |
+| [docs/setup-wiring.md](docs/setup-wiring.md) | What's wired, what's open in the setup flow |
+| [docs/architecture-diagram.md](docs/architecture-diagram.md) | Diagram version of the architecture |
+| [docs/build-and-runtime.md](docs/build-and-runtime.md) | Runtime split (Node host + Bun container), lockfiles, image build surface, CI, key invariants |
+| [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) | v1→v2 architecture diff — vocabulary for where v1 things moved |
+| [docs/migration-dev.md](docs/migration-dev.md) | Migration development guide — testing, debugging, dev loop |
+| [docs/provider-migration.md](docs/provider-migration.md) | Switching a live agent group between providers (e.g. Claude → Codex) — what carries over, rollback |
+| [docs/customizing.md](docs/customizing.md) | Short intro to customizing via skills |
+| [docs/skills-model.md](docs/skills-model.md) | The skills model in full: recipes, tests, upgrades, migrations |
+| [docs/skill-guidelines.md](docs/skill-guidelines.md) | Authoritative checklist for writing a skill |
+| [docs/skill-directives.md](docs/skill-directives.md) | `nc:` directive reference: fence grammar, the eight kinds, effects, guards, lint |
+| [docs/skill-engine-seam.md](docs/skill-engine-seam.md) | Skill-engine consumer contract (wizard / pipeline / agent-relay) + boundary-rule rationale |
+| [docs/templates.md](docs/templates.md) | Agent templates: what they are, stamping via `ncl groups create --template`, the setup wizard and an agent's `create_agent`, the gateway/MCP-credential model, supported providers, and how to contribute one |
+| [docs/hardened-image.md](docs/hardened-image.md) | Opt-in: pull the agent image from a registry instead of building it |
 
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+
+## Container Runtime (Bun)
+
+The agent container runs on **Bun**; the host runs on **Node** (pnpm). They communicate only via session DBs — no shared modules. Details and rationale: [docs/build-and-runtime.md](docs/build-and-runtime.md).
+
+**Gotchas — trigger + action:**
+
+- **Adding or bumping a runtime dep in `container/agent-runner/`** → edit `package.json`, then `cd container/agent-runner && bun install` and commit the updated `bun.lock`. Do not run `pnpm install` there — agent-runner is not a pnpm workspace.
+- **Bumping `@anthropic-ai/claude-agent-sdk`, `@modelcontextprotocol/sdk`, or any agent-runner runtime dep** → no `minimumReleaseAge` policy applies to this tree. Check the release date on npm, pin deliberately, never `bun update` blindly.
+- **Writing a new named-param SQL insert/update in the container** → use `$name` in both SQL and JS keys: `.run({ $id: msg.id })`. `bun:sqlite` does not auto-strip the prefix the way `better-sqlite3` does on the host. Positional `?` params work normally.
+- **Adding a test in `container/agent-runner/src/`** → import from `bun:test`, not `vitest`. Vitest runs on Node and can't load `bun:sqlite`. `vitest.config.ts` excludes this tree.
+- **Adding a Node CLI the agent invokes at runtime** (like `agent-browser`, `claude-code`, `vercel`) → put it in the Dockerfile's pnpm global-install block, pinned to an exact version via a new `ARG`. Don't use `bun install -g` — that bypasses the pnpm supply-chain policy.
+- **Changing the Dockerfile entrypoint or the dynamic-spawn command** (`src/container-runner.ts` line ~503) → keep `exec bun ...` so signals forward cleanly. The image has no `/app/dist`; don't reintroduce a tsc build step.
+- **Changing session-DB pragmas** (`container/agent-runner/src/mailbox/sqlite/connection.ts`) → `journal_mode=DELETE` is load-bearing for cross-mount visibility. Read the comment block at the top of the file first.
+
+## CJK font support
+
+Agent containers ship without CJK fonts by default (~200MB saved). If you notice signals the user works with Chinese/Japanese/Korean content — conversing in CJK, CJK timezone (e.g., `Asia/Tokyo`, `Asia/Shanghai`, `Asia/Seoul`, `Asia/Taipei`, `Asia/Hong_Kong`), system locale hint, or mentions of needing to render CJK in screenshots/PDFs/scraped pages — offer to enable it:
+
+```bash
+# Ensure .env has INSTALL_CJK_FONTS=true (overwrite or append)
+grep -q '^INSTALL_CJK_FONTS=' .env && sed -i.bak 's/^INSTALL_CJK_FONTS=.*/INSTALL_CJK_FONTS=true/' .env && rm -f .env.bak || echo 'INSTALL_CJK_FONTS=true' >> .env
+
+# Rebuild and restart so new sessions pick up the new image
+./container/build.sh
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
+# systemctl --user restart nanoclaw                # Linux
+```
+
+`container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through as a Docker build-arg. Without CJK fonts, Chromium-rendered screenshots and PDFs containing CJK text show tofu (empty rectangles) instead of characters.

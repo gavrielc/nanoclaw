@@ -5,27 +5,66 @@
 import fs from 'fs';
 import path from 'path';
 
-import Database from 'better-sqlite3';
-
-import { STORE_DIR } from '../src/config.js';
-import { logger } from '../src/logger.js';
+import { envValue } from '../src/env.js';
+import { log } from '../src/log.js';
+import { inspectCentralDb } from './central-db-inspection.js';
 import { commandExists, getPlatform, isHeadless, isWSL } from './platform.js';
 import { emitStatus } from './status.js';
+
+/**
+ * Read a single key from `.env` on disk (not process.env).
+ * Returns the value or null if the key isn't set / file doesn't exist.
+ *
+ * Delegates to the host's parser so both readers agree — notably on quoted
+ * values, which this one used to return with the quotes still attached.
+ */
+export function readEnvKey(key: string, projectRoot?: string): string | null {
+  return envValue(key, projectRoot) ?? null;
+}
+
+/**
+ * Set (or replace) a single `KEY=value` line in `.env`, creating the file if
+ * needed. Non-secret config only — secrets belong in the selected gateway.
+ */
+export function upsertEnvKey(key: string, value: string, projectRoot?: string): void {
+  const envPath = path.join(projectRoot ?? process.cwd(), '.env');
+  let content = '';
+  try {
+    content = fs.readFileSync(envPath, 'utf-8');
+  } catch {
+    /* no .env yet */
+  }
+  const line = `${key}=${value}`;
+  const lines = content.split('\n');
+  const idx = lines.findIndex((l) => l.trim().startsWith(`${key}=`));
+  if (idx >= 0) lines[idx] = line;
+  else {
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+    lines.push(line);
+  }
+  fs.writeFileSync(envPath, lines.join('\n') + '\n');
+}
+
+export async function detectExistingDisplayName(projectRoot: string): Promise<string | null> {
+  return (await inspectCentralDb(projectRoot)).displayName;
+}
+
+export async function detectRegisteredGroups(projectRoot: string): Promise<boolean> {
+  if (fs.existsSync(path.join(projectRoot, 'data', 'registered_groups.json'))) {
+    return true;
+  }
+
+  return (await inspectCentralDb(projectRoot)).registeredGroups > 0;
+}
 
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
 
-  logger.info('Starting environment check');
+  log.info('Starting environment check');
 
   const platform = getPlatform();
   const wsl = isWSL();
   const headless = isHeadless();
-
-  // Check Apple Container
-  let appleContainer: 'installed' | 'not_found' = 'not_found';
-  if (commandExists('container')) {
-    appleContainer = 'installed';
-  }
 
   // Check Docker
   let docker: 'running' | 'installed_not_running' | 'not_found' = 'not_found';
@@ -45,49 +84,35 @@ export async function run(_args: string[]): Promise<void> {
   const authDir = path.join(projectRoot, 'store', 'auth');
   const hasAuth = fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
 
-  let hasRegisteredGroups = false;
-  // Check JSON file first (pre-migration)
-  if (fs.existsSync(path.join(projectRoot, 'data', 'registered_groups.json'))) {
-    hasRegisteredGroups = true;
-  } else {
-    // Check SQLite directly using better-sqlite3 (no sqlite3 CLI needed)
-    const dbPath = path.join(STORE_DIR, 'messages.db');
-    if (fs.existsSync(dbPath)) {
-      try {
-        const db = new Database(dbPath, { readonly: true });
-        const row = db
-          .prepare('SELECT COUNT(*) as count FROM registered_groups')
-          .get() as { count: number };
-        if (row.count > 0) hasRegisteredGroups = true;
-        db.close();
-      } catch {
-        // Table might not exist yet
-      }
-    }
-  }
+  const hasRegisteredGroups = await detectRegisteredGroups(projectRoot);
 
-  logger.info(
-    {
-      platform,
-      wsl,
-      appleContainer,
-      docker,
-      hasEnv,
-      hasAuth,
-      hasRegisteredGroups,
-    },
-    'Environment check complete',
-  );
+  // Check for existing OpenClaw installation
+  const homedir = (await import('os')).homedir();
+  const openClawPath = fs.existsSync(path.join(homedir, '.openclaw'))
+    ? path.join(homedir, '.openclaw')
+    : fs.existsSync(path.join(homedir, '.clawdbot'))
+      ? path.join(homedir, '.clawdbot')
+      : null;
+
+  log.info('Environment check complete', {
+    platform,
+    wsl,
+    docker,
+    hasEnv,
+    hasAuth,
+    hasRegisteredGroups,
+    openClawPath,
+  });
 
   emitStatus('CHECK_ENVIRONMENT', {
     PLATFORM: platform,
     IS_WSL: wsl,
     IS_HEADLESS: headless,
-    APPLE_CONTAINER: appleContainer,
     DOCKER: docker,
     HAS_ENV: hasEnv,
     HAS_AUTH: hasAuth,
     HAS_REGISTERED_GROUPS: hasRegisteredGroups,
+    OPENCLAW_PATH: openClawPath ?? 'none',
     STATUS: 'success',
     LOG: 'logs/setup.log',
   });

@@ -1,203 +1,166 @@
 ---
 name: add-discord
-description: Add Discord bot channel integration to NanoClaw.
+description: Add Discord bot channel integration via Chat SDK.
 ---
 
 # Add Discord Channel
 
-This skill adds Discord support to NanoClaw, then walks through interactive setup.
+Adds Discord bot support via the Chat SDK bridge. NanoClaw doesn't ship channels
+in trunk — this skill copies the Discord adapter in from the `channels` branch.
 
-## Phase 1: Pre-flight
+The mechanical steps under **Apply** carry `nc:` directive fences: an agent
+reads the prose and applies them, and a parser can apply them deterministically
+from the same document. Every directive is idempotent, so the whole skill is
+safe to re-run; anything a parser can't apply falls back to the prose beside it.
 
-### Check if already applied
+## Apply
 
-Check if `src/channels/discord.ts` exists. If it does, skip to Phase 3 (Setup). The code changes are already in place.
+### 1. Copy the adapter and its registration test
 
-### Ask the user
+Fetch the `channels` branch and copy the Discord adapter and its registration
+test into `src/channels/` (overwrite — the branch is canonical):
 
-Use `AskUserQuestion` to collect configuration:
-
-AskUserQuestion: Do you have a Discord bot token, or do you need to create one?
-
-If they have one, collect it now. If not, we'll create one in Phase 3.
-
-## Phase 2: Apply Code Changes
-
-### Ensure channel remote
-
-```bash
-git remote -v
+```nc:copy from-branch:channels
+src/channels/discord.ts
+src/channels/discord-registration.test.ts
 ```
 
-If `discord` is missing, add it:
+### 2. Register the adapter
 
-```bash
-git remote add discord https://github.com/qwibitai/nanoclaw-discord.git
+Append the self-registration import to the channel barrel (skipped if the line
+is already present). This one line is the skill's only reach-in into core:
+
+```nc:append to:src/channels/index.ts
+import './discord.js';
 ```
 
-### Merge the skill branch
+### 3. Install the adapter package
 
-```bash
-git fetch discord main
-git merge discord/main || {
-  git checkout --theirs package-lock.json
-  git add package-lock.json
-  git merge --continue
-}
+Pinned to an exact version — the supply-chain policy rejects ranges and `latest`:
+
+```nc:dep
+@chat-adapter/discord@4.29.0
 ```
 
-This merges in:
-- `src/channels/discord.ts` (DiscordChannel class with self-registration via `registerChannel`)
-- `src/channels/discord.test.ts` (unit tests with discord.js mock)
-- `import './discord.js'` appended to the channel barrel file `src/channels/index.ts`
-- `discord.js` npm dependency in `package.json`
-- `DISCORD_BOT_TOKEN` in `.env.example`
+### 4. Build and validate
 
-If the merge reports conflicts, resolve them by reading the conflicted files and understanding the intent of both sides.
+Build first: it guards the typed `createChatSdkBridge(...)` core call and proves
+the dependency is installed. Then run the one integration test.
 
-### Validate code changes
-
-```bash
-npm install
-npm run build
-npx vitest run src/channels/discord.test.ts
+```nc:run effect:build
+pnpm run build
+```
+```nc:run effect:test
+pnpm exec vitest run src/channels/discord-registration.test.ts
 ```
 
-All tests must pass (including the new Discord tests) and build must be clean before proceeding.
+`discord-registration.test.ts` imports the real channel barrel and asserts the
+registry contains `discord`. It goes red if the import line is deleted or drifts,
+if the barrel fails to evaluate, or if `@chat-adapter/discord` isn't installed
+(the import throws) — so it also covers the dependency from step 3. End-to-end
+delivery against a real server is verified manually once the service runs.
 
-## Phase 3: Setup
+## Credentials
 
-### Create Discord Bot (if needed)
+Discord app setup is human and interactive — no parser can click through the
+Discord Developer Portal. The adapter is installed and registered, but it can't
+receive a message until the bot exists, has Message Content Intent, and shares a
+server with you. Tell the user:
 
-If the user doesn't have a bot token, tell them:
-
-> I need you to create a Discord bot:
->
-> 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-> 2. Click **New Application** and give it a name (e.g., "Andy Assistant")
-> 3. Go to the **Bot** tab on the left sidebar
-> 4. Click **Reset Token** to generate a new bot token — copy it immediately (you can only see it once)
-> 5. Under **Privileged Gateway Intents**, enable:
->    - **Message Content Intent** (required to read message text)
->    - **Server Members Intent** (optional, for member display names)
-> 6. Go to **OAuth2** > **URL Generator**:
->    - Scopes: select `bot`
->    - Bot Permissions: select `Send Messages`, `Read Message History`, `View Channels`
->    - Copy the generated URL and open it in your browser to invite the bot to your server
-
-Wait for the user to provide the token.
-
-### Configure environment
-
-Add to `.env`:
-
-```bash
-DISCORD_BOT_TOKEN=<their-token>
+```nc:operator
+Create the Discord bot:
+1. Go to https://discord.com/developers/applications → New Application. Name it (e.g. "NanoClaw Assistant").
+2. Bot tab → Add Bot if needed → Reset Token, then copy the Bot Token (it's shown only once).
+3. Bot tab → Privileged Gateway Intents → enable Message Content Intent.
+4. OAuth2 → URL Generator → Scopes: bot; Bot Permissions: Send Messages, Read Message History, Add Reactions, Attach Files, Use Slash Commands.
+5. Open the generated URL and invite the bot to a server you're also in (a personal server is fine) — the bot can only DM you once you share a server.
 ```
 
-Channels auto-enable when their credentials are present — no extra configuration needed.
+Paste the Bot Token (it's shown only once). You don't paste the Application ID or
+the Public Key by hand — the bot's own application record carries both, so a
+single call derives them from the token:
 
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
+```nc:prompt bot_token secret validate:^[A-Za-z0-9._-]{50,}$
+Paste the Bot Token — Bot tab. Click `Reset Token` if you need a new one.
 ```
 
-The container reads environment from `data/env/env`, not `.env` directly.
+Read the application's own record. `GET /oauth2/applications/@me` returns the
+Application ID (`id`), the Public Key (`verify_key`), and your own account as the
+app's owner (`owner.id`) — so the App ID, the Public Key, and your Discord user ID
+all come from this one call instead of being copied by hand. A bad token fails
+here, before the restart, rather than silently later:
 
-### Build and restart
-
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+```nc:run capture:application_id=.id,public_key=.verify_key,owner_handle=.owner.id effect:fetch
+curl -sf https://discord.com/api/v10/oauth2/applications/@me -H "Authorization: Bot {{bot_token}}"
 ```
 
-## Phase 4: Registration
+Store the token and the two derived credentials — the adapter reads them from
+`.env` and fails to start without `DISCORD_PUBLIC_KEY` and `DISCORD_APPLICATION_ID`
+(set-if-absent, so a value you've already filled in is never overwritten):
 
-### Get Channel ID
+```nc:env-set
+DISCORD_BOT_TOKEN={{bot_token}}
+DISCORD_APPLICATION_ID={{application_id}}
+DISCORD_PUBLIC_KEY={{public_key}}
+```
+## Restart
 
-Tell the user:
+Restart the service so it loads the Discord adapter and the credentials you just
+stored, and wait for its CLI socket before resolving:
 
-> To get the channel ID for registration:
->
-> 1. In Discord, go to **User Settings** > **Advanced** > Enable **Developer Mode**
-> 2. Right-click the text channel you want the bot to respond in
-> 3. Click **Copy Channel ID**
->
-> The channel ID will be a long number like `1234567890123456`.
-
-Wait for the user to provide the channel ID (format: `dc:1234567890123456`).
-
-### Register the channel
-
-The channel ID, name, and folder name are needed. Use `npx tsx setup/index.ts --step register` with the appropriate flags.
-
-For a main channel (responds to all messages):
-
-```bash
-npx tsx setup/index.ts --step register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_main" --trigger "@${ASSISTANT_NAME}" --channel discord --no-trigger-required --is-main
+```nc:run effect:restart
+bash setup/lib/restart.sh
 ```
 
-For additional channels (trigger-only):
+## Invite the bot to a shared server
 
-```bash
-npx tsx setup/index.ts --step register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel discord
+The bot can only DM you once it shares a server with you. If you didn't already
+invite it via the OAuth2 URL Generator while setting up the app, do it now: add
+the bot to a server you're also in (a personal server is fine). Tell the user:
+
+```nc:operator
+Open the invite link — https://discord.com/oauth2/authorize?client_id={{application_id}}&scope=bot&permissions=2147584064 — and add the bot to a server you're also in (a personal server works fine); the bot can only DM you once you share a server. If you already invited it while setting up the app, you can skip this.
 ```
 
-## Phase 5: Verify
+## Resolve your DM channel
 
-### Test the connection
+The agent talks to you in your direct-message channel with the bot. Your Discord
+user ID was already derived as the application's owner (`owner_handle`), so all
+that's left is to open the DM and read back its channel id.
 
-Tell the user:
+Open the DM with `POST /users/@me/channels` and take the channel id it returns as
+the conversation address `discord:@me:<channelId>` (if Discord refuses, the bot
+doesn't share a server with you yet — invite it, then retry):
 
-> Send a message in your registered Discord channel:
-> - For main channel: Any message works
-> - For non-main: @mention the bot in Discord
->
-> The bot should respond within a few seconds.
-
-### Check logs if needed
-
-```bash
-tail -f logs/nanoclaw.log
+```nc:run capture:platform_id effect:fetch
+curl -s -X POST https://discord.com/api/v10/users/@me/channels -H "Authorization: Bot {{bot_token}}" -H "Content-Type: application/json" -d '{"recipient_id":"{{owner_handle}}"}' | jq -er '"discord:@me:" + .id'
 ```
+
+`owner_handle` and `platform_id` are what the owner-wiring step needs. The
+greeting goes out over the DM channel, which works as soon as the bot shares a
+server with you.
+
+## Next Steps
+
+If you're in the middle of `/setup`, return to the setup flow now. Otherwise wire
+this channel with `/init-first-agent` (or `/manage-channels`).
+
+## Channel Info
+
+- **type**: `discord`
+- **terminology**: Discord has "servers" (also called "guilds") containing "channels." Text channels start with #. The bot can also receive direct messages.
+- **platform-id-format**: `discord:@me:{dmChannelId}` for the owner DM (e.g. `discord:@me:1399...`), `discord:{guildId}:{channelId}` for server channels — both IDs required for channels.
+- **how-to-find-id**: Enable Developer Mode in Discord (Settings > App Settings > Advanced > Developer Mode). Then right-click a server and select "Copy Server ID" for the guild ID, and right-click the text channel and select "Copy Channel ID." The platform ID format used in registration is `discord:{guildId}:{channelId}` — both IDs are required.
+- **supports-threads**: yes
+- **typical-use**: Interactive chat — server channels or direct messages
+- **default-isolation**: Same agent group for your personal server. Separate agent group for servers with different communities or where different members have different information boundaries.
 
 ## Troubleshooting
 
-### Bot not responding
+**The Bot Token paste is rejected.** The token must be at least 50 characters of letters, digits, dots, underscores, and hyphens — a real Bot Token has two `.` separators. It lives under **Bot → Reset Token** in the Developer Portal and is shown only once; reset to get a fresh one. The short numeric **Application ID** and the **OAuth2 Client Secret** are different values and won't pass.
 
-1. Check `DISCORD_BOT_TOKEN` is set in `.env` AND synced to `data/env/env`
-2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'dc:%'"`
-3. For non-main channels: message must include trigger pattern (@mention the bot)
-4. Service is running: `launchctl list | grep nanoclaw`
-5. Verify the bot has been invited to the server (check OAuth2 URL was used)
+**`applications/@me` returns 401.** The token was reset since you copied it, or a stray space/newline came along with the paste. Reset the token in the Bot tab and re-run the check — it fails here on purpose, before the restart, while the credential is still cheap to fix.
 
-### Bot only responds to @mentions
+**The bot is online but never sees your messages.** Two usual causes: Message Content Intent is off (Bot tab → Privileged Gateway Intents), so message bodies arrive empty and nothing triggers; or the bot doesn't share a server with you — in which case `POST /users/@me/channels` also refuses. Open the invite URL and add the bot to a server you're in, then retry.
 
-This is the default behavior for non-main channels (`requiresTrigger: true`). To change:
-- Update the registered group's `requiresTrigger` to `false`
-- Or register the channel as the main channel
-
-### Message Content Intent not enabled
-
-If the bot connects but can't read messages, ensure:
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Select your application > **Bot** tab
-3. Under **Privileged Gateway Intents**, enable **Message Content Intent**
-4. Restart NanoClaw
-
-### Getting Channel ID
-
-If you can't copy the channel ID:
-- Ensure **Developer Mode** is enabled: User Settings > Advanced > Developer Mode
-- Right-click the channel name in the server sidebar > Copy Channel ID
-
-## After Setup
-
-The Discord bot supports:
-- Text messages in registered channels
-- Attachment descriptions (images, videos, files shown as placeholders)
-- Reply context (shows who the user is replying to)
-- @mention translation (Discord `<@botId>` → NanoClaw trigger format)
-- Message splitting for responses over 2000 characters
-- Typing indicators while the agent processes
+**Adapter looks installed but Discord never connects.** Run `pnpm exec vitest run src/channels/discord-registration.test.ts` — red means the barrel import or the `@chat-adapter/discord` install drifted, so re-run the Apply steps. If it's green, the service probably hasn't restarted since the credentials were stored: `bash setup/lib/restart.sh`, then check `logs/nanoclaw.error.log` for missing `DISCORD_PUBLIC_KEY` / `DISCORD_APPLICATION_ID` complaints.
