@@ -88,6 +88,7 @@ describe('ask_user_question — card the host could not post', () => {
     expect(Date.now() - started).toBeLessThan(2500);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('could not be delivered');
+    expect(result.content[0].text).toContain('Shorten the title, question or option labels, or ask in a plain message');
   });
 
   it('still returns an answer that arrived by the time the host gave up on the card', async () => {

@@ -242,7 +242,7 @@ export const askUserQuestion: McpToolDefinition = {
       if (deliveryFailed) {
         log(`ask_user_question undeliverable: ${questionId}`);
         return err(
-          'The question card could not be delivered, so no answer will be collected. Try a shorter question, or ask in a plain message.',
+          'The question card could not be delivered, so no answer will be collected. Shorten the title, question or option labels, or ask in a plain message.',
         );
       }
 
