@@ -97,12 +97,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           f=setup/install-signal-cli.sh
+          if [ "$(grep -cE '\b(VERSION|SHA256)=' "$f")" != 2 ]; then
+            echo "::error file=$f::expected exactly one VERSION= line and one SHA256= line"
+            exit 1
+          fi
           v=$(sed -n 's/^VERSION="\([0-9.]*\)"$/\1/p' "$f")
           sha=$(sed -n 's/^SHA256="\([0-9a-f]*\)"$/\1/p' "$f")
           digest=$(gh api "repos/AsamK/signal-cli/releases/tags/v$v" \
             --jq ".assets[] | select(.name == \"signal-cli-$v-Linux-native.tar.gz\") | .digest")
-          if [ "$digest" != "sha256:$sha" ] || [ "$(grep -cE '\b(VERSION|SHA256)=' "$f")" != 2 ]; then
-            echo "::error file=$f::SHA256 is not GitHub's digest for v$v. Use: SHA256=\"${digest#sha256:}\""
+          if [ "$digest" != "sha256:$sha" ]; then
+            echo "::error file=$f::SHA256 is not GitHub's digest for v$v (${digest:-none}). If this PR bumps VERSION, set SHA256=\"${digest#sha256:}\". If it doesn't and SHA256 is unchanged too, the release asset changed after it was pinned: find out why before re-pinning, and don't re-pin in an unrelated PR."
             exit 1
           fi
 
