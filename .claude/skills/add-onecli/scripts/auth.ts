@@ -11,6 +11,7 @@ import {
   isSavedProviderCredential,
   readProviderCredentials,
   recordProviderCredentials,
+  savedProviderCredentials,
 } from '../payload/src/gateway-providers/onecli-provider-credentials.js';
 
 type Method = 'subscription' | 'oauth' | 'api' | 'skip';
@@ -38,7 +39,9 @@ function listSecrets(): SecretRow[] {
 const dataDir = () => path.join(process.cwd(), 'data');
 
 // Connected means Claude groups will be granted a credential: a live recorded
-// one, or one saved under NanoClaw's name or type, which is then recorded.
+// one, or, for an install that recorded none, one saved under NanoClaw's name,
+// which is then recorded. Duplicate names count as not connected, so the login
+// runs and records its own.
 async function hasAnthropicSecret(): Promise<boolean> {
   let secrets: SecretRow[];
   try {
@@ -47,16 +50,18 @@ async function hasAnthropicSecret(): Promise<boolean> {
     return false;
   }
   const recorded = new Set(readProviderCredentials(dataDir()).providers.claude ?? []);
-  const ids = secrets.flatMap((s) =>
-    s.id && (recorded.has(s.id) || isSavedProviderCredential('claude', s)) ? [s.id] : [],
-  );
-  if (ids.length) await recordProviderCredentials(dataDir(), 'claude', ids);
-  return ids.length > 0;
+  if (secrets.some((s) => s.id && recorded.has(s.id))) return true;
+  const saved = savedProviderCredentials('claude', secrets);
+  if (saved.ids.length) await recordProviderCredentials(dataDir(), 'claude', saved.ids);
+  return saved.ids.length > 0;
 }
 
-// New groups get only the recorded model credential, so record what was saved.
-async function recordClaudeSecret(id: string | null): Promise<void> {
-  const ids = id ? [id] : listSecrets().flatMap((s) => (s.id && isSavedProviderCredential('claude', s) ? [s.id] : []));
+// New groups get only the recorded model credential, so record what was saved:
+// the created id, or the Claude secrets that appeared since `before`.
+async function recordClaudeSecret(id: string | null, before = new Set<string>()): Promise<void> {
+  const ids = id
+    ? [id]
+    : listSecrets().flatMap((s) => (s.id && !before.has(s.id) && isSavedProviderCredential('claude', s) ? [s.id] : []));
   if (ids.length) await recordProviderCredentials(dataDir(), 'claude', ids);
 }
 
@@ -177,14 +182,15 @@ export async function run(): Promise<void> {
     return;
   }
   if (method === 'subscription') {
+    const before = new Set(listSecrets().flatMap((s) => (s.id ? [s.id] : [])));
     const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'register-claude-token.sh');
     const result = spawnSync('bash', [script], {
       env: childEnv(),
       stdio: 'inherit',
     });
     if (result.status !== 0) throw new Error('Claude subscription sign-in failed');
-    // The script saves under the name 'Anthropic'; none existed before it ran.
-    await recordClaudeSecret(null);
+    // The script saves under the name 'Anthropic'; record only the one it added.
+    await recordClaudeSecret(null, before);
     return;
   }
 

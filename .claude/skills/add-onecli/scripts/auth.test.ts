@@ -41,6 +41,7 @@ it('records the id of a Claude key saved for a custom endpoint', async () => {
 it('records the Anthropic secret a subscription sign-in saved', async () => {
   child.exec
     .mockReturnValueOnce(JSON.stringify({ data: [{ id: 'sec-vercel', name: 'Vercel', type: 'generic' }] }))
+    .mockReturnValueOnce(JSON.stringify({ data: [{ id: 'sec-vercel', name: 'Vercel', type: 'generic' }] }))
     .mockReturnValueOnce(
       JSON.stringify({
         data: [
@@ -74,4 +75,39 @@ it('an already saved Anthropic key is recorded; a differently named or OpenCode 
   await run();
   expect(prompts.select).toHaveBeenCalledOnce();
   expect(fs.existsSync(path.join(root, 'data'))).toBe(false);
+});
+
+it('with duplicate Anthropic secrets and none recorded, asks to sign in and records only the new one', async () => {
+  const dupes = [
+    { id: 'sec-a', name: 'Anthropic', type: 'anthropic' },
+    { id: 'sec-b', name: 'Anthropic', type: 'anthropic' },
+  ];
+  child.exec
+    .mockReturnValueOnce(JSON.stringify({ data: dupes }))
+    .mockReturnValueOnce(JSON.stringify({ data: dupes }))
+    .mockReturnValueOnce(JSON.stringify({ data: [...dupes, { id: 'sec-new', name: 'Anthropic', type: 'anthropic' }] }));
+  prompts.select.mockResolvedValueOnce('subscription');
+  child.spawn.mockReturnValueOnce({ status: 0 });
+  await run();
+  expect(prompts.select).toHaveBeenCalledOnce();
+  expect(record()).toEqual({ claude: ['sec-new'] });
+});
+
+it('a recorded Claude key counts as connected and another same-named key is not added', async () => {
+  fs.mkdirSync(path.join(root, 'data', 'onecli'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'data', 'onecli', 'provider-credentials.json'),
+    JSON.stringify({ providers: { claude: ['sec-own'] }, matched: [] }),
+  );
+  child.exec.mockReturnValueOnce(
+    JSON.stringify({
+      data: [
+        { id: 'sec-own', name: 'Anthropic' },
+        { id: 'sec-other', name: 'Anthropic' },
+      ],
+    }),
+  );
+  await run();
+  expect(prompts.select).not.toHaveBeenCalled();
+  expect(record()).toEqual({ claude: ['sec-own'] });
 });

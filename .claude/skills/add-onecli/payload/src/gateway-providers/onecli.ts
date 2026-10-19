@@ -5,10 +5,10 @@ import { OneCLI, ApprovalClient, type ContainerConfig, type ApprovalRequest } fr
 import { DATA_DIR } from '../config.js';
 import { combinedCaBundle, stageOnecliFile } from './onecli-files.js';
 import {
-  isSavedProviderCredential,
   providerCredentialFile,
   readProviderCredentials,
   RecordLockedError,
+  savedProviderCredentials,
   updateProviderCredentials,
   type ProviderCredentialRecord,
 } from './onecli-provider-credentials.js';
@@ -189,15 +189,20 @@ export async function grantProviderCredentials(
   const vault = await list('/v1/secrets');
   const live = new Set(vault.map((secret) => secret.id).filter((id): id is string => typeof id === 'string'));
   if (!record.matched.includes(provider)) {
-    // Once per provider: adopt the secrets NanoClaw's setup saved before ids
-    // were recorded. On a shared gateway that includes another install's
-    // same-named login, which this install's setup already treats as its own.
-    const found = vault
-      .filter((secret) => typeof secret.id === 'string' && isSavedProviderCredential(provider, secret))
-      .map((secret) => secret.id as string);
+    // Once per provider, for an install that saved credentials before ids were
+    // recorded: adopt them by name. Recorded ids always win, and duplicate names
+    // are refused rather than guessed (one may be another install's).
+    const recorded = (record.providers[provider] ?? []).some((id) => live.has(id));
+    const saved = recorded ? { ids: [], duplicates: [] } : savedProviderCredentials(provider, vault);
+    if (saved.duplicates.length) {
+      throw new Error(
+        `several OneCLI secrets share a name the ${provider} login saves (${saved.duplicates.join(', ')}) and none is recorded: ` +
+          `run that login again to record the one to use, or delete the extra secrets`,
+      );
+    }
     const adopt = (r: ProviderCredentialRecord) => {
       if (r.matched.includes(provider)) return;
-      r.providers[provider] = [...new Set([...(r.providers[provider] ?? []), ...found])];
+      if (!(r.providers[provider] ?? []).some((id) => live.has(id))) r.providers[provider] = saved.ids;
       r.matched.push(provider);
     };
     try {
