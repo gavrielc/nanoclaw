@@ -408,3 +408,54 @@ describe('OneCLI upgrade guide: restoring the backup', () => {
     expect(dockerLog()).not.toContain('compose up -d');
   });
 });
+
+// Dial spends money and reaches real people, so the guide's default order for a
+// Dial install is: delete the key before the pull, re-run /add-dial-tool after.
+describe('OneCLI upgrade guide: Dial installs', () => {
+  const guide = fs.readFileSync(GUIDE, 'utf8');
+  const blocks = [...guide.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => ({ body: m[1], at: m.index ?? 0 }));
+  const del = blocks.find((b) => b.body.includes('api.getdial.ai') && b.body.includes('secrets delete'));
+
+  it('deletes the Dial key before the pull by default, then re-runs /add-dial-tool', () => {
+    expect(del).toBeDefined();
+    expect(del!.at).toBeLessThan(guide.indexOf('docker compose pull onecli'));
+    const before = guide.slice(0, del!.at).trimEnd();
+    const paragraph = before.slice(before.lastIndexOf('\n\n'));
+    expect(paragraph).toMatch(/delete the Dial key before you pull/i);
+    expect(paragraph).toContain('/add-dial-tool');
+    expect(guide).not.toMatch(/To keep every unchosen agent away from Dial in between/);
+  });
+
+  it('the delete removes only Dial keys on api.getdial.ai and stops on a failed delete', () => {
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const stub = (deleteExit: number) =>
+      fs.writeFileSync(
+        path.join(bin, 'onecli'),
+        `#!/bin/sh
+echo "$*" >> "${home}/onecli.log"
+case "$1 $2" in
+  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"d1","name":"Dial API","hostPattern":"api.getdial.ai"},{"id":"x1","name":"Other key","hostPattern":"api.getdial.ai"},{"id":"m1","name":"Anthropic","hostPattern":"api.anthropic.com"}]}' ;;
+  "secrets delete") exit ${deleteExit} ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+    const run = () =>
+      spawnSync('sh', ['-c', del!.body], {
+        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home },
+        encoding: 'utf8',
+      });
+    stub(0);
+    expect(run().status).toBe(0);
+    expect(
+      fs
+        .readFileSync(path.join(home, 'onecli.log'), 'utf8')
+        .trim()
+        .split('\n')
+        .filter((l) => l.startsWith('secrets delete')),
+    ).toEqual(['secrets delete --id d1']);
+    stub(1);
+    expect(run().status).not.toBe(0);
+  });
+});
