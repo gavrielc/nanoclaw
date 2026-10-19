@@ -85,9 +85,7 @@ Then pull and restart:
 cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECLI_VERSION docker compose up -d
 ```
 
-Then check the conversion. Its log line appears a few seconds after `/v1/health` answers, so wait, then run `docker logs onecli 2>&1 | grep grant-conversion`; it must report `0 failed`.
-
-If `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
+Then check the conversion. Its log line appears a few seconds after `/v1/health` answers, so wait, then run `docker logs onecli 2>&1 | grep grant-conversion`; it must report `0 failed`. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
 
 **If a gateway newer than the pin has started, even briefly:** it can migrate its database, and going back to the pin does not undo that. Put the gateway back on the pin (step 2), then check `docker logs onecli 2>&1 | grep -iE 'migrat|error'`. Access rules and approvals were not checked in testing. If you see a database error, restore a backup taken before the newer version ran (the one from step 2, if you took it in time). There is no other tested repair, so otherwise [open an issue](https://github.com/nanocoai/nanoclaw/issues) with the log lines.
 
@@ -125,6 +123,8 @@ source setup/lib/install-slug.sh && launchctl kickstart -k gui/$(id -u)/$(launch
 # Linux
 source setup/lib/install-slug.sh && systemctl --user restart $(systemd_unit)
 ```
+
+Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key.
 
 ## 4. Rollback
 

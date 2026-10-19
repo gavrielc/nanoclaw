@@ -122,6 +122,7 @@ describe('Tavily paid-key upgrade on OneCLI grants', () => {
     expect(stderr).toContain('2026-10-01T09:00:00Z');
     expect(stderr).not.toContain('tvly-');
     expect(stderr).toContain('--id oc-research');
+    expect(stderr).not.toMatch(/newest/);
   });
 
   it('with no key yet, says to save it through the link first', () => {
