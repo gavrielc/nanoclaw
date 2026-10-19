@@ -152,6 +152,7 @@ function sh(
   cmd: string,
   agents = '',
   extraEnv: Record<string, string> = {},
+  shell = 'sh',
 ): { stdout: string; stderr: string; status: number } {
   const substituted = cmd
     .replaceAll('{{dial_agents}}', agents)
@@ -162,7 +163,7 @@ function sh(
     .replaceAll('{{owner_email}}', 'operator@example.com')
     .replaceAll('{{otp}}', '123456');
   try {
-    const stdout = execFileSync('sh', ['-c', substituted], {
+    const stdout = execFileSync(shell, ['-c', substituted], {
       cwd: root,
       encoding: 'utf8',
       env: {
@@ -628,7 +629,8 @@ describe('add-dial-tool: removal', () => {
     setup({ secrets: [...others, DIAL] });
     // GNU grep -q stops reading at its first match, closing the pipe on the writer.
     writeStub('grep', 'head -c 1 >/dev/null');
-    expect(sh(`set -o pipefail\n${REMOVE}`).status).toBe(0);
+    // bash: Ubuntu's sh (dash) may not know pipefail.
+    expect(sh(`set -o pipefail\n${REMOVE}`, '', {}, 'bash').status).toBe(0);
     expect(callLines()).toContain('onecli secrets delete --id sec-dial');
   });
 
