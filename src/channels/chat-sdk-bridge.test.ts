@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 
-import { MAX_CARD_QUESTION_LENGTH } from './ask-question.js';
-import { createChatSdkBridge, splitForLimit } from './chat-sdk-bridge.js';
+import { gatewayApprovalPresentation } from '../gateway-approval-presentation.js';
+import type { GatewayApprovalRequest } from '../gateway-providers/gateway-provider-registry.js';
+import { CardTooLongError } from './ask-question.js';
+import { CARD_TEXT_BLOCK_LENGTH, createChatSdkBridge, splitCardText, splitForLimit } from './chat-sdk-bridge.js';
 
 vi.mock('../webhook-server.js', () => ({
   registerWebhookAdapter: vi.fn(),
@@ -453,21 +455,39 @@ describe('createChatSdkBridge.deliver — ask_question cards (button styles)', (
     };
   }
 
-  it('refuses a card whose escaped text is too long to show in full, posting nothing', async () => {
-    const { calls, postMessage } = makePostCapture();
-    const bridge = createChatSdkBridge({
-      adapter: stubAdapter({ postMessage }),
-      supportsThreads: false,
-      escapeCardText: (t) => t.replace(/&/g, '&amp;'),
-    });
+  function postedBlocks(calls: PostCall[]): { text: string[]; hasButtons: boolean } {
+    const posted = calls[0].message as { card: { children: Array<{ type: string; content?: string }> } };
+    return {
+      text: posted.card.children.filter((child) => child.type === 'text').map((child) => child.content ?? ''),
+      hasButtons: posted.card.children.some((child) => child.type === 'actions'),
+    };
+  }
 
-    // Fits before escaping, not after.
-    const question = '&'.repeat(MAX_CARD_QUESTION_LENGTH / 2);
-    await expect(bridge.deliver('slack:D1', null, questionCard(question))).rejects.toThrow(/too long to show in full/);
-    expect(calls).toHaveLength(0);
+  it('posts a full-size gateway summary card whole, in text blocks under the block cap', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+    const { title, question } = gatewayApprovalPresentation({
+      title: 'Legacy',
+      question: 'Legacy question',
+      summary: {
+        agent: 'Nano',
+        action: 'Read external data',
+        resource: 'GET api.example.test/repos',
+        reason: 'Policy requires approval',
+        details: Array.from({ length: 6 }, (_, i) => ({ label: `Detail ${i}`, value: `${i}`.repeat(600) })),
+      },
+    } as GatewayApprovalRequest);
+    expect(question.length).toBeGreaterThan(CARD_TEXT_BLOCK_LENGTH);
+
+    await bridge.deliver('slack:D1', null, questionCard(question, title));
+    const { text, hasButtons } = postedBlocks(calls);
+    expect(text.length).toBeGreaterThan(1);
+    for (const block of text) expect(block.length).toBeLessThanOrEqual(CARD_TEXT_BLOCK_LENGTH);
+    expect(text.join('')).toBe(question);
+    expect(hasButtons).toBe(true);
   });
 
-  it("uses the channel's lower card limit when it sets one", async () => {
+  it("refuses a card over the channel's declared limit, counting the title, posting nothing", async () => {
     const { calls, postMessage } = makePostCapture();
     const bridge = createChatSdkBridge({
       adapter: stubAdapter({ postMessage }),
@@ -476,32 +496,132 @@ describe('createChatSdkBridge.deliver — ask_question cards (button styles)', (
     });
 
     const fits = 'x'.repeat(100 - CARD_TITLE.length);
-    await expect(bridge.deliver('slack:D1', null, questionCard(`${fits}x`))).rejects.toThrow(/limit 100/);
+    await expect(bridge.deliver('slack:D1', null, questionCard(`${fits}x`))).rejects.toThrow(CardTooLongError);
     expect(calls).toHaveLength(0);
     await bridge.deliver('slack:D1', null, questionCard(fits));
     expect(calls).toHaveLength(1);
   });
 
-  it('counts the title toward the limit', async () => {
+  it('counts the fences a split adds toward the declared limit', async () => {
     const { calls, postMessage } = makePostCapture();
-    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      escapeCardText: (t) => t.replace(/&/g, '&amp;'),
+      maxCardTextLength: 3000,
+    });
 
-    const question = 'x'.repeat(MAX_CARD_QUESTION_LENGTH - 100);
-    await expect(bridge.deliver('slack:D1', null, questionCard(question, 't'.repeat(200)))).rejects.toThrow(
-      /too long to show in full/,
-    );
+    // Title + escaped text is exactly 3,000; the split's extra fences push it over.
+    const question = '```\n' + '&'.repeat(598) + '\n```';
+    await expect(bridge.deliver('slack:D1', null, questionCard(question, 'OK'))).rejects.toThrow(CardTooLongError);
     expect(calls).toHaveLength(0);
   });
 
-  it('posts a card at the default limit with its buttons', async () => {
-    const { calls, postMessage } = makePostCapture();
-    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+  it('splits the resolved card the same way as the open one', async () => {
+    const edits: PostCall[] = [];
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({
+        editMessage: async (threadId, _messageId, message) => {
+          edits.push({ threadId, message });
+          return { id: 'msg-1', threadId, raw: {} };
+        },
+      }),
+      supportsThreads: false,
+      escapeCardText: (t) => t.replace(/&/g, '&amp;'),
+    });
 
-    const question = 'x'.repeat(MAX_CARD_QUESTION_LENGTH - CARD_TITLE.length);
-    await bridge.deliver('slack:D1', null, questionCard(question));
-    const posted = calls[0].message as { card: { children: Array<{ type: string; content?: string }> } };
-    expect(posted.card.children[0].content).toBe(question);
-    expect(posted.card.children.some((child) => child.type === 'actions')).toBe(true);
+    const question = '&'.repeat(1000);
+    await bridge.deliver('slack:D1', null, {
+      kind: 'chat-sdk',
+      content: {
+        operation: 'edit',
+        messageId: 'msg-1',
+        terminalCard: { title: 'Approval needed', question, resolution: 'Approved' },
+      },
+    });
+    const edited = edits[0].message as { card: { children: Array<{ content?: string; style?: string }> } };
+    const blocks = edited.card.children.filter((child) => !child.style).map((child) => child.content ?? '');
+    expect(blocks.length).toBeGreaterThan(1);
+    for (const block of blocks) expect(block.length).toBeLessThanOrEqual(CARD_TEXT_BLOCK_LENGTH);
+    expect(blocks.join('')).toBe('&amp;'.repeat(1000));
+    expect(edited.card.children.at(-1)).toEqual({ type: 'text', content: 'Approved', style: 'muted' });
+  });
+
+  it('measures the declared limit after escaping', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      escapeCardText: (t) => t.replace(/&/g, '&amp;'),
+      maxCardTextLength: 100,
+    });
+
+    await expect(bridge.deliver('slack:D1', null, questionCard('&'.repeat(20)))).rejects.toThrow(/limit 100/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('splitCardText', () => {
+  const ampEscape = (t: string) => t.replace(/&/g, '&amp;');
+
+  it('keeps text that fits as one block', () => {
+    expect(splitCardText('Allow?', (t) => t, 100)).toEqual(['Allow?']);
+  });
+
+  it('measures each block after escaping and never cuts an escape in half', () => {
+    const blocks = splitCardText('&'.repeat(100), ampEscape, 42);
+    for (const block of blocks) {
+      expect(block.length).toBeLessThanOrEqual(42);
+      expect(block).toMatch(/^(&amp;)+$/);
+    }
+    expect(blocks.join('')).toBe(ampEscape('&'.repeat(100)));
+  });
+
+  it('splits at a line break when one is near the limit', () => {
+    expect(splitCardText(`${'a'.repeat(30)}\n${'b'.repeat(30)}`, (t) => t, 40)).toEqual([
+      `${'a'.repeat(30)}\n`,
+      'b'.repeat(30),
+    ]);
+  });
+
+  it('closes a code fence at the end of a block and reopens it in the next', () => {
+    const text = 'Run:\n```\n' + 'y'.repeat(100) + '\n```';
+    const blocks = splitCardText(text, (t) => t, 50);
+    expect(blocks.length).toBeGreaterThan(1);
+    for (const block of blocks) {
+      expect(block.length).toBeLessThanOrEqual(50);
+      expect((block.match(/```/g) ?? []).length % 2).toBe(0);
+    }
+    // Each split inside the fence adds a closing and a reopening fence.
+    expect(blocks.join('').split('\n``````\n').join('')).toBe(text);
+  });
+
+  it('never cuts a fence marker in half', () => {
+    expect(splitCardText('x'.repeat(48) + '```\ncode\n```', (t) => t, 50)).toEqual(['x'.repeat(48), '```\ncode\n```']);
+  });
+
+  it('treats backticks inside a code line as text, not a fence', () => {
+    const blocks = splitCardText(
+      '```\nprintf "```"\n' + 'x'.repeat(1980) + '\n**delete everything**\n```',
+      (t) => t,
+      2000,
+    );
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].endsWith('\n```')).toBe(true);
+    expect(blocks[1].startsWith('```\n')).toBe(true);
+  });
+
+  it('rechecks the length after backing off a long fence marker', () => {
+    const blocks = splitCardText('```\n' + 'x'.repeat(1992) + '\n````\n' + 'y'.repeat(10), (t) => t, 2000);
+    for (const block of blocks) expect(block.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('never splits a surrogate pair', () => {
+    const blocks = splitCardText('😀'.repeat(50), (t) => t, 31);
+    for (const block of blocks) {
+      expect(block).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    }
+    expect(blocks.join('')).toBe('😀'.repeat(50));
   });
 });
 
