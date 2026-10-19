@@ -210,7 +210,8 @@ export async function grantProviderCredentials(
         provider,
         lock: `${providerCredentialFile(dataDir)}.lock`,
       });
-      record = structuredClone(record);
+      // Re-read: the holder may have committed its match before stalling.
+      record = readProviderCredentials(dataDir);
       adopt(record);
     }
   }

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createdSecretId,
@@ -78,6 +78,20 @@ describe('OneCLI provider credential record', () => {
       RecordLockedError,
     );
     expect(fs.readFileSync(lockFile(), 'utf8')).toBe(content);
+  });
+
+  it('removes its own lock when writing its name fails (disk full), leaving nothing behind', async () => {
+    const spy = vi.spyOn(fs, 'writeSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    });
+    try {
+      await expect(recordProviderCredentials(data, 'claude', ['a'])).rejects.toThrow('no space left');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.existsSync(lockFile())).toBe(false);
+    await recordProviderCredentials(data, 'claude', ['a']);
+    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
   });
 
   it('names its writer in the lock, for whoever finds one left behind', async () => {

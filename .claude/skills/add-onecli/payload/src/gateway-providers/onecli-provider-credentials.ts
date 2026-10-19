@@ -66,9 +66,10 @@ export async function updateProviderCredentials(
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const lock = `${file}.lock`;
   const deadline = Date.now() + (opts.lockTimeoutMs ?? 5_000);
+  let fd: number;
   for (;;) {
     try {
-      fs.writeFileSync(lock, `${os.hostname()} ${process.pid}`, { flag: 'wx', mode: 0o600 });
+      fd = fs.openSync(lock, 'wx', 0o600);
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
@@ -77,6 +78,14 @@ export async function updateProviderCredentials(
       }
       await sleep(25);
     }
+  }
+  try {
+    fs.writeSync(fd, `${os.hostname()} ${process.pid}`);
+  } catch (err) {
+    fs.rmSync(lock, { force: true });
+    throw err;
+  } finally {
+    fs.closeSync(fd);
   }
   try {
     const record = readProviderCredentials(dataDir);

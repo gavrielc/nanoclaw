@@ -412,6 +412,26 @@ describe('OneCLI gateway package', () => {
     expect(fs.existsSync(path.join(data, 'onecli', 'provider-credentials.json'))).toBe(false);
   });
 
+  it('with the lock held, a match another writer already committed is used as recorded, not widened', async () => {
+    fs.mkdirSync(path.join(data, 'onecli'), { recursive: true });
+    fs.writeFileSync(path.join(data, 'onecli', 'provider-credentials.json.lock'), 'other-host 1');
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-mine', name: 'Anthropic' },
+        { id: 'sec-new', name: 'Anthropic' },
+      ],
+    });
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await gateway.fetch(url, init);
+      // The lock holder commits its match (only sec-mine) and then dies holding the lock.
+      if (new URL(String(url)).pathname === '/v1/secrets') writeRecord(data, { claude: ['sec-mine'] });
+      return res;
+    }) as typeof fetch;
+    await expect(
+      grantProviderCredentials('g1', 'claude', { baseUrl: 'http://gw.test', fetchImpl, dataDir: data }),
+    ).resolves.toEqual(['sec-mine']);
+  });
+
   it('a match another host finished meanwhile is not repeated (checked again under the lock)', async () => {
     const gateway = fakeGateway({
       vault: [
