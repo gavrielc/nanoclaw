@@ -104,6 +104,8 @@ export interface InboundMailbox {
   markDeliveryFailed(messageOutId: string): void;
   getInboundSourceSessionId(messageId: string): string | null;
   getMostRecentPeerSourceSessionId(peerAgentGroupId: string): string | null;
+  /** True once another agent has messaged this session, answered or not. */
+  hasMessagesFromOtherAgents(selfAgentGroupId: string): boolean;
   insertTask(task: Task): Promise<void>;
   cancelTask(taskId?: string): number;
   pauseTask(taskId: string): number;
@@ -143,7 +145,7 @@ export interface OutboundMailbox {
   getOutboundHistory(limit: number): MailboxHistoryMessage[];
   getTopLevelOutbound(limit: number): MailboxTimelineMessage[];
   /** True once this session has messaged another agent, which routes its replies back here. */
-  hasAgentMessages(): boolean;
+  hasMessagesToOtherAgents(selfAgentGroupId: string): boolean;
 }
 
 export interface MailboxSession extends InboundMailbox, OutboundMailbox {}

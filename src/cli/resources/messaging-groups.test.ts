@@ -487,16 +487,29 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
     });
 
     /** A sent agent-to-agent message: the peer routes its replies back to this session (agent-route.ts). */
-    function sendToPeer(sessionId: string): void {
+    function sendToPeer(sessionId: string, toAgentGroupId = 'ag-peer'): void {
       initSessionFolder(SHARED_AG, sessionId);
       const outbound = new Database(outboundDbPath(SHARED_AG, sessionId));
       outbound
         .prepare(
           `INSERT INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, content)
-           VALUES (?, 1, ?, 'chat', 'ag-peer', 'agent', '{}')`,
+           VALUES (?, 1, ?, 'chat', ?, 'agent', '{}')`,
         )
-        .run(`out-${sessionId}`, now());
+        .run(`out-${sessionId}`, now(), toAgentGroupId);
       outbound.close();
+    }
+
+    /** A peer's assignment waiting in this session's inbox, as routeAgentMessage writes it. */
+    function receiveFromPeer(sessionId: string): void {
+      initSessionFolder(SHARED_AG, sessionId);
+      const inbound = new Database(inboundDbPath(SHARED_AG, sessionId));
+      inbound
+        .prepare(
+          `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, content, source_session_id)
+           VALUES (?, 2, 'chat', ?, 'pending', 'ag-peer', 'agent', '{}', 'sess-on-peer')`,
+        )
+        .run(`in-${sessionId}`, now());
+      inbound.close();
     }
 
     const routingOf = (sessionId: string) => {
@@ -518,6 +531,28 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
       expect(
         await getDb().get('SELECT messaging_group_id, thread_id, status FROM sessions WHERE id = ?', SHARED),
       ).toEqual({ messaging_group_id: null, thread_id: null, status: 'active' });
+    });
+
+    it('keeps a session holding a peer assignment it has not answered yet', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      receiveFromPeer(SHARED);
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
+      expect(await count('SELECT COUNT(*) AS c FROM sessions WHERE id = ?', SHARED)).toBe(1);
+    });
+
+    it('does not keep a session whose only agent message went to its own agent', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      sendToPeer(SHARED, SHARED_AG);
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([]);
+      expect(await count('SELECT COUNT(*) AS c FROM sessions WHERE id = ?', SHARED)).toBe(0);
     });
 
     it('keeps an older session with a peer conversation next to the one agent-shared chats reuse', async () => {

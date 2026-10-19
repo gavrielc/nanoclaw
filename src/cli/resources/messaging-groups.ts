@@ -103,7 +103,7 @@ registerResource({
         'FK-ordered cascade in a single transaction. Use --id <messaging-group-id>. ' +
         'The session an agent-shared agent reuses is kept when it started in this chat: it moves to another of ' +
         "the agent's agent-shared chats (or to none), so the conversation carries on there. " +
-        'A session that has messaged another agent is kept too, with no chat, so replies still reach it; ' +
+        'A session in a conversation with another agent (sent or received) is kept too, with no chat, so it carries on; ' +
         'the next agent-shared chat that resumes a session with no chat becomes its chat. ' +
         "The host sweep stops the deleted sessions' containers within about a minute. " +
         'Their folders under data/v2-sessions/ stay on disk on purpose: they hold the conversation history, ' +
@@ -127,16 +127,21 @@ registerResource({
         let destinationOwners: string[] = [];
 
         // A peer agent's replies return to the session that messaged it (agent-route.ts),
-        // not to the newest one, so every session here that has messaged a peer stays.
-        // Read before the transaction: holding it across mailbox reads can deadlock.
+        // not to the newest one, and its assignments wait in this session's inbox, so every
+        // session here in a conversation with another agent stays. Read before the
+        // transaction: holding it across mailbox reads can deadlock.
         const peerUsed: Array<{ id: string; agent_group_id: string }> = [];
         for (const session of await db.all<{ id: string; agent_group_id: string }>(
           'SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ?',
           id,
         )) {
-          if (await withExistingMailboxSession(session.agent_group_id, session.id, (m) => m.hasAgentMessages())) {
-            peerUsed.push(session);
-          }
+          const self = session.agent_group_id;
+          const withPeer = await withExistingMailboxSession(
+            self,
+            session.id,
+            (m) => m.hasMessagesToOtherAgents(self) || m.hasMessagesFromOtherAgents(self),
+          );
+          if (withPeer) peerUsed.push(session);
         }
 
         // Same shape as `groups delete`: one transaction, counts from each
