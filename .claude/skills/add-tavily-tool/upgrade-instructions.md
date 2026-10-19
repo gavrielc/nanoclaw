@@ -12,7 +12,16 @@ upgrade, in this order:
    (That is the OneCLI dashboard on the NanoClaw host; the key goes straight
    into the credential vault and is injected at the gateway. Never ask for
    the key in chat and never handle it yourself.)
-3. Once the user confirms the key is saved, re-register the server without
+3. Ask the user to attach the saved key to this agent group, on the NanoClaw
+   host: a new key reaches no agent until it is attached. If it fails with
+   `404` and "Unrecognized request URL", the OneCLI gateway is older than 1.44
+   and already injects the key; go on. Any other failure: stop and show it.
+
+```bash
+S=$(onecli secrets list --max 0 | jq -r 'first(.data[] | select(.hostPattern == "mcp.tavily.com")) | .id // empty'); A=$(onecli agents list --max 0 | jq -r '.data[] | select(.identifier == "{{AGENT_GROUP_ID}}") | .id'); [ -n "$S" ] && [ -n "$A" ] || { echo "no Tavily key or no OneCLI agent for this group yet" >&2; exit 1; }; onecli agents grants attach-secret --id "$A" --secret-id "$S"
+```
+
+4. Once the user confirms the key is attached, re-register the server without
    the keyless header and restart (your `--id` is filled in automatically):
 
 ```bash

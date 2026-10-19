@@ -131,9 +131,10 @@ moment instead of dead-ending. For each selected group:
    `onecli secrets create --name tavily --type generic --host-pattern
    mcp.tavily.com --header-name Authorization --value-format 'Bearer {value}'
    --file <key-file>`".
-3. Substitute `{{ONECLI_DASHBOARD_URL}}` in
+3. Substitute `{{ONECLI_DASHBOARD_URL}}` and `{{AGENT_GROUP_ID}}` in
    [upgrade-instructions.md](upgrade-instructions.md) with the resolved URL and
-   write the block into `groups/<group-folder>/instructions.prepend.md`:
+   the group's id, and write the block into
+   `groups/<group-folder>/instructions.prepend.md`:
    replace an existing `<!-- tavily-upgrade:start -->` to
    `<!-- tavily-upgrade:end -->` block in place, append otherwise. Do not write
    into `groups/<group-folder>/CLAUDE.md`; it is regenerated at spawn and
@@ -149,8 +150,10 @@ moment instead of dead-ending. For each selected group:
 If Tavily returns HTTP `429` or `monthly_cap_reached_bonus_eligible`, the
 keyless allowance is exhausted. With Phase 5 installed the agent offers the
 upgrade on its own: the user creates a free API key and stores it through the
-prefilled dashboard link; the key lands in the OneCLI vault and the gateway
-injects it into the bridge's requests. The agent then re-registers the server
+prefilled dashboard link; the key lands in the OneCLI vault. On OneCLI 1.44+ a
+new key reaches no agent until it is attached, so the user then attaches it to
+the group on the host (`onecli agents grants attach-secret`, a one-liner in the
+upgrade block), and the gateway injects it into the bridge's requests. The agent then re-registers the server
 without the `X-Tavily-Access-Mode:keyless` header and restarts the group. The
 agent never sees the key.
 
