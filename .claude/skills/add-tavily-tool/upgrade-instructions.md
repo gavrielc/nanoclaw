@@ -13,12 +13,13 @@ upgrade, in this order:
    into the credential vault and is injected at the gateway. Never ask for
    the key in chat and never handle it yourself.)
 3. Ask the user to attach the saved key to this agent group, on the NanoClaw
-   host: a new key reaches no agent until it is attached. If it fails with
-   `404` and "Unrecognized request URL", the OneCLI gateway is older than 1.44
-   and already injects the key; go on. Any other failure: stop and show it.
+   host: a new key reaches no agent until it is attached. It needs the OneCLI
+   gateway and CLI that NanoClaw pins. If it fails, stop and show the user the
+   error; keep the keyless setup. If the error is about `grants` (an older
+   OneCLI), the user updates it with `docs/onecli-upgrades.md` first.
 
 ```bash
-S=$(onecli secrets list --max 0 | jq -r 'first(.data[] | select(.hostPattern == "mcp.tavily.com")) | .id // empty'); A=$(onecli agents list --max 0 | jq -r '.data[] | select(.identifier == "{{AGENT_GROUP_ID}}") | .id'); [ -n "$S" ] && [ -n "$A" ] || { echo "no Tavily key or no OneCLI agent for this group yet" >&2; exit 1; }; onecli agents grants attach-secret --id "$A" --secret-id "$S"
+L=$(onecli secrets list --max 0) && S=$(printf '%s' "$L" | jq -r '[(if type == "array" then . else .data end)[] | select(.hostPattern == "mcp.tavily.com")] | if length == 1 then .[0].id else empty end') && A=$(onecli agents list --max 0 | jq -r '.data[] | select(.identifier == "{{AGENT_GROUP_ID}}") | .id') || exit 1; [ -n "$S" ] || { echo "need exactly one Tavily key in OneCLI; found:" >&2; printf '%s' "$L" | jq -r '(if type == "array" then . else .data end)[] | select(.hostPattern == "mcp.tavily.com") | "  \(.id)  \(.name)"' >&2; echo "attach the one just saved: onecli agents grants attach-secret --id <agent-id> --secret-id <id>" >&2; exit 1; }; [ -n "$A" ] || { echo "this group has no OneCLI agent yet: send it one message, then run this again" >&2; exit 1; }; onecli agents grants attach-secret --id "$A" --secret-id "$S"
 ```
 
 4. Once the user confirms the key is attached, re-register the server without

@@ -27,15 +27,15 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-function run(secretName: string, attachExit = 0) {
+function run(secretName: string, attachExit = 0, extraSecret = '', grantsUnknown = false) {
   fs.writeFileSync(
     path.join(root, 'bin', 'onecli'),
     `#!/usr/bin/env bash
 echo "onecli $*" >> "$CALLS"
 case "$1 $2" in
-  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"sec-model","name":"Anthropic","hostPattern":"api.anthropic.com"},{"id":"sec-tavily","name":"${secretName}","hostPattern":"mcp.tavily.com"}]}' ;;
+  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"sec-model","name":"Anthropic","hostPattern":"api.anthropic.com"},{"id":"sec-tavily","name":"${secretName}","hostPattern":"mcp.tavily.com"}${extraSecret}]}' ;;
   "agents list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"oc-other","identifier":"ag-other"},{"id":"oc-research","identifier":"ag-research"}]}' ;;
-  "agents grants") exit ${attachExit} ;;
+  "agents grants") ${grantsUnknown ? 'echo "unexpected argument grants" >&2; exit 80' : `exit ${attachExit}`} ;;
 esac
 `,
     { mode: 0o755 },
@@ -44,7 +44,7 @@ esac
     env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls },
     encoding: 'utf8',
   });
-  return { status: r.status, lines: fs.readFileSync(calls, 'utf8').trim().split('\n') };
+  return { status: r.status, stderr: r.stderr, lines: fs.readFileSync(calls, 'utf8').trim().split('\n') };
 }
 
 describe('Tavily paid-key upgrade on OneCLI grants', () => {
@@ -61,6 +61,24 @@ describe('Tavily paid-key upgrade on OneCLI grants', () => {
 
   it('fails loudly when the attach fails, before the keyless header is dropped', () => {
     expect(run('Tavily', 1).status).not.toBe(0);
+  });
+
+  it('stops, naming every candidate, when more than one key sits on the Tavily host', () => {
+    const { status, stderr, lines } = run(
+      'Tavily',
+      0,
+      ',{"id":"sec-other-group","name":"Tavily","hostPattern":"mcp.tavily.com"}',
+    );
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('sec-tavily');
+    expect(stderr).toContain('sec-other-group');
+    expect(lines.some((l) => l.includes('attach-secret'))).toBe(false);
+  });
+
+  it('stops on a CLI without the grants commands, and never tells the agent to go on without the attach', () => {
+    expect(run('Tavily', 0, '', true).status).not.toBe(0);
+    expect(doc).not.toMatch(/already injects the key/);
+    expect(doc).toMatch(/docs\/onecli-upgrades\.md/);
   });
 
   it('comes after the key is saved and before the server is re-registered without the keyless header', () => {
