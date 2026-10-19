@@ -6,7 +6,7 @@
  * provider barrels, merge the CLI manifest entry). This applies that SKILL.md
  * directly through the directive engine (`scripts/skill-apply.ts`) instead of
  * shelling out to a hand-maintained `setup/add-<name>.sh` that has to be kept in
- * lockstep with it — the same move `setup/channels/slack.ts` made for adapters.
+ * lockstep with it — the same move `setup/lib/skill-driver.ts` made for channels.
  *
  * The provider case differs from a channel in two ways, both handled here:
  *
@@ -19,7 +19,7 @@
  *      external one re-invokes `--step provider-auth`, which would recurse). The
  *      setup flow already rebuilds the image and runs auth around this call, so
  *      `skipEffects` drops those heavyweight run directives. The fork-aware
- *      remote resolver mirrors slack.ts for any `nc:copy from-branch` block.
+ *      remote resolver only runs for an `nc:copy from-branch` block.
  *
  * Returns the engine's ApplyResult so the caller can decide whether a rebuild is
  * warranted (a fresh install always applied something) and surface any step the
@@ -89,7 +89,7 @@ export async function applyProviderSkill(
         exec: (cmd) => execSync(cmd, { cwd: projectRoot, stdio: 'pipe', encoding: 'utf8' }),
         // Fork-aware: reuse the existing resolver (handles upstream/fork remotes and
         // the auto-add-upstream fallback) instead of assuming `origin` — same call
-        // setup/channels/slack.ts makes for the `channels` branch.
+        // setup/lib/skill-driver.ts makes for the `channels` branch.
         resolveRemote: () =>
           execSync('source setup/lib/channels-remote.sh; resolve_channels_remote', {
             cwd: projectRoot,

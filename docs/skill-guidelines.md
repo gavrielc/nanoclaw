@@ -171,7 +171,7 @@ The test matches the kind of integration point:
 - **Config / container probe** (mounts, Dockerfile, a tool installed in the image): run the change where you can. Spin up a container to confirm a mount or binary. Checking that a line exists in a file is the last resort.
 - **Agentic run** (operational, instruction-only skills): run the workflow with a small model; did it complete?
 - **Patch behavior** (a patch skill that changes core logic): a behavior test of the changed behavior.
-- **Provider (multi-point)**: a non-default agent backend reaches into *two* barrels (host `src/providers/index.ts`; container `container/agent-runner/src/providers/index.ts`), plus Dockerfile edits and a CLI or SDK dependency. Each is a separate way to break, and each needs its own guard. Ship a **barrel-driven registration test per tree** that imports *only* the real barrel and asserts the registry contains the provider. **The trap:** a `*.factory.test.ts` that imports the provider module directly self-registers it and stays green when the barrel line is deleted; that's a unit test, not a registration guard. REMOVE.md must reverse both barrel lines, all copied files in both trees, the dependency, and the Dockerfile edits.
+- **Provider (multi-point)**: a non-default agent backend reaches into five barrels (host and container `providers/index.ts` and `provider-contracts/index.ts`, plus `setup/providers/index.ts`) and pins a CLI or SDK dependency (`container/cli-tools.json` or an agent-runner dependency). Each is a separate way to break, and each needs its own guard. Ship a **barrel-driven registration test per tree** that imports *only* the real barrel and asserts the registry contains the provider. **The trap:** a `*.factory.test.ts` that imports the provider module directly self-registers it and stays green when the barrel line is deleted; that's a unit test, not a registration guard. REMOVE.md must reverse every barrel line, all copied files in every tree, and the dependency or manifest pin.
 - **Content / instruction-only** (a reference wiki, a pure workflow): makes no functional reach-in, so it owes no integration test. Conformance is anatomy: idempotent apply, plus REMOVE.md iff apply leaves anything behind.
 
 ### Dependencies are integration points
@@ -221,4 +221,4 @@ In-tree exemplars for the code archetypes. (Two carry known smells, kept deliber
 - `add-slack`: Chat SDK channel registration; the template for the whole channel family.
 - `add-deltachat`: native channel registration.
 - `add-atomic-chat-tool`: MCP-tool wiring across both runtimes (container registration and host env-helper call).
-- `add-opencode` / `add-codex`: the provider multi-point archetype, with two barrels, Dockerfile pins, and per-tree registration tests.
+- `add-opencode` / `add-codex` / `add-cursor`: the provider multi-point archetype, with five barrels, manifest or dependency pins, and per-tree registration tests.

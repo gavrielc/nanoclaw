@@ -127,9 +127,9 @@ Key files: `src/cli/dispatch.ts` (dispatcher + approval handler), `src/cli/crud.
 Trunk does not ship any specific channel adapter or non-default agent provider. The codebase is the registry/infra; channel adapters live on a long-lived sibling branch, provider code lives in each provider skill's `payload/`, and skills copy them in:
 
 - **`channels` branch** — Discord, Slack, Telegram, WhatsApp, Teams, Linear, GitHub, iMessage, Webex, Resend, Matrix, Google Chat, WhatsApp Cloud, Signal, WeChat, DeltaChat, Emacs (+ helpers, tests, channel-specific setup steps). Installed via `/add-<channel>` skills.
-- **Provider skill payloads** — OpenCode and Codex (and any future non-default agent providers) keep their code in `.claude/skills/add-<provider>/payload/` on `main`. Installed via `/add-opencode`, `/add-codex`. The `providers` branch is locked; it stays only for older releases that still copy from it.
+- **Provider skill payloads** — OpenCode, Codex and Cursor (and any future non-default agent providers) keep their code in `.claude/skills/add-<provider>/payload/` on `main`. Installed via `/add-opencode`, `/add-codex`, `/add-cursor`. The `providers` branch is locked; it stays for older releases that still copy from it and for the registry CI jobs that test refreshing those installs.
 
-Each `/add-<name>` skill is idempotent: copy module(s) into the standard paths (channel skills `git fetch origin channels` first) → append a self-registration import to the relevant barrel → `pnpm install <pkg>@<pinned-version>` → build. Channel skills carry these steps as `nc:` directive fences: setup applies them via the engine (`scripts/skill-apply.ts`), an agent applies the prose — same install either way. See [docs/skill-directives.md](docs/skill-directives.md).
+Each `/add-<name>` skill is idempotent: copy module(s) into the standard paths (channel skills `git fetch origin channels` first; provider skills copy from their own `payload/`) → append a self-registration import to the relevant barrel(s) → pin the dependency or CLI → build. Channel and provider skills carry these steps as `nc:` directive fences: setup applies them via the engine (`scripts/skill-apply.ts`; providers through `setup/providers/install.ts`), an agent applies the prose — the same steps either way. See [docs/skill-directives.md](docs/skill-directives.md).
 
 **Channel defaults.** Each adapter declares its wiring-time defaults (`ChannelDefaults`: per DM/group context — engage mode/pattern, thread policy, unknown-sender policy — plus mention signaling). Exactly two levels: the adapter declaration, and the per-wiring override chosen at creation — no per-instance DB config table. Undeclared (stale) adapters resolve through a behavior-faithful fallback, so a trunk update alone changes nothing. See [docs/api-details.md](docs/api-details.md#channel-defaults) and `src/channels/channel-defaults.ts`.
 
@@ -184,7 +184,7 @@ The subscription is supervised: if the provider's bridge ends, holds are denied,
 
 ## Skills
 
-Five types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy.
+Four types of skills, plus gateway install skills, a payload variant of the first. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy.
 
 - **Channel/provider install skills** — copy the relevant module(s) in (channels from the `channels` branch, providers from the skill's own `payload/`), wire imports, install pinned deps (e.g. `/add-discord`, `/add-slack`, `/add-whatsapp`, `/add-opencode`).
 - **Utility skills** — ship code files alongside `SKILL.md` (e.g. a `scripts/` CLI or helper).
