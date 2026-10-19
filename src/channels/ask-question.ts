@@ -70,3 +70,21 @@ export function escapeInvisibles(s: string): string {
 export function quoteForCard(value: string): string {
   return escapeInvisibles(JSON.stringify(value));
 }
+
+/**
+ * Longest title plus question a card may carry, so every card shows its
+ * request in full. Sized for common platform caps with room for markup
+ * escaping to double the text; a channel with a lower cap sets its own.
+ */
+export const MAX_CARD_QUESTION_LENGTH = 2000;
+
+/** Why a card with this title and question can't be sent, or undefined when it fits. */
+export function cardQuestionTooLong(
+  title: string,
+  question: string,
+  max = MAX_CARD_QUESTION_LENGTH,
+): string | undefined {
+  const length = title.length + question.length;
+  if (length <= max) return undefined;
+  return `the request is too long to show in full on a card (${length} characters, limit ${max})`;
+}

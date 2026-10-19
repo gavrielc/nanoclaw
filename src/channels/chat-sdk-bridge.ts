@@ -24,7 +24,7 @@ import {
 import { log } from '../log.js';
 import { SqliteStateAdapter } from '../state-sqlite.js';
 import { registerWebhookAdapter } from '../webhook-server.js';
-import { normalizeOptions, type NormalizedOption } from './ask-question.js';
+import { cardQuestionTooLong, normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type { ChannelAdapter, ChannelDefaults, ChannelSetup, InboundMessage } from './adapter.js';
 import { INSTANCE_KEY_RE } from './channel-registry.js';
 import { resolveQuestionRender, dispatchQuestionAction } from './question-render-registry.js';
@@ -369,6 +369,12 @@ export interface ChatSdkBridgeConfig {
    * sender names); channels whose card text is raw platform markup set this.
    */
   escapeCardText?: (text: string) => string;
+  /**
+   * Longest ask_question title plus card text (after escapeCardText) the
+   * platform shows in full. A longer card is refused. Defaults to
+   * MAX_CARD_QUESTION_LENGTH; channels whose platform cap is lower set it.
+   */
+  maxCardTextLength?: number;
   /**
    * Maximum text length the underlying adapter accepts in a single message.
    * When set, the bridge splits outbound text longer than this on paragraph
@@ -878,11 +884,16 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           return result?.id;
         }
         if (content.requirePresentation) throw new Error('Approval presentation adapter is unavailable');
+        // Measured after escaping, which can lengthen the text. A card the
+        // platform can't show in full is refused, not posted.
+        const text = cardText(question);
+        const tooLong = cardQuestionTooLong(title, text, config.maxCardTextLength);
+        if (tooLong) throw new Error(`ask_question card refused: ${tooLong}`);
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
         const card = Card({
           title,
           children: [
-            CardText(cardText(question)),
+            CardText(text),
             Actions(
               // Encode button id/value with the option index rather than the
               // full value. Telegram caps callback_data at 64 bytes, and
@@ -897,7 +908,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         });
         const result = await adapter.postMessage(tid, {
           card,
-          fallbackText: `${title}\n\n${cardText(question)}\nOptions: ${options.map((o) => o.label).join(', ')}`,
+          fallbackText: `${title}\n\n${text}\nOptions: ${options.map((o) => o.label).join(', ')}`,
         });
         return result?.id;
       }

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 
+import { MAX_CARD_QUESTION_LENGTH } from './ask-question.js';
 import { createChatSdkBridge, splitForLimit } from './chat-sdk-bridge.js';
 
 vi.mock('../webhook-server.js', () => ({
@@ -442,6 +443,65 @@ describe('createChatSdkBridge.deliver — ask_question cards (button styles)', (
       { type: 'text', content: '[Allow?]' },
       { type: 'text', content: '[Approve by Ann]', style: 'muted' },
     ]);
+  });
+
+  const CARD_TITLE = 'Approval needed';
+  function questionCard(question: string, title = CARD_TITLE) {
+    return {
+      kind: 'chat-sdk',
+      content: { type: 'ask_question', questionId: 'q-len', title, question, options: ['Approve'] },
+    };
+  }
+
+  it('refuses a card whose escaped text is too long to show in full, posting nothing', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      escapeCardText: (t) => t.replace(/&/g, '&amp;'),
+    });
+
+    // Fits before escaping, not after.
+    const question = '&'.repeat(MAX_CARD_QUESTION_LENGTH / 2);
+    await expect(bridge.deliver('slack:D1', null, questionCard(question))).rejects.toThrow(/too long to show in full/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("uses the channel's lower card limit when it sets one", async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      maxCardTextLength: 100,
+    });
+
+    const fits = 'x'.repeat(100 - CARD_TITLE.length);
+    await expect(bridge.deliver('slack:D1', null, questionCard(`${fits}x`))).rejects.toThrow(/limit 100/);
+    expect(calls).toHaveLength(0);
+    await bridge.deliver('slack:D1', null, questionCard(fits));
+    expect(calls).toHaveLength(1);
+  });
+
+  it('counts the title toward the limit', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+
+    const question = 'x'.repeat(MAX_CARD_QUESTION_LENGTH - 100);
+    await expect(bridge.deliver('slack:D1', null, questionCard(question, 't'.repeat(200)))).rejects.toThrow(
+      /too long to show in full/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it('posts a card at the default limit with its buttons', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+
+    const question = 'x'.repeat(MAX_CARD_QUESTION_LENGTH - CARD_TITLE.length);
+    await bridge.deliver('slack:D1', null, questionCard(question));
+    const posted = calls[0].message as { card: { children: Array<{ type: string; content?: string }> } };
+    expect(posted.card.children[0].content).toBe(question);
+    expect(posted.card.children.some((child) => child.type === 'actions')).toBe(true);
   });
 });
 

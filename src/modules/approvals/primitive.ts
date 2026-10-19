@@ -21,7 +21,7 @@
  * exposing just user-roles/user-dms) is more churn than it's worth. Revisit
  * if either module becomes genuinely optional (see REFACTOR_PLAN open q #3).
  */
-import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
+import { cardQuestionTooLong, normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { createPendingApproval, deletePendingApproval, getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
@@ -236,6 +236,13 @@ export interface RequestApprovalOptions {
  */
 export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
   const { session, action, payload, title, question, agentName, approverUserId } = opts;
+
+  // The approver must see the whole request: refuse what a card can't show in full.
+  const tooLong = cardQuestionTooLong(title, question);
+  if (tooLong) {
+    await notifyAgent(session, `${action} failed: ${tooLong}. Shorten the request and try again.`);
+    return;
+  }
 
   const approvers = approverUserId ? [approverUserId] : await pickApprover(session.agent_group_id);
   if (approvers.length === 0) {

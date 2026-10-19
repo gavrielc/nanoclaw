@@ -268,6 +268,7 @@ register({
   handler: async (args) => ({ echo: args }),
 });
 
+import { MAX_CARD_QUESTION_LENGTH } from '../channels/ask-question.js';
 import { dispatch } from './dispatch.js';
 import type { CallerContext } from './frame.js';
 
@@ -1178,5 +1179,45 @@ describe('approval card question', () => {
     await dispatch({ id: '1', command: 'wirings-update', args: { 'a b': 'owner' } }, agentCtx());
 
     expect(heldQuestionLines()[2]).toContain('--"a b" "owner"');
+  });
+
+  it('refuses a command too long to show in full instead of carding it', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const resp = await dispatch(
+      { id: '1', command: 'wirings-update', args: { engage_pattern: 'x'.repeat(MAX_CARD_QUESTION_LENGTH) } },
+      agentCtx(),
+    );
+
+    expect(resp.ok).toBe(false);
+    if (!resp.ok) {
+      expect(resp.error.code).toBe('invalid-args');
+      expect(resp.error.message).toMatch(/too long to show in full/);
+    }
+    expect(approvalState.requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('measures the escaped command, not the raw arguments', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    // 400 zero-width spaces: short raw, but each shows as a 6-character \u200b.
+    const resp = await dispatch(
+      { id: '1', command: 'wirings-update', args: { engage_pattern: '\u200b'.repeat(400) } },
+      agentCtx(),
+    );
+
+    expect(resp.ok).toBe(false);
+    expect(approvalState.requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('still cards a long command that fits', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const resp = await dispatch(
+      { id: '1', command: 'wirings-update', args: { engage_pattern: 'x'.repeat(1500) } },
+      agentCtx(),
+    );
+
+    expect(resp.ok).toBe(false);
+    if (!resp.ok) expect(resp.error.code).toBe('approval-pending');
+    expect(approvalState.requestApproval).toHaveBeenCalledTimes(1);
+    expect(heldQuestionLines()[2]).toContain('x'.repeat(1500));
   });
 });
