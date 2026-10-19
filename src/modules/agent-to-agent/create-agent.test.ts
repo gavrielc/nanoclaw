@@ -266,13 +266,13 @@ describe('create_agent — guard-based authorization (wrapped delivery action)',
   });
 });
 
-describe('create_agent — the folder must fit the 63-character runtime label', () => {
-  function expectRefusedWithNothingCreated(folder: string): void {
+describe('create_agent — a name whose folder cannot be a group folder is refused', () => {
+  function expectRefusedWithNothingCreated(folder: string, why: string): void {
     expect(mockCreateAgentGroup).not.toHaveBeenCalled();
     expect(mockInitGroupFilesystem).not.toHaveBeenCalled();
     expect(mockWriteDestinations).not.toHaveBeenCalled();
     const text = notifyTexts().at(-1);
-    expect(text).toContain(`Invalid group folder "${folder}"`);
+    expect(text).toContain(`Invalid group folder "${folder}" — ${why}.`);
     expect(text).toMatch(/^Cannot create agent ".+Nothing was created\.$/);
   }
 
@@ -291,7 +291,7 @@ describe('create_agent — the folder must fit the 63-character runtime label', 
 
     await runCreateAgent({ name });
 
-    expectRefusedWithNothingCreated(name);
+    expectRefusedWithNothingCreated(name, 'too long: 70 characters, at most 63');
   });
 
   it('a dedupe suffix that takes the folder past the limit is refused', async () => {
@@ -301,7 +301,23 @@ describe('create_agent — the folder must fit the 63-character runtime label', 
     try {
       await runCreateAgent({ name });
 
-      expectRefusedWithNothingCreated(`${name}-2`);
+      expectRefusedWithNothingCreated(`${name}-2`, 'too long: 64 characters, at most 63');
+    } finally {
+      fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
+    }
+  });
+
+  // A v1 migration copies groups/global onto disk; the refusal must not depend on it.
+  it.each([
+    ['a fresh install', false],
+    ['an install migrated from v1 (groups/global on disk)', true],
+  ])('"Global" is refused as reserved on %s', async (_install, migrated) => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+    if (migrated) fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', 'global'), { recursive: true });
+    try {
+      await runCreateAgent({ name: 'Global' });
+
+      expectRefusedWithNothingCreated('global', 'reserved');
     } finally {
       fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
     }

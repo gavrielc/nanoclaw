@@ -21,7 +21,7 @@ import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
 import { requestWake } from '../../request-wake.js';
-import { assertValidGroupFolder, groupFolderExistsOnDisk } from '../../group-folder.js';
+import { assertValidGroupFolder, groupFolderExistsOnDisk, isValidGroupFolder } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
@@ -237,13 +237,17 @@ async function performCreateAgent(
   // silently re-scope the old group's data under the new agent's identity —
   // skip to the next suffix instead (templates/create-agent.ts precedent).
   let folder = localName;
-  let suffix = 2;
-  while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
-    folder = `${localName}-${suffix}`;
-    suffix++;
+  // An invalid folder skips the dedupe and is refused below, as on the template path:
+  // deduping would make "global" global-2 only where a v1 migration left groups/global.
+  if (isValidGroupFolder(folder)) {
+    let suffix = 2;
+    while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
+      folder = `${localName}-${suffix}`;
+      suffix++;
+    }
   }
 
-  // Checked after the suffix: a name that fits can still overflow once deduped.
+  // Checked after the suffix too: a name that fits can still overflow once deduped.
   try {
     assertValidGroupFolder(folder);
   } catch (err) {

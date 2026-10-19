@@ -25,12 +25,13 @@ export function isValidGroupFolder(folder: string): boolean {
 }
 
 export function assertValidGroupFolder(folder: string): void {
-  if (!isValidGroupFolder(folder)) {
-    throw new Error(
-      `Invalid group folder "${folder}" — at most 63 characters of [A-Za-z0-9_-], ` +
-        `alphanumeric at both ends (the folder is carried verbatim as a runtime label)`,
-    );
-  }
+  if (isValidGroupFolder(folder)) return;
+  // A folder derived from a name can only fail on these two; naming them tells the caller what to change.
+  let why =
+    'at most 63 characters of [A-Za-z0-9_-], alphanumeric at both ends (the folder is carried verbatim as a runtime label)';
+  if (RESERVED_FOLDERS.has(folder.toLowerCase())) why = 'reserved';
+  else if (folder.length > 63) why = `too long: ${folder.length} characters, at most 63`;
+  throw new Error(`Invalid group folder "${folder}" — ${why}`);
 }
 
 function ensureWithinBase(baseDir: string, resolvedPath: string): void {

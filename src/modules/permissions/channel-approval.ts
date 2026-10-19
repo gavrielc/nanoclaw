@@ -421,16 +421,20 @@ export async function buildAgentSelectionOptions(
 export async function createNewAgentGroup(name: string): Promise<AgentGroup | null> {
   let folder = toFolder(name);
   const baseFolder = folder;
-  let suffix = 2;
-  // Disk-aware dedupe (A4): a folder present on disk with no claiming DB row
-  // is deleted-group residue — adopting it would silently re-scope the old
-  // group's data under the new agent's identity. Skip to the next suffix
-  // instead (templates/create-agent.ts precedent).
-  while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
-    folder = `${baseFolder}-${suffix}`;
-    suffix++;
+  // An invalid folder skips the dedupe and is refused below, as on the template path:
+  // deduping would make "global" global-2 only where a v1 migration left groups/global.
+  if (isValidGroupFolder(folder)) {
+    let suffix = 2;
+    // Disk-aware dedupe (A4): a folder present on disk with no claiming DB row
+    // is deleted-group residue — adopting it would silently re-scope the old
+    // group's data under the new agent's identity. Skip to the next suffix
+    // instead (templates/create-agent.ts precedent).
+    while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
+      folder = `${baseFolder}-${suffix}`;
+      suffix++;
+    }
   }
-  // Checked after the suffix: a name that fits can still overflow once deduped.
+  // Checked after the suffix too: a name that fits can still overflow once deduped.
   if (!isValidGroupFolder(folder)) {
     log.warn('Channel registration: new agent refused, invalid folder', { name, folder });
     return null;

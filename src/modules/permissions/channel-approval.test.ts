@@ -905,6 +905,18 @@ describe('createNewAgentGroup — disk-aware folder dedupe (A4)', () => {
     expect(await countRows('SELECT COUNT(*) AS c FROM agent_groups WHERE name = ?', name)).toBe(0);
     expect(fs.existsSync(path.join(TEST_DIR, 'groups', `${name}-2`))).toBe(false);
   });
+
+  // A v1 migration copies groups/global onto disk; the refusal must not depend on it.
+  it.each([
+    ['a fresh install', false],
+    ['an install migrated from v1 (groups/global on disk)', true],
+  ])('refuses "Global", writing nothing, on %s', async (_install, migrated) => {
+    if (migrated) fs.mkdirSync(path.join(TEST_DIR, 'groups', 'global'), { recursive: true });
+
+    expect(await createNewAgentGroup('Global')).toBeNull();
+    expect(await countRows("SELECT COUNT(*) AS c FROM agent_groups WHERE name = 'Global'")).toBe(0);
+    expect(fs.existsSync(path.join(TEST_DIR, 'groups', 'global-2'))).toBe(false);
+  });
 });
 
 describe('describeResolvedRule', () => {
