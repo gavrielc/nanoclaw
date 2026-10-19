@@ -37,7 +37,7 @@ Write the pin to `~/.onecli/.env`, which Docker Compose reads on every later `do
 cd ~/.onecli && (umask 077 && P=<onecli-gateway pin from .claude/skills/add-onecli/versions.json> && { printf '%s\n' "$P" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' || { echo "Not saved: '$P' is not a version like 1.42.0" >&2; exit 1; }; } && touch .env && { grep -v '^[[:space:]]*ONECLI_VERSION[[:space:]]*=' .env; echo "ONECLI_VERSION=$P"; } > .env.new && cat .env.new > .env && rm .env.new)
 ```
 
-Check that the compose file actually uses that value. Installers from older lines wrote the tag as a literal (`image: ghcr.io/onecli/onecli:1.36.0`); then `docker compose` re-pulls the _old_ tag, prints `Pulled` / `Running`, and the gateway never moves (found by [#3500](https://github.com/nanocoai/nanoclaw/pull/3500)). `env -u` keeps a stray `ONECLI_VERSION` in your shell from overriding the file:
+Check that the compose file actually uses that value. Installers from older lines wrote the tag as a literal (`image: ghcr.io/onecli/onecli:1.36.0`); then `docker compose` re-pulls the *old* tag, prints `Pulled` / `Running`, and the gateway never moves (found by [#3500](https://github.com/nanocoai/nanoclaw/pull/3500)). `env -u` keeps a stray `ONECLI_VERSION` in your shell from overriding the file:
 
 ```bash
 cd ~/.onecli && env -u ONECLI_VERSION docker compose config --images | grep onecli/onecli
@@ -46,7 +46,7 @@ cd ~/.onecli && env -u ONECLI_VERSION docker compose config --images | grep onec
 This must print `ghcr.io/onecli/onecli:<pin>`. Do not pull or restart until it does: an empty or missing `ONECLI_VERSION` makes the stock compose file use `latest`, which is newer than the pin. If it shows any other tag, edit the `onecli` service in `~/.onecli/docker-compose.yml` once so it reads the variable, then run the check again:
 
 ```yaml
-image: ghcr.io/onecli/onecli:${ONECLI_VERSION:-<onecli-gateway pin from .claude/skills/add-onecli/versions.json>}
+    image: ghcr.io/onecli/onecli:${ONECLI_VERSION:-<onecli-gateway pin from .claude/skills/add-onecli/versions.json>}
 ```
 
 Back up the gateway database before you pull or restart. A newer gateway can migrate it, and going back to the pin does not undo that:
