@@ -38,9 +38,13 @@ vi.mock('@onecli-sh/sdk', () => ({
     }
   },
 }));
+// Per run, so parallel runs never share one data directory.
+const { ADAPTER_DATA } = vi.hoisted(() => ({
+  ADAPTER_DATA: `/tmp/nanoclaw-onecli-adapter-${process.pid}-${Date.now()}`,
+}));
 vi.mock('../config.js', async (original) => ({
   ...(await original<typeof import('../config.js')>()),
-  DATA_DIR: '/tmp/nanoclaw-onecli-adapter-review',
+  DATA_DIR: ADAPTER_DATA,
 }));
 
 vi.mock('../log.js', () => ({
@@ -85,7 +89,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  fs.rmSync('/tmp/nanoclaw-onecli-adapter-review', { recursive: true, force: true });
+  fs.rmSync(ADAPTER_DATA, { recursive: true, force: true });
 });
 
 describe('OneCLI gateway package', () => {
@@ -633,7 +637,6 @@ const UNKNOWN_ROUTE_404 = {
   },
 };
 const AGENT_NOT_FOUND_404 = { error: { message: 'Agent not found.', type: 'not_found_error' } };
-const ADAPTER_DATA = '/tmp/nanoclaw-onecli-adapter-review';
 const DEFAULT_VAULT = [
   { id: 'sec-model', name: 'Anthropic' },
   { id: 'sec-codex', name: 'Codex' },

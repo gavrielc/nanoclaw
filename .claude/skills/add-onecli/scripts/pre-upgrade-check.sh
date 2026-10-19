@@ -15,7 +15,8 @@ for st in draft published; do
   d=$(onecli policy default get --status "$st") && [ -n "$d" ] || stop "could not read the $st default"
   hits=$(printf '%s' "$r" | jq -r "($LIST)"'[] | select((.isDefault | not) and ((.source == "blocklist") | not)) | select(any(.targets[]?; .kind == "network") or (((.conditions | type) == "array") and ((.conditions | length) > 0)) or ((.action == "allow") and ((.rateLimit == null) | not)) or (any(.targets[]?; .kind == "secret") and ((.action != "allow") or (.requireApproval == true)))) | "rule: \(.action)  \(.name)"') || stop "could not parse the $st rules"
   act=$(printf '%s' "$d" | jq -er 'if (type == "object") and ((.action | type) == "string") then .action else error("no default action") end') || stop "could not parse the $st default"
-  same=$(printf '%s' "$r" | jq -c "($LIST) | map(del(.id, .status, .generation, .createdAt) | tojson) | sort") || stop "could not parse the $st rules"
+  # Only fields that decide what a rule does: per-copy ids, timestamps or labels never count as a change.
+  same=$(printf '%s' "$r" | jq -c "($LIST) | map({priority, enabled, isDefault, source, action, rateLimit, rateLimitWindow, requireApproval, conditions, identities, targets} | tojson) | sort") || stop "could not parse the $st rules"
   if [ "$st" = draft ]; then draft="$same $act"; else published="$same $act"; fi
   if [ -n "$hits" ] || [ "$act" = block ]; then
     echo "$st policy, deleted or changed by the conversion:"

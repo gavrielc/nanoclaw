@@ -252,8 +252,8 @@ export function createProviderCredentialConnection(
     return observed;
   };
   // Groups running this provider are granted the recorded ids; keeping records too, so a retried login repairs it.
-  const record = (id: string) => {
-    if (target.provider) recordProviderCredentials(path.join(root, 'data'), target.provider, [id]);
+  const record = async (id: string) => {
+    if (target.provider) await recordProviderCredentials(path.join(root, 'data'), target.provider, [id]);
   };
   return {
     async find(options) {
@@ -265,12 +265,12 @@ export function createProviderCredentialConnection(
       const id = require();
       if (id === null) throw new Error(`No stored ${target.name} credential to keep; enter a value.`);
       await vault.keep(id);
-      record(id);
+      await record(id);
     },
     async save(value) {
       const id = require();
       observed = await vault.save(encodeOneCliValue(target, value), id);
-      record(observed);
+      await record(observed);
     },
   };
 }

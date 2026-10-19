@@ -39,7 +39,7 @@ const dataDir = () => path.join(process.cwd(), 'data');
 
 // Connected means Claude groups will be granted a credential: a live recorded
 // one, or one saved under NanoClaw's name or type, which is then recorded.
-function hasAnthropicSecret(): boolean {
+async function hasAnthropicSecret(): Promise<boolean> {
   let secrets: SecretRow[];
   try {
     secrets = listSecrets();
@@ -50,17 +50,17 @@ function hasAnthropicSecret(): boolean {
   const ids = secrets.flatMap((s) =>
     s.id && (recorded.has(s.id) || isSavedProviderCredential('claude', s)) ? [s.id] : [],
   );
-  if (ids.length) recordProviderCredentials(dataDir(), 'claude', ids);
+  if (ids.length) await recordProviderCredentials(dataDir(), 'claude', ids);
   return ids.length > 0;
 }
 
 // New groups get only the recorded model credential, so record what was saved.
-function recordClaudeSecret(id: string | null): void {
+async function recordClaudeSecret(id: string | null): Promise<void> {
   const ids = id ? [id] : listSecrets().flatMap((s) => (s.id && isSavedProviderCredential('claude', s) ? [s.id] : []));
-  if (ids.length) recordProviderCredentials(dataDir(), 'claude', ids);
+  if (ids.length) await recordProviderCredentials(dataDir(), 'claude', ids);
 }
 
-function saveSecret(value: string, baseUrl?: string): void {
+async function saveSecret(value: string, baseUrl?: string): Promise<void> {
   const args = ['secrets', 'create', '--name', 'Anthropic'];
   if (baseUrl) {
     args.push(
@@ -83,7 +83,7 @@ function saveSecret(value: string, baseUrl?: string): void {
     env: childEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  recordClaudeSecret(createdSecretId(output));
+  await recordClaudeSecret(createdSecretId(output));
 }
 
 function saveEnv(key: string, value: string): void {
@@ -100,7 +100,7 @@ function saveEnv(key: string, value: string): void {
   );
 }
 
-function migrateLegacyEnvSecret(): boolean {
+async function migrateLegacyEnvSecret(): Promise<boolean> {
   const file = path.join(process.cwd(), '.env');
   if (!fs.existsSync(file)) return false;
   const current = fs.readFileSync(file, 'utf8');
@@ -115,7 +115,7 @@ function migrateLegacyEnvSecret(): boolean {
       `Multiple Anthropic credentials exist in .env (${found.map(({ key }) => key).join(', ')}); keep one and retry`,
     );
   }
-  saveSecret(found[0].value);
+  await saveSecret(found[0].value);
   const next = current
     .split('\n')
     .filter((line) => !line.startsWith(`${found[0].key}=`))
@@ -143,15 +143,15 @@ export async function run(): Promise<void> {
   const customUrl = process.env.NANOCLAW_ANTHROPIC_BASE_URL?.trim();
   const customToken = process.env.NANOCLAW_ANTHROPIC_AUTH_TOKEN?.trim();
   if (customUrl && customToken) {
-    saveSecret(customToken, customUrl);
+    await saveSecret(customToken, customUrl);
     saveEnv('ANTHROPIC_BASE_URL', customUrl);
     p.log.success('Claude endpoint connected.');
     return;
   }
 
-  if (migrateLegacyEnvSecret()) return;
+  if (await migrateLegacyEnvSecret()) return;
 
-  if (hasAnthropicSecret()) {
+  if (await hasAnthropicSecret()) {
     p.log.success('Claude account is already connected.');
     return;
   }
@@ -184,7 +184,7 @@ export async function run(): Promise<void> {
     });
     if (result.status !== 0) throw new Error('Claude subscription sign-in failed');
     // The script saves under the name 'Anthropic'; none existed before it ran.
-    recordClaudeSecret(null);
+    await recordClaudeSecret(null);
     return;
   }
 
@@ -201,7 +201,7 @@ export async function run(): Promise<void> {
       },
     }),
   ).replace(/\s+/g, '');
-  saveSecret(token);
+  await saveSecret(token);
   p.log.success('Claude account connected.');
 }
 

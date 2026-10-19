@@ -40,7 +40,7 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
       const ids = secrets.flatMap((s) =>
         s.id && (recorded.has(s.id) || isSavedProviderCredential(provider, s)) ? [s.id] : [],
       );
-      if (ids.length) recordProviderCredentials(data, provider, ids);
+      if (ids.length) await recordProviderCredentials(data, provider, ids);
       return ids.length > 0;
     },
     async save(provider, credential) {
@@ -75,7 +75,7 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
       }
       // New groups get only the recorded model credential; an unparsed id is matched by name at spawn.
       const id = createdSecretId(output);
-      if (id) recordProviderCredentials(path.join(root, 'data'), provider, [id]);
+      if (id) await recordProviderCredentials(path.join(root, 'data'), provider, [id]);
     },
   };
 }

@@ -192,7 +192,7 @@ export async function grantProviderCredentials(
     const found = vault
       .filter((secret) => typeof secret.id === 'string' && isSavedProviderCredential(provider, secret))
       .map((secret) => secret.id as string);
-    record = updateProviderCredentials(dataDir, (r) => {
+    record = await updateProviderCredentials(dataDir, (r) => {
       if (r.matched.includes(provider)) return;
       r.providers[provider] = [...new Set([...(r.providers[provider] ?? []), ...found])];
       r.matched.push(provider);

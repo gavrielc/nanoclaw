@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,18 +20,18 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(data, { recursive: true, force: true }));
 
 describe('OneCLI provider credential record', () => {
-  it('starts empty, adds ids per provider without duplicates, and replaces on request', () => {
+  it('starts empty, adds ids per provider without duplicates, and replaces on request', async () => {
     expect(readProviderCredentials(data)).toEqual({ providers: {}, matched: [] });
-    recordProviderCredentials(data, 'claude', ['a']);
-    recordProviderCredentials(data, 'claude', ['a', 'b']);
-    recordProviderCredentials(data, 'codex', ['c']);
+    await recordProviderCredentials(data, 'claude', ['a']);
+    await recordProviderCredentials(data, 'claude', ['a', 'b']);
+    await recordProviderCredentials(data, 'codex', ['c']);
     expect(readProviderCredentials(data).providers).toEqual({ claude: ['a', 'b'], codex: ['c'] });
-    recordProviderCredentials(data, 'claude', ['d'], { replace: true });
+    await recordProviderCredentials(data, 'claude', ['d'], { replace: true });
     expect(readProviderCredentials(data)).toEqual({ providers: { claude: ['d'], codex: ['c'] }, matched: [] });
   });
 
-  it('keeps the file private, its directory usable for staged OneCLI files (0700), and leaves no lock behind', () => {
-    recordProviderCredentials(data, 'claude', ['a']);
+  it('keeps the file private, its directory usable for staged OneCLI files (0700), and leaves no lock behind', async () => {
+    await recordProviderCredentials(data, 'claude', ['a']);
     expect(fs.statSync(providerCredentialFile(data)).mode & 0o777).toBe(0o600);
     expect(fs.statSync(path.dirname(providerCredentialFile(data))).mode & 0o777).toBe(0o700);
     expect(fs.readdirSync(path.dirname(providerCredentialFile(data)))).toEqual(['provider-credentials.json']);
@@ -43,30 +43,66 @@ describe('OneCLI provider credential record', () => {
     '{"providers":{"claude":[1]},"matched":[]}',
     '{"providers":{}}',
     'not json',
-  ])('rejects a malformed record: %s', (raw) => {
+  ])('rejects a malformed record: %s', async (raw) => {
     fs.mkdirSync(path.dirname(providerCredentialFile(data)), { recursive: true });
     fs.writeFileSync(providerCredentialFile(data), raw);
     expect(() => readProviderCredentials(data)).toThrow();
-    expect(() => recordProviderCredentials(data, 'claude', ['a'])).toThrow();
+    await expect(recordProviderCredentials(data, 'claude', ['a'])).rejects.toThrow();
   });
 
-  it('waits for another writer’s lock and never takes one over, naming it instead', () => {
-    recordProviderCredentials(data, 'claude', ['a']);
-    const lock = `${providerCredentialFile(data)}.lock`;
-    fs.writeFileSync(lock, '');
-    const old = new Date(Date.now() - 60_000);
-    fs.utimesSync(lock, old, old);
-    expect(() => updateProviderCredentials(data, () => {}, { lockTimeoutMs: 100 })).toThrow(/\.lock is held/);
-    expect(fs.existsSync(lock)).toBe(true);
-    fs.rmSync(lock);
-    recordProviderCredentials(data, 'codex', ['c']);
-    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'], codex: ['c'] });
+  const lockFile = () => `${providerCredentialFile(data)}.lock`;
+  const holdLock = (content: string, ageMs = 0) => {
+    fs.mkdirSync(path.dirname(lockFile()), { recursive: true });
+    fs.writeFileSync(lockFile(), content);
+    if (ageMs) fs.utimesSync(lockFile(), new Date(Date.now() - ageMs), new Date(Date.now() - ageMs));
+  };
+  const deadPid = () => {
+    const child = spawnSync(process.execPath, ['-e', '']);
+    return child.pid!;
+  };
+
+  it('waits for a held lock without blocking the host event loop, then names the lock', async () => {
+    holdLock(`${os.hostname()} ${process.ppid} other-process`);
+    let ticked = false;
+    setTimeout(() => (ticked = true), 20);
+    await expect(updateProviderCredentials(data, () => {}, { lockTimeoutMs: 200 })).rejects.toThrow(/\.lock is held/);
+    expect(ticked).toBe(true);
+    expect(fs.existsSync(lockFile())).toBe(true);
+  });
+
+  it('takes over a lock whose writer on this host has exited', async () => {
+    holdLock(`${os.hostname()} ${deadPid()} gone`);
+    await recordProviderCredentials(data, 'claude', ['a']);
+    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
+    expect(fs.existsSync(lockFile())).toBe(false);
+  });
+
+  it('takes over a lock this process id left in an earlier run (same pid, other run)', async () => {
+    holdLock(`${os.hostname()} ${process.pid} an-earlier-run`);
+    await recordProviderCredentials(data, 'claude', ['a']);
+    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
+  });
+
+  it.each([
+    ['a live writer', () => `${os.hostname()} ${process.ppid} other-process`, 0],
+    ['another host', () => `some-other-host ${deadPid()} gone`, 0],
+    ['an empty lock just created', () => '', 0],
+  ])('never takes over a lock from %s', async (_name, content, age) => {
+    holdLock(content(), age);
+    await expect(updateProviderCredentials(data, () => {}, { lockTimeoutMs: 150 })).rejects.toThrow(/\.lock is held/);
+    expect(fs.existsSync(lockFile())).toBe(true);
+  });
+
+  it('takes over an empty lock left long ago (a writer that died before writing its name)', async () => {
+    holdLock('', 60_000);
+    await recordProviderCredentials(data, 'claude', ['a']);
+    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
   });
 
   it('never drops an id when separate processes record at the same time', async () => {
     const script = `
       import { recordProviderCredentials } from ${JSON.stringify(path.resolve(__dirname, 'onecli-provider-credentials.ts'))};
-      for (let i = 0; i < 20; i++) recordProviderCredentials(process.argv[1], 'p', [process.argv[2] + '-' + i]);
+      for (let i = 0; i < 20; i++) await recordProviderCredentials(process.argv[1], 'p', [process.argv[2] + '-' + i]);
     `;
     const run = (tag: string) =>
       new Promise<number>((resolve) => {

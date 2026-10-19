@@ -305,6 +305,20 @@ esac
     expect(
       check({ rules: [block], published: [{ ...block, id: 'pub-1', status: 'published', generation: 3 }] }).status,
     ).toBe(0);
+    // Per-copy fields a gateway may add or change never count as an unpublished change.
+    const copy = {
+      ...block,
+      id: 'pub-2',
+      logicalId: 'l1',
+      updatedAt: '2026-10-19',
+      createdAt: 'x',
+      description: 'note',
+    };
+    expect(check({ rules: [{ ...block, logicalId: 'l1' }], published: [copy] }).status).toBe(0);
+    // A change to what the rule does is one.
+    expect(check({ rules: [block], published: [{ ...block, identities: [{ type: 'agent', id: 'a2' }] }] }).status).toBe(
+      1,
+    );
   });
 
   it('stops on a block project default', () => {
