@@ -74,8 +74,8 @@ until they're done.
 > 3. Enable the **Google Chat API**
 > 4. Go to **Google Chat API** > **Configuration**:
 >    - App name and description
->    - Connection settings: select **HTTP endpoint URL** and set to `https://your-domain/webhook/gchat`
->    - Make sure **Build this Chat app as a Google Workspace add-on** is checked, and under **Triggers** use that same URL for every trigger
+>    - Make sure **Build this Chat app as a Google Workspace add-on** is checked
+>    - Connection settings: select **HTTP endpoint URL**, then under **Triggers** select **Use a common HTTP endpoint URL for all triggers** and set it to `https://your-domain/webhook/gchat`
 > 5. Create a **Service Account**:
 >    - Go to **IAM & Admin** > **Service Accounts** > **Create Service Account**
 >    - Grant the Chat Bot role
@@ -111,9 +111,9 @@ add-on signs each webhook for its HTTP endpoint URL with a service account
 named after your project number. So it needs both values. Tell the user:
 
 ```nc:operator
-In Google Cloud Console, open Google Chat API → Configuration. Make sure "Build this Chat app as a Google Workspace add-on" is checked, and that every trigger (Message, Added to space, and the rest) uses the same HTTP endpoint URL, ending in /webhook/gchat. Save.
+In Google Cloud Console, open Google Chat API → Configuration. Make sure "Build this Chat app as a Google Workspace add-on" is checked, and that under Connection settings → Triggers, "Use a common HTTP endpoint URL for all triggers" is selected with a URL ending in /webhook/gchat. Save.
 An existing Chat app that is not an add-on has no such checkbox: it needs Google's "Convert to add-on" steps first (https://developers.google.com/workspace/chat/convert), and that conversion can't be undone.
-Then find the project number. It is all digits, not the project ID. It is on the project's Dashboard, or run: gcloud projects describe <project_id> --format='value(projectNumber)' (the project_id is in the service account key).
+Then find the project number: the same page shows a Service Account Email like service-123456789012@gcp-sa-gsuiteaddons.iam.gserviceaccount.com, and the digits in it are your project number.
 ```
 
 Store both in `.env` (set-if-absent). The URL must match the console exactly,
