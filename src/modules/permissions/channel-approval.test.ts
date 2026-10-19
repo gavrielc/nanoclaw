@@ -855,8 +855,10 @@ describe('unknown-channel registration flow', () => {
     expect(await countRows('SELECT COUNT(*) AS c FROM messaging_group_agents')).toBe(0);
     expect(await countRows('SELECT COUNT(*) AS c FROM pending_channel_approvals')).toBe(1);
     const refusal = JSON.parse(deliverMock.mock.calls.at(-1)![4] as string).text as string;
-    expect(refusal).toContain('Nothing was created');
-    expect(refusal).toContain('Reply with another name');
+    expect(refusal).toBe(
+      `⚠️ Cannot create agent "${longName}": Invalid group folder "${longName}" — too long: 70 characters, at most 63. ` +
+        'Nothing was created. Reply with another name:',
+    );
 
     // The prompt is re-armed: the next reply is taken as the name.
     await nameReply('name-reply-retry', 'Newbie');
@@ -930,16 +932,18 @@ describe('createNewAgentGroup — disk-aware folder dedupe (A4)', () => {
 
     const ag = await createNewAgentGroup('My Agent');
 
-    expect(ag?.folder).toBe('my-agent-2');
+    expect(ag).toMatchObject({ folder: 'my-agent-2' });
     // Residue untouched.
     expect(fs.readFileSync(path.join(residue, 'memory.md'), 'utf8')).toBe('old group memory\n');
   });
 
-  it('refuses, writing nothing, when the suffix takes the folder past 63 characters', async () => {
+  it('refuses, writing nothing, when the suffix takes the folder past 63 characters, saying the name is taken', async () => {
     const name = 'b'.repeat(62);
     fs.mkdirSync(path.join(TEST_DIR, 'groups', name), { recursive: true });
 
-    expect(await createNewAgentGroup(name)).toBeNull();
+    expect(await createNewAgentGroup(name)).toBe(
+      `Invalid group folder "${name}-2" — too long: 64 characters, at most 63 ("${name}" is already taken)`,
+    );
     expect(await countRows('SELECT COUNT(*) AS c FROM agent_groups WHERE name = ?', name)).toBe(0);
     expect(fs.existsSync(path.join(TEST_DIR, 'groups', `${name}-2`))).toBe(false);
   });
@@ -951,7 +955,7 @@ describe('createNewAgentGroup — disk-aware folder dedupe (A4)', () => {
   ])('refuses "Global", writing nothing, on %s', async (_install, migrated) => {
     if (migrated) fs.mkdirSync(path.join(TEST_DIR, 'groups', 'global'), { recursive: true });
 
-    expect(await createNewAgentGroup('Global')).toBeNull();
+    expect(await createNewAgentGroup('Global')).toBe('Invalid group folder "global" — reserved');
     expect(await countRows("SELECT COUNT(*) AS c FROM agent_groups WHERE name = 'Global'")).toBe(0);
     expect(fs.existsSync(path.join(TEST_DIR, 'groups', 'global-2'))).toBe(false);
   });

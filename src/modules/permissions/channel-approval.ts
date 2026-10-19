@@ -48,11 +48,11 @@
 import { normalizeOptions, type NormalizedOption, type RawOption } from '../../channels/ask-question.js';
 import { escapeInvisibles, quoteForCard } from '../../card-text.js';
 import { resolveWiringDefaults } from '../../channels/channel-defaults.js';
-import { createAgentGroup, getAgentGroup, getAgentGroupByFolder, getAllAgentGroups } from '../../db/agent-groups.js';
+import { createAgentGroup, getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getChannelAdapter } from '../../channels/channel-registry.js';
 import { getMessagingGroup, updateMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';
-import { groupFolderExistsOnDisk, isValidGroupFolder } from '../../group-folder.js';
+import { newGroupFolder } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import type { InboundEvent, ResolvedConversation } from '../../channels/adapter.js';
@@ -415,29 +415,17 @@ export async function buildAgentSelectionOptions(
 
 /**
  * Create a new agent group and initialize its filesystem. Handles
- * folder-name collisions with numeric suffixes. Returns null, writing nothing,
- * when the final folder can't be a group folder (too long or reserved).
+ * folder-name collisions with numeric suffixes. Returns why, writing nothing,
+ * when the folder can't be a group folder.
  */
-export async function createNewAgentGroup(name: string): Promise<AgentGroup | null> {
-  let folder = toFolder(name);
-  const baseFolder = folder;
-  // An invalid folder skips the dedupe and is refused below, as on the template path:
-  // deduping would make "global" global-2 only where a v1 migration left groups/global.
-  if (isValidGroupFolder(folder)) {
-    let suffix = 2;
-    // Disk-aware dedupe (A4): a folder present on disk with no claiming DB row
-    // is deleted-group residue — adopting it would silently re-scope the old
-    // group's data under the new agent's identity. Skip to the next suffix
-    // instead (templates/create-agent.ts precedent).
-    while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
-      folder = `${baseFolder}-${suffix}`;
-      suffix++;
-    }
-  }
-  // Checked after the suffix too: a name that fits can still overflow once deduped.
-  if (!isValidGroupFolder(folder)) {
-    log.warn('Channel registration: new agent refused, invalid folder', { name, folder });
-    return null;
+export async function createNewAgentGroup(name: string): Promise<AgentGroup | string> {
+  let folder: string;
+  try {
+    folder = await newGroupFolder(toFolder(name));
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    log.warn('Channel registration: new agent refused, invalid folder', { name, why });
+    return why;
   }
 
   const agId = `ag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

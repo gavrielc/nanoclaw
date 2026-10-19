@@ -13,8 +13,9 @@
  * space is accepted and stored).
  *
  * Also: a display name too long for its dm-with-<name> folder is refused
- * before any agent group is written (kill: drop the assertValidGroupFolder
- * call and the group is created with a folder that can never spawn).
+ * before anything is written (kill: drop the assertValidGroupFolder call and
+ * the group is created with a folder that can never spawn; write the user
+ * before the group and its row is left behind).
  *
  * Drives the real entry point in a child process against a temp cwd
  * (PROJECT_ROOT = cwd, so data/v2.db and data/cli.sock are temp) with a fake
@@ -155,14 +156,15 @@ describe('scripts/init-first-agent.ts', () => {
   }, 60_000);
 
   // dm-with- is 8 characters, so a 56-character name makes a 64-character folder.
-  it('refuses a display name too long for its dm-with-<name> folder before writing a group', async () => {
+  it('refuses a display name too long for its dm-with-<name> folder before writing anything', async () => {
     const name = 'a'.repeat(56);
     const r = await run(['--display-name', name]);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain(`Invalid group folder "dm-with-${name}" — too long: 64 characters, at most 63`);
+    expect(r.stderr).toBe(`Invalid group folder "dm-with-${name}" — too long: 64 characters, at most 63\n`);
     const db = new Database(path.join(cwd, 'data', 'v2.db'), { readonly: true });
     try {
       expect(db.prepare('SELECT COUNT(*) AS c FROM agent_groups').get()).toEqual({ c: 0 });
+      expect(db.prepare('SELECT COUNT(*) AS c FROM users').get()).toEqual({ c: 0 });
     } finally {
       db.close();
     }

@@ -17,15 +17,15 @@
  * the same authorization (the grant is bound to the ref, ./guard.ts).
  */
 import { quoteForCard } from '../../card-text.js';
-import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
+import { createAgentGroup, getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
 import { requestWake } from '../../request-wake.js';
-import { assertValidGroupFolder, groupFolderExistsOnDisk, isValidGroupFolder } from '../../group-folder.js';
+import { newGroupFolder } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
-import { createAgentFromTemplate } from '../../templates/create-agent.js';
+import { createAgentFromTemplate, templateFolder } from '../../templates/create-agent.js';
 import { isValidTemplateRef } from '../../templates/local-dir.js';
 import { ensureTemplateLocal, hasLocalTemplate } from '../../templates/library.js';
 import type { AgentGroup, Session } from '../../types.js';
@@ -73,7 +73,24 @@ export async function validateCreateAgent(content: Record<string, unknown>, sess
     log.warn('create_agent failed: missing source group', { sessionAgentGroup: session.agent_group_id, name });
     return false;
   }
-  return true;
+  // So no admin is asked to approve a folder that would be refused. Approved replays re-run this.
+  return (await newAgentFolder(name, templateRef(content), (text) => notifyAgent(session, text))) !== null;
+}
+
+/** The folder a create of `name` takes, or null once the requester is told why it can't be made. */
+async function newAgentFolder(
+  name: string,
+  template: string | undefined,
+  notify: (text: string) => Promise<void>,
+): Promise<string | null> {
+  try {
+    return await (template ? templateFolder(name) : newGroupFolder(normalizeName(name)));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await notify(`Cannot create agent "${name}": ${msg}. Nothing was created.`);
+    log.warn('create_agent refused: invalid folder', { name, err: msg });
+    return null;
+  }
 }
 
 /**
@@ -231,31 +248,9 @@ async function performCreateAgent(
   notify: (text: string) => Promise<void>,
   options?: CreateAgentOptions,
 ): Promise<void> {
-  // Derive a safe folder name, deduplicated globally across
-  // agent_groups.folder AND the on-disk groups/ dir: a folder present on disk
-  // with no claiming DB row is deleted-group residue, and adopting it would
-  // silently re-scope the old group's data under the new agent's identity —
-  // skip to the next suffix instead (templates/create-agent.ts precedent).
-  let folder = localName;
-  // An invalid folder skips the dedupe and is refused below, as on the template path:
-  // deduping would make "global" global-2 only where a v1 migration left groups/global.
-  if (isValidGroupFolder(folder)) {
-    let suffix = 2;
-    while ((await getAgentGroupByFolder(folder)) || groupFolderExistsOnDisk(folder)) {
-      folder = `${localName}-${suffix}`;
-      suffix++;
-    }
-  }
-
-  // Checked after the suffix too: a name that fits can still overflow once deduped.
-  try {
-    assertValidGroupFolder(folder);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await notify(`Cannot create agent "${name}": ${msg}. Nothing was created.`);
-    log.warn('create_agent refused: invalid folder', { name, folder });
-    return;
-  }
+  // Again, as the precheck did: the name may have been taken since.
+  const folder = await newAgentFolder(name, undefined, notify);
+  if (!folder) return;
 
   const agentGroupId = `ag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const now = new Date().toISOString();

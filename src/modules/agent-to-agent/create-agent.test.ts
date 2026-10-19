@@ -96,7 +96,8 @@ vi.mock('../../templates/library.js', () => ({
   ensureTemplateLocal: (...a: unknown[]) => mockEnsureTemplateLocal(...a),
   hasLocalTemplate: (ref: string) => ref === 'local/one',
 }));
-vi.mock('../../templates/create-agent.js', () => ({
+vi.mock('../../templates/create-agent.js', async (importOriginal) => ({
+  templateFolder: (await importOriginal<typeof import('../../templates/create-agent.js')>()).templateFolder,
   createAgentFromTemplate: (...a: unknown[]) => mockCreateAgentFromTemplate(...a),
 }));
 vi.mock('../../container-runner.js', () => ({
@@ -266,16 +267,83 @@ describe('create_agent — guard-based authorization (wrapped delivery action)',
   });
 });
 
-describe('create_agent — a name whose folder cannot be a group folder is refused', () => {
-  function expectRefusedWithNothingCreated(folder: string, why: string): void {
-    expect(mockCreateAgentGroup).not.toHaveBeenCalled();
-    expect(mockInitGroupFilesystem).not.toHaveBeenCalled();
-    expect(mockWriteDestinations).not.toHaveBeenCalled();
-    const text = notifyTexts().at(-1);
-    expect(text).toContain(`Invalid group folder "${folder}" — ${why}.`);
-    expect(text).toMatch(/^Cannot create agent ".+Nothing was created\.$/);
-  }
+// Group scope is the case that matters most: the refusal comes before the hold, so no admin is carded.
+describe.each(['global', 'group'])(
+  'create_agent — a name whose folder cannot be a group folder is refused (%s scope)',
+  (scope) => {
+    beforeEach(() => {
+      mockGetContainerConfig.mockReturnValue({ cli_scope: scope });
+    });
+    afterEach(() => {
+      fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
+    });
 
+    function expectRefusedWithNothingCreated(folder: string, why: string): void {
+      expect(mockRequestApproval).not.toHaveBeenCalled();
+      expect(mockEnsureTemplateLocal).not.toHaveBeenCalled();
+      expect(mockCreateAgentGroup).not.toHaveBeenCalled();
+      expect(mockCreateAgentFromTemplate).not.toHaveBeenCalled();
+      expect(mockInitGroupFilesystem).not.toHaveBeenCalled();
+      expect(mockWriteDestinations).not.toHaveBeenCalled();
+      const text = notifyTexts().at(-1);
+      expect(text).toContain(`Invalid group folder "${folder}" — ${why}.`);
+      expect(text).toMatch(/^Cannot create agent ".+Nothing was created\.$/);
+    }
+
+    it('a longer name than the limit', async () => {
+      const name = 'a'.repeat(70);
+
+      await runCreateAgent({ name });
+
+      expectRefusedWithNothingCreated(name, 'too long: 70 characters, at most 63');
+    });
+
+    it('a name whose dedupe suffix takes the folder past the limit, saying the name is taken', async () => {
+      const name = 'b'.repeat(62);
+      fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+
+      await runCreateAgent({ name });
+
+      expectRefusedWithNothingCreated(`${name}-2`, `too long: 64 characters, at most 63 ("${name}" is already taken)`);
+    });
+
+    // A v1 migration copies groups/global onto disk; the refusal must not depend on it.
+    it.each([
+      ['a fresh install', false],
+      ['an install migrated from v1 (groups/global on disk)', true],
+    ])('"Global", as reserved, on %s', async (_install, migrated) => {
+      if (migrated) fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', 'global'), { recursive: true });
+
+      await runCreateAgent({ name: 'Global' });
+
+      expectRefusedWithNothingCreated('global', 'reserved');
+    });
+
+    it('a template create with a longer name, before the template is fetched', async () => {
+      const name = 'c'.repeat(70);
+
+      await runCreateAgent({ name, template: 'sales/sdr' });
+
+      expectRefusedWithNothingCreated(name, 'too long: 70 characters, at most 63');
+    });
+
+    // The template stamp adds -<8 hex> on a clash, so 54 characters is the most that still fits.
+    it('a template create whose clash suffix takes the folder past the limit', async () => {
+      const name = 'd'.repeat(55);
+      fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+
+      await runCreateAgent({ name, template: 'sales/sdr' });
+
+      expect(mockRequestApproval).not.toHaveBeenCalled();
+      expect(mockCreateAgentFromTemplate).not.toHaveBeenCalled();
+      expect(notifyTexts().at(-1)).toMatch(
+        new RegExp(`too long: 64 characters, at most 63 \\("${name}" is already taken\\)\\. Nothing was created\\.$`),
+      );
+    });
+  },
+);
+
+describe('create_agent — the folder limit', () => {
   it('a name at the limit is created', async () => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
     const name = 'a'.repeat(63);
@@ -285,39 +353,26 @@ describe('create_agent — a name whose folder cannot be a group folder is refus
     expect(mockCreateAgentGroup.mock.calls[0][0]).toMatchObject({ folder: name });
   });
 
-  it('a longer name is refused and nothing is created', async () => {
-    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
-    const name = 'a'.repeat(70);
-
+  it('a name taken between the card and the approval is refused on the approved replay', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const name = 'e'.repeat(62);
     await runCreateAgent({ name });
+    expect(mockRequestApproval).toHaveBeenCalledTimes(1);
 
-    expectRefusedWithNothingCreated(name, 'too long: 70 characters, at most 63');
-  });
-
-  it('a dedupe suffix that takes the folder past the limit is refused', async () => {
-    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
-    const name = 'b'.repeat(62);
     fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
     try {
-      await runCreateAgent({ name });
+      const payload = { name, instructions: null };
+      await approvalHandlers.get('create_agent')!({
+        session: SESSION,
+        payload,
+        approval: liveGrant('appr-ca-race', payload),
+        userId: 'telegram:admin',
+        notify: vi.fn(),
+      });
 
-      expectRefusedWithNothingCreated(`${name}-2`, 'too long: 64 characters, at most 63');
-    } finally {
-      fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
-    }
-  });
-
-  // A v1 migration copies groups/global onto disk; the refusal must not depend on it.
-  it.each([
-    ['a fresh install', false],
-    ['an install migrated from v1 (groups/global on disk)', true],
-  ])('"Global" is refused as reserved on %s', async (_install, migrated) => {
-    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
-    if (migrated) fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', 'global'), { recursive: true });
-    try {
-      await runCreateAgent({ name: 'Global' });
-
-      expectRefusedWithNothingCreated('global', 'reserved');
+      expect(mockCreateAgentGroup).not.toHaveBeenCalled();
+      expect(mockRequestApproval).toHaveBeenCalledTimes(1);
+      expect(notifyTexts().at(-1)).toContain(`("${name}" is already taken). Nothing was created.`);
     } finally {
       fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
     }

@@ -653,8 +653,8 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   const row = await getPendingChannelApproval(pending.channelMgId);
   if (!row) return true;
 
-  const ag = await createNewAgentGroup(text);
-  if (!ag) {
+  const created = await createNewAgentGroup(text);
+  if (typeof created === 'string') {
     const adapter = getDeliveryAdapter();
     if (!adapter) return true;
     // Nothing was written; re-arm so the approver's next reply is the name.
@@ -666,7 +666,7 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
         null,
         'chat-sdk',
         JSON.stringify({
-          text: `⚠️ Can't create an agent named "${text}": the name is too long or reserved. Nothing was created. Reply with another name:`,
+          text: `⚠️ Cannot create agent "${text}": ${created}. Nothing was created. Reply with another name:`,
         }),
         undefined,
         event.instance,
@@ -681,6 +681,7 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
     }
     return true;
   }
+  const ag = created;
   log.info('Channel registration: new agent group created', {
     messagingGroupId: row.messaging_group_id,
     agentGroupId: ag.id,

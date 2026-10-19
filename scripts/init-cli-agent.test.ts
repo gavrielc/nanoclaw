@@ -1,10 +1,11 @@
 /**
  * scripts/init-cli-agent.ts: a folder that can't be a group folder is refused
- * before any agent group is written.
+ * in one line, before anything is written.
  *
  * What breaks without it: cli-with- is 9 characters, so a 55-character display
  * name makes a 64-character folder; the group is created and can never spawn.
- * Kill condition: drop the assertValidGroupFolder call before createAgentGroup.
+ * Kill condition: drop the assertValidGroupFolder call before createAgentGroup,
+ * or write the cli:local user before the group.
  *
  * Drives the real entry point in a child process against a temp cwd
  * (PROJECT_ROOT = cwd, so data/v2.db and groups/ are temp). Same shape as
@@ -45,10 +46,10 @@ describe('scripts/init-cli-agent.ts', () => {
     });
   }
 
-  function folders(): string[] {
+  function column(sql: string): unknown[] {
     const db = new Database(path.join(cwd, 'data', 'v2.db'), { readonly: true });
     try {
-      return (db.prepare('SELECT folder FROM agent_groups').all() as { folder: string }[]).map((r) => r.folder);
+      return db.prepare(sql).pluck().all();
     } finally {
       db.close();
     }
@@ -58,14 +59,15 @@ describe('scripts/init-cli-agent.ts', () => {
     const name = 'a'.repeat(54);
     const r = await run(name);
     expect(r.status, r.stderr).toBe(0);
-    expect(folders()).toEqual([`cli-with-${name}`]);
+    expect(column('SELECT folder FROM agent_groups')).toEqual([`cli-with-${name}`]);
   }, 60_000);
 
-  it('refuses a display name one character longer before writing a group', async () => {
+  it('refuses a display name one character longer, in one line, before writing anything', async () => {
     const name = 'a'.repeat(55);
     const r = await run(name);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain(`Invalid group folder "cli-with-${name}" — too long: 64 characters, at most 63`);
-    expect(folders()).toEqual([]);
+    expect(r.stderr).toBe(`Invalid group folder "cli-with-${name}" — too long: 64 characters, at most 63\n`);
+    expect(column('SELECT folder FROM agent_groups')).toEqual([]);
+    expect(column('SELECT id FROM users')).toEqual([]);
   }, 60_000);
 });
