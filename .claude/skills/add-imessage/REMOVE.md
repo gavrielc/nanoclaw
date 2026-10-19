@@ -61,9 +61,7 @@ rm -f data/photon-auth.json
 
 ```bash
 pnpm run build
-source setup/lib/install-slug.sh
-launchctl kickstart -k gui/$(id -u)/$(launchd_label)  # macOS
-# systemctl --user restart $(systemd_unit)            # Linux
+bash setup/lib/restart.sh
 ```
 
 ## 7. Unwire and delete the messaging group (optional)
