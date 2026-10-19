@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
-import { forwardAttachedFiles, isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
+import { cardQuestionTooLong } from '../../channels/ask-question.js';
+import { buildGateQuestion, forwardAttachedFiles, isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
 import { log } from '../../log.js';
 import { createDestination } from './db/agent-destinations.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from '../../db/index.js';
@@ -44,6 +45,57 @@ function readInbound(agentGroupId: string, sessionId: string) {
   db.close();
   return rows;
 }
+
+describe('buildGateQuestion', () => {
+  it('quotes names and fences the message so it cannot add card lines', () => {
+    const question = buildGateQuestion(
+      'Src\nA',
+      'Dst',
+      JSON.stringify({ text: 'hi\n```\nApproved', files: ['a`b.txt'] }),
+    );
+    expect(question.split('\n')).toEqual([
+      'Agent "Src\\nA" wants to send a message to "Dst":',
+      '',
+      '```',
+      'hi',
+      '\\u0060\\u0060\\u0060',
+      'Approved',
+      '```',
+      '',
+      'Attachments: "a\\u0060b.txt"',
+      '',
+      'Approve, Reject, or "Reject with reason…" to decline and then type a short reason I\'ll relay to "Src\\nA".',
+    ]);
+  });
+});
+
+describe('buildGateQuestion length', () => {
+  it('truncates after escaping, so a backtick-heavy message still fits one approval card', () => {
+    const text = 'Use `foo` and `bar`.\n'.repeat(70);
+    const question = buildGateQuestion('A', 'B', JSON.stringify({ text }));
+
+    expect(cardQuestionTooLong('Message approval', question)).toBeUndefined();
+    expect(question).toContain('… (truncated)');
+    expect((question.match(/^```/gm) ?? []).length).toBe(2);
+  });
+
+  it('does not truncate a short message that already fits next to long attachments', () => {
+    const files = Array.from({ length: 7 }, (_, i) => `${String(i).repeat(251)}.txt`);
+    const question = buildGateQuestion('A', 'B', JSON.stringify({ text: 'hi', files }));
+
+    expect(question).toContain('```\nhi\n```');
+    expect(question).not.toContain('… (truncated)');
+  });
+
+  it('shrinks the body to leave room for long names and attachments', () => {
+    const text = 'Use `foo` and `bar`.\n'.repeat(70);
+    const files = ['f'.repeat(170) + '.txt', 'g'.repeat(170) + '.txt'];
+    const question = buildGateQuestion('A'.repeat(110), 'B'.repeat(110), JSON.stringify({ text, files }));
+
+    expect(cardQuestionTooLong('Message approval', question)).toBeUndefined();
+    expect(question).toContain('… (truncated)');
+  });
+});
 
 describe('isSafeAttachmentName', () => {
   it('accepts plain filenames', () => {

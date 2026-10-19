@@ -19,7 +19,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { initTestDb, closeDb, runMigrations, getDb } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
-import { AGENT_ACCESS_SCOPE_WARNING, createNewAgentGroup } from './channel-approval.js';
+import { AGENT_ACCESS_SCOPE_WARNING, createNewAgentGroup, describeResolvedRule } from './channel-approval.js';
 import { createMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import {
   initChannelAdapters,
@@ -59,6 +59,13 @@ const slackAdapter: ChannelAdapter = {
   defaults: telegramDefaults,
 };
 registerChannelAdapter('slack', { factory: () => slackAdapter, defaults: telegramDefaults });
+registerChannelAdapter('namepattern', {
+  factory: () => null,
+  defaults: {
+    ...telegramDefaults,
+    group: { ...telegramDefaults.group, engageMode: 'pattern', engagePattern: '\\b{name}\\b' },
+  },
+});
 
 // Mock container runner — prevent actual docker spawn.
 vi.mock('../../container-runner.js', () => ({
@@ -245,7 +252,7 @@ describe('unknown-channel registration flow', () => {
     expect(payload.type).toBe('ask_question');
     expect(payload.title).toBe('📣 Bot mentioned in new channel');
     expect(payload.question).toBe(
-      `Caller mentioned your bot in a telegram channel. If connected, the agent will respond to @-mentions in this group. ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle this channel?`,
+      `"Caller" mentioned your bot in a telegram channel. If connected, the agent will respond to @-mentions in this group. ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle this channel?`,
     );
     // Card tells the approver the resolved engage rule.
     expect(payload.question).toContain('will respond to @-mentions in this group');
@@ -254,6 +261,7 @@ describe('unknown-channel registration flow', () => {
     const connectOption = payload.options.find((o: { value: string }) => o.value.startsWith('connect:'));
     expect(connectOption).toBeDefined();
     expect(connectOption.label).toContain('Andy');
+    expect(connectOption.selectedLabel).toBe('✅ Connected to "Andy"');
 
     const rows = await getDb().all<{ messaging_group_id: string }>('SELECT * FROM pending_channel_approvals');
     expect(rows).toHaveLength(1);
@@ -273,7 +281,9 @@ describe('unknown-channel registration flow', () => {
 
     const payload = JSON.parse(deliverMock.mock.calls[0][4] as string) as { title: string; question: string };
     expect(payload.title).toBe('👥 Bot mentioned in new group chat');
-    expect(payload.question).toContain('Alice Doe mentioned your bot in a group chat with Bob and Carol on slack.');
+    expect(payload.question).toContain(
+      '"Alice Doe" mentioned your bot in a group chat with "Bob" and "Carol" on slack.',
+    );
     expect(payload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
     expect(payload.question).toContain('How would you like to handle this group chat?');
     expect(payload.question).not.toContain('mpdm-');
@@ -289,7 +299,7 @@ describe('unknown-channel registration flow', () => {
 
     const payload = JSON.parse(deliverMock.mock.calls[0][4] as string) as { title: string; question: string };
     expect(payload.title).toBe('📣 Bot mentioned in new channel');
-    expect(payload.question).toContain('Alice Doe mentioned your bot in growth-team on slack.');
+    expect(payload.question).toContain('"Alice Doe" mentioned your bot in "growth-team" on slack.');
     expect(payload.question).toContain('How would you like to handle this channel?');
     expect(resolveChannelNameMock).not.toHaveBeenCalled();
     expect((await getMessagingGroupByPlatform('slack', 'C_GROWTH'))?.name).toBe('growth-team');
@@ -827,5 +837,13 @@ describe('createNewAgentGroup — disk-aware folder dedupe (A4)', () => {
     expect(ag.folder).toBe('my-agent-2');
     // Residue untouched.
     expect(fs.readFileSync(path.join(residue, 'memory.md'), 'utf8')).toBe('old group memory\n');
+  });
+});
+
+describe('describeResolvedRule', () => {
+  it('shows a name-based pattern in a code span an agent name cannot leave', () => {
+    expect(describeResolvedRule('namepattern', true, 'Scout\n# Trusted `x`', 'namepattern')).toBe(
+      'will respond to messages matching `\\bScout\\u000a# Trusted \\u0060x\\u0060`',
+    );
   });
 });

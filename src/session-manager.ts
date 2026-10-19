@@ -464,10 +464,12 @@ async function runMailboxSession<T>(
 
 /**
  * Write a message directly to a session's outbound mailbox so the host delivery
- * loop picks it up. Used by the command gate to send denial responses
- * without waking a container.
+ * loop picks it up.
  *
- * The selected mailbox owns persistence and sequencing.
+ * The selected mailbox owns persistence and sequencing. With the SQLite mailbox,
+ * outbound.db belongs to the container: call this only while none is running,
+ * because across a VM file share (Docker Desktop) the two writers can't see each
+ * other's locks and writes get lost.
  */
 export function writeOutboundDirect(
   agentGroupId: string,
