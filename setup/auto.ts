@@ -910,7 +910,7 @@ async function askKeepWaiting(
       {
         value: 'wait',
         label: 'Keep waiting',
-        hint: `${EXTRA_WAIT_MS / 60_000} more minutes; a local model can take a few minutes to load`,
+        hint: `${EXTRA_WAIT_MS / 60_000} more minutes; a local model can take several minutes to load and read its first prompt`,
       },
       { value: 'skip', label: 'Skip the first chat and finish setup', hint: 'chat later with `pnpm run chat hi`' },
     ],

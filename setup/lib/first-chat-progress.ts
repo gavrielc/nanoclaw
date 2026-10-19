@@ -37,7 +37,7 @@ const COPY: Record<FirstChatStage, { running: string; done: string; waitingOn: s
 const IDLE_WAIT_MS = 3_000;
 // Shown once the model has been quiet this long; a hosted model rarely is.
 const SLOW_MODEL_HINT_MS = 20_000;
-const SLOW_MODEL_HINT = 'A local model can take a few minutes to load before its first reply.';
+const SLOW_MODEL_HINT = 'A local model can take several minutes to load and read its first prompt.';
 
 /** The question setup asks when a wait window ends. */
 export function keepWaitingQuestion(stage: FirstChatStage, waitedMs: number): string {
