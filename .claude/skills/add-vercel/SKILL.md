@@ -99,7 +99,7 @@ Put the chosen group ids, comma-separated, in `VERCEL_GROUPS` and run the block.
 (
 VERCEL_GROUPS="<agent-group-id>,<agent-group-id>"
 VERCEL_SECRET=""
-L=$(onecli secrets list --max 0) && printf '%s' "$L" | grep -q '[^[:space:]]' || { echo "could not list OneCLI secrets" >&2; exit 1; }
+L=$(onecli secrets list --max 0) && [ -n "$(printf '%s' "$L" | tr -d '[:space:]')" ] || { echo "could not list OneCLI secrets" >&2; exit 1; }
 T=$(printf '%s' "$L" | jq -c '[(if type == "array" then . else .data end)[] | select(.hostPattern == "api.vercel.com") | {id, name, createdAt}]') || { echo "could not read the OneCLI secret list" >&2; exit 1; }
 if [ -n "$VERCEL_SECRET" ]; then
   S=$(printf '%s' "$T" | jq -r --arg s "$VERCEL_SECRET" '.[] | select(.id == $s) | .id'); [ -n "$S" ] || { echo "'$VERCEL_SECRET' is not a Vercel token in OneCLI" >&2; exit 1; }
