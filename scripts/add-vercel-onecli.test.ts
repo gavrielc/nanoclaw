@@ -175,6 +175,28 @@ describe('/add-vercel OneCLI steps', () => {
     expect(attached(lines)).toHaveLength(2);
   });
 
+  it.each(shells.filter((sh) => sh !== 'sh'))(
+    'a vault list larger than a pipe buffer works under %s with pipefail',
+    (shell) => {
+      const many = Array.from({ length: 6000 }, (_, i) => ({
+        id: `sec-${i}`,
+        name: `Other secret ${i}`,
+        hostPattern: `h${i}.example.com`,
+      }));
+      vault([...many, VERCEL]);
+      // GNU grep -q stops reading at its first match, closing the pipe on the writer.
+      fs.writeFileSync(path.join(root, 'bin', 'grep'), '#!/usr/bin/env bash\nhead -c 1 >/dev/null\n', { mode: 0o755 });
+      const pipefail = shell === 'zsh' ? 'setopt pipefail' : 'set -o pipefail';
+      const attach = run(`${pipefail}\n${chosen('ag-sales')}`, shell);
+      expect(attach.stderr).toBe('');
+      expect(attached(attach.lines)).toEqual([
+        'onecli agents grants attach-secret --id oc-sales --secret-id sec-vercel',
+      ]);
+      const removal = run(`${pipefail}\n${DETACH}`, shell);
+      expect(removal.lines.at(-1)).toBe('onecli secrets delete --id sec-vercel');
+    },
+  );
+
   it('refuses an unknown group id before attaching anything', () => {
     const { status, stderr, lines } = run(chosen('ag-nope'));
     expect(status).not.toBe(0);

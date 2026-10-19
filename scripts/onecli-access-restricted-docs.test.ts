@@ -22,8 +22,9 @@ describe.each(DOCS)('%s', (file) => {
   });
 
   it('reads a 401 as a stale or wrong key only when it carries none of those codes', () => {
-    const staleAdvice = paragraphs.filter((p) => /\b401\b/.test(p) && /\b(stale|wrong|expired)\b/.test(p));
+    const sentences = paragraphs.flatMap((p) => p.split(/(?<=[.!?])\s+/));
+    const staleAdvice = sentences.filter((s) => /\b401\b/.test(s) && /\b(stale|wrong|expired)\b/.test(s));
     expect(staleAdvice.length).toBeGreaterThan(0);
-    for (const p of staleAdvice) expect(p).toMatch(/401`?\s+with\s+none\s+of\s+these\s+codes/);
+    for (const s of staleAdvice) expect(s).toMatch(/401`?\s+with\s+none\s+of\s+these\s+codes/);
   });
 });
