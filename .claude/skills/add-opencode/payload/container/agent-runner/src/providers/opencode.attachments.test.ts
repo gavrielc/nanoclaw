@@ -154,11 +154,35 @@ describe('buildAttachmentFileParts', () => {
     ]);
   });
 
+  it('accepts everyday names in any script', () => {
+    const names = [
+      'צילום מסך.png',
+      '写真.jpg',
+      'Café menu.jpg',
+      "John's photo.jpg",
+      'invoice #42.pdf',
+      'Screenshot 2026-10-19 at 9.41.07\u202fAM.png',
+    ];
+    expect(
+      buildAttachmentFileParts(
+        names.map((name) => attachment(name)),
+        anyPng,
+        generous,
+      ),
+    ).toHaveLength(names.length);
+  });
+
   it('keeps a file with an unusual name or message id as prompt text', () => {
     const unusual = [
       attachment('say "hi".png'),
       attachment('two\nlines.png'),
+      attachment('tab\there.png'),
       attachment('a<b>.png'),
+      attachment('back\\slash.png'),
+      attachment('photo\u202egnp.jpg'),
+      attachment('line\u2028break.png'),
+      attachment('para\u2029break.png'),
+      attachment('zero\u200bwidth.png'),
       attachment('cat.png', undefined, 'id"1'),
       attachment('cat.png', undefined, 'id<1>'),
     ];

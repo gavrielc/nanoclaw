@@ -154,7 +154,7 @@ export function sniffMediaType(head: Uint8Array): string | undefined {
 }
 
 // File parts only for plain filenames and message ids; anything else stays prompt text.
-const PLAIN_FILENAME = /^[\w .()+-]+$/;
+const UNPLAIN_FILENAME_CHAR = /[\p{C}\p{Zl}\p{Zp}"\\<>]/u;
 const PLAIN_MESSAGE_ID = /^[\w.:@$=+-]+$/;
 
 export interface NativeAttachmentLimits {
@@ -255,7 +255,7 @@ export function buildAttachmentFileParts(
     }
     const { sourceMessageId, filename, path: filePath } = att;
     if (!isSafeComponent(sourceMessageId) || !isSafeComponent(filename) || typeof filePath !== 'string') continue;
-    if (!PLAIN_MESSAGE_ID.test(sourceMessageId) || !PLAIN_FILENAME.test(filename)) continue;
+    if (!PLAIN_MESSAGE_ID.test(sourceMessageId) || UNPLAIN_FILENAME_CHAR.test(filename)) continue;
     const expectedRoot = `/workspace/inbox/${sourceMessageId}`;
     const expectedPath = `${expectedRoot}/${filename}`;
     if (path.resolve(filePath) !== expectedPath) {
