@@ -7,7 +7,7 @@
  * Exit-code contract follows `scripts/chat.ts`:
  *   0  → got a reply on stdout
  *   2  → socket unreachable (service not running or wrong checkout)
- *   3  → no reply before chat.ts's own 120s hard stop
+ *   3  → no reply before the deadline this wrapper hands chat.ts
  *   4  → the reply was the runner's failure notice (the agent run failed)
  * This wrapper also guards with its own timeout in case chat.ts hangs.
  */
@@ -15,7 +15,8 @@ import { spawn } from 'child_process';
 
 import { getLaunchdLabel, getSystemdUnit } from '../../src/install-slug.js';
 import * as setupLog from '../logs.js';
-import { wrapForGutter } from './theme.js';
+import type { FirstChatStage } from './first-chat-progress.js';
+import { fmtDuration, wrapForGutter } from './theme.js';
 
 export const PING_AGENT_FOLDER = 'ping_test';
 
@@ -42,15 +43,35 @@ const PING_HINTS: Record<Exclude<PingResult, 'ok'>, string> = {
   agent_failure: 'agent run failed; check the model credentials (a common cause)',
 };
 
+/** How the wait for the first reply went. */
+export interface FirstChatWait {
+  /** Times the user chose to keep waiting. */
+  keptWaiting: number;
+  /** The user stopped waiting before a reply came. */
+  skipped: boolean;
+  /** The last stage seen before the wait ended, if any was. */
+  stage?: FirstChatStage;
+}
+
 // The only setup check that goes through the container, gateway and model.
 // Log it so a failed reply isn't hidden behind earlier successes. The agent's
 // error text stays on screen only, since setup.log gets shared in bug reports.
-export function logFirstChat({ result }: PingOutcome, durationMs: number): void {
+export function logFirstChat({ result }: PingOutcome, durationMs: number, wait?: FirstChatWait): void {
+  const KEPT_WAITING = wait?.keptWaiting || undefined;
   if (result === 'ok') {
-    setupLog.step('first-chat', 'success', durationMs, { RESULT: result });
+    setupLog.step('first-chat', 'success', durationMs, { RESULT: result, KEPT_WAITING });
     return;
   }
-  setupLog.step('first-chat', 'failed', durationMs, { RESULT: result, HINT: PING_HINTS[result] });
+  const HINT = wait?.skipped
+    ? 'skipped while waiting for the first reply; check logs/nanoclaw.log'
+    : PING_HINTS[result];
+  setupLog.step('first-chat', 'failed', durationMs, {
+    RESULT: result,
+    HINT,
+    KEPT_WAITING,
+    SKIPPED: wait?.skipped || undefined,
+    STAGE: wait?.stage,
+  });
 }
 
 const AUTH_ERROR_PATTERNS = [
@@ -126,22 +147,73 @@ export function pingOutcome(exitCode: number | null, stdout: string, stderr: str
   return detail ? { result, detail } : { result };
 }
 
-export function pingCliAgent(timeoutMs = 30_000): Promise<PingOutcome> {
-  return new Promise((resolve) => {
-    // --silent keeps pnpm's banner out of stdout, which holds only replies.
-    const child = spawn('pnpm', ['--silent', 'run', 'chat', 'ping'], {
+export interface CliPing {
+  /** Settles when the chat client exits, or once stopped. */
+  outcome: Promise<PingOutcome>;
+  stop(): void;
+}
+
+// A stopped client may already have printed a reply while it waits out its
+// silence window; that reply still counts.
+function outcomeSoFar(stdout: string, stderr: string): PingOutcome {
+  const replies = parseReplies(stdout);
+  if (replies.length === 0) return { result: 'no_reply' };
+  return pingOutcome(replies.some((r) => r.failureNotice) ? 4 : 0, stdout, stderr);
+}
+
+// The client's own deadline should win, so its exit code is the one read.
+const GUARD_GRACE_MS = 5_000;
+// After a kill, how long to wait for the client's close before settling.
+const DRAIN_MS = 2_000;
+// A client with a reply exits once chat.ts's SILENCE_MS passes after its last
+// line; this allows a little more than that.
+const REPLY_GRACE_MS = 3_000;
+
+/** Start the setup ping. The chat client gives up after `deadlineMs`; stop() ends it sooner. */
+export function startCliPing(deadlineMs: number): CliPing {
+  let stop = (): void => {};
+  const outcome = new Promise<PingOutcome>((resolve) => {
+    // `pnpm run chat` without pnpm: one process, so a kill reaches the client
+    // itself, and a closing terminal signals it along with setup.
+    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/chat.ts', 'ping'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, NANOCLAW_CHAT_RAW_LINES: '1' },
+      env: { ...process.env, NANOCLAW_CHAT_RAW_LINES: '1', NANOCLAW_CHAT_TIMEOUT_MS: String(deadlineMs) },
     });
     let stdout = '';
     let stderr = '';
     let settled = false;
-    const timer = setTimeout(() => {
+    let stopped = false;
+    let killed = false;
+    let drain: NodeJS.Timeout | undefined;
+    const kill = (): void => {
+      killed = true;
+      child.kill('SIGKILL');
+    };
+    const settle = (result: PingOutcome): void => {
       if (settled) return;
       settled = true;
-      child.kill('SIGKILL');
-      resolve({ result: 'no_reply' });
-    }, timeoutMs);
+      clearTimeout(guard);
+      clearTimeout(drain);
+      process.off('exit', kill);
+      resolve(result);
+    };
+    // With a reply in, let the client finish its silence window and exit on its
+    // own, so a failure notice right behind the reply still decides. Otherwise
+    // kill it, and settle on close so output already in the pipe is read.
+    const killAndDrain = (): void => {
+      kill();
+      drain = setTimeout(() => settle(outcomeSoFar(stdout, stderr)), DRAIN_MS);
+    };
+    const halt = (): void => {
+      if (settled || stopped) return;
+      stopped = true;
+      if (parseReplies(stdout).length > 0) drain = setTimeout(killAndDrain, REPLY_GRACE_MS);
+      else killAndDrain();
+    };
+    // A client left behind would hold the CLI chat slot for its whole deadline.
+    process.once('exit', kill);
+    const guard = setTimeout(halt, deadlineMs + GUARD_GRACE_MS);
+    stop = halt;
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf-8');
@@ -149,19 +221,20 @@ export function pingCliAgent(timeoutMs = 30_000): Promise<PingOutcome> {
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf-8');
     });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(pingOutcome(code, stdout, stderr));
-    });
-    child.on('error', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ result: 'socket_error' });
-    });
+    child.on('close', (code) => settle(killed ? outcomeSoFar(stdout, stderr) : pingOutcome(code, stdout, stderr)));
+    child.on('error', () => settle({ result: 'socket_error' }));
   });
+  return { outcome, stop: () => stop() };
+}
+
+/** Diagnostics fields for the first-chat events, so a skip is not counted as a failure. */
+export function firstChatEventProps(
+  { result }: PingOutcome,
+  wait: FirstChatWait,
+): Record<string, string | number | boolean | undefined> {
+  const kept_waiting = wait.keptWaiting || undefined;
+  if (result === 'ok') return { kept_waiting };
+  return { reason: result, skipped: wait.skipped || undefined, kept_waiting, stage: wait.stage };
 }
 
 export interface PingFailureCopy {
@@ -172,7 +245,7 @@ export interface PingFailureCopy {
 }
 
 /** Wizard text for a failed ping; shows the agent's own error when it sent one. */
-export function pingFailureCopy({ result, detail }: PingOutcome): PingFailureCopy {
+export function pingFailureCopy({ result, detail }: PingOutcome, waitedMs?: number): PingFailureCopy {
   if (result === 'socket_error') {
     return {
       spinner: "Couldn't reach the NanoClaw service.",
@@ -203,13 +276,14 @@ export function pingFailureCopy({ result, detail }: PingOutcome): PingFailureCop
         : 'The agent run failed without a reason. Check logs/nanoclaw.log and logs/nanoclaw.error.log; wrong or expired model credentials are a common cause.',
     };
   }
+  const waited = waitedMs === undefined ? 'in time' : `after ${fmtDuration(waitedMs)}`;
   return {
     spinner: "Your assistant didn't reply in time.",
     note: wrapForGutter(
-      `No reply from your assistant within 30 seconds. Check ${LOG_FILES} for clues, then try \`pnpm run chat hi\`. Guide: ${TROUBLESHOOTING_URL}`,
+      `No reply from your assistant ${waited}. Check ${LOG_FILES} for clues, then try \`pnpm run chat hi\`. Guide: ${TROUBLESHOOTING_URL}`,
       6,
     ),
-    assistMsg: 'No reply from the assistant within 30 seconds.',
+    assistMsg: `No reply from the assistant ${waited}.`,
     assistHint: 'Agent container may be failing to start or authenticate.',
   };
 }

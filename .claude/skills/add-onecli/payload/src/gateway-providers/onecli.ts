@@ -4,6 +4,7 @@ import { OneCLI, ApprovalClient, type ContainerConfig, type ApprovalRequest } fr
 
 import { DATA_DIR } from '../config.js';
 import { combinedCaBundle, stageOnecliFile } from './onecli-files.js';
+import { storedAccountId, stubNeedsAccountId, withAccountId } from './onecli-chatgpt-stub.js';
 import {
   adoptSavedProviderCredentials,
   providerCredentialFile,
@@ -49,6 +50,7 @@ export function contributionFromConfig(
   config: ContainerConfig,
   groupScope: string,
   dataDir = DATA_DIR,
+  accountId?: string,
 ): OneCLIContribution {
   const env = { ...config.env };
   const mounts: GatewayMount[] = [];
@@ -69,8 +71,41 @@ export function contributionFromConfig(
     env.SSL_CERT_FILE = target;
     env.DENO_CERT = target;
   }
-  for (const stub of config.credentialStubs ?? []) mount('stub', stub.content, stub.containerPath);
+  for (const stub of config.credentialStubs ?? []) {
+    mount('stub', accountId ? withAccountId(stub.content, accountId) : stub.content, stub.containerPath);
+  }
   return { env, mounts };
+}
+
+/**
+ * The stand-in's fixed account id fails a client's workspace check; OneCLI
+ * keeps the real id as secret metadata. An unreachable API stops the spawn,
+ * as a failed container-config fetch does; a stored login without one usable
+ * id leaves the stand-in unchanged.
+ */
+export async function stubAccountId(config: ContainerConfig): Promise<string | undefined> {
+  if (!(config.credentialStubs ?? []).some((stub) => stubNeedsAccountId(stub.content))) return undefined;
+  const headers: Record<string, string> = {};
+  const apiKey = onecliApiKey ?? process.env.ONECLI_API_KEY;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (process.env.ONECLI_PROJECT_ID) headers['X-Project-Id'] = process.env.ONECLI_PROJECT_ID;
+  const base = (onecliUrl || 'https://api.onecli.sh').replace(/\/+$/, '');
+  const response = await fetch(`${base}/v1/secrets`, { headers, signal: AbortSignal.timeout(5_000) });
+  if (response.status >= 500) throw new Error(`OneCLI secret metadata unavailable: status ${response.status}`);
+  if (!response.ok) {
+    log.warn('OneCLI secret metadata refused; login stand-in keeps its placeholder account id', {
+      status: response.status,
+    });
+    return undefined;
+  }
+  const { accountId, logins } = storedAccountId(await response.json());
+  if (!accountId) {
+    log.warn('OneCLI login stand-in keeps its placeholder account id', {
+      storedLogins: logins,
+      hint: 'keep one ChatGPT login in OneCLI (onecli secrets list / delete), then sign in again',
+    });
+  }
+  return accountId;
 }
 
 export function withProviderEnv(contribution: OneCLIContribution, baseUrl = anthropicBaseUrl): OneCLIContribution {
@@ -266,11 +301,12 @@ async function ensureSession(input: GatewaySessionInput, signal: AbortSignal): P
   // sessions and reversible via getAgentGroup() for approval routing.
   await ensureAgentReady(input.key.agentGroupId, input.groupName, input.provider);
   const config = await onecli.getContainerConfig({ agent: input.key.agentGroupId });
+  const accountId = await stubAccountId(config);
   log.info('OneCLI gateway applied', { agentGroupId: input.key.agentGroupId, sessionId: input.key.sessionId });
   return {
     ...monitorLease(signal),
     contribution: {
-      ...withProviderEnv(contributionFromConfig(config, input.key.agentGroupId)),
+      ...withProviderEnv(contributionFromConfig(config, input.key.agentGroupId, DATA_DIR, accountId)),
       networkAccess: {
         endpoint: 'host.docker.internal',
         target: { kind: 'runtime', identity: gatewayContainer },
