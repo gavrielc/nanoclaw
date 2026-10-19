@@ -137,19 +137,60 @@ describe('startCliPing', () => {
     await expect(ping.outcome).resolves.toEqual({ result: 'no_reply' });
   });
 
-  it('keeps a reply the client printed before it was stopped', async () => {
+  it('lets a client with a reply finish its silence window, so a notice right behind it decides', async () => {
     const ping = startCliPing(600_000);
-    children.at(-1)?.stdout.emit('data', raw('pong'));
+    const child = children.at(-1)!;
+    child.stdout.emit('data', raw('Done part one.'));
     ping.stop();
+    expect(child.kill).not.toHaveBeenCalled();
+    child.stdout.emit('data', raw('Spending limit reached', true));
+    child.emit('close', 4);
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
+  });
+
+  it('keeps a reply when the client then goes quiet', async () => {
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.stdout.emit('data', raw('pong'));
+    ping.stop();
+    child.emit('close', 0);
     await expect(ping.outcome).resolves.toEqual({ result: 'ok' });
   });
 
-  it('reads output that drains after the kill before deciding', async () => {
+  it('kills a client that never finishes its silence window', async () => {
+    vi.useFakeTimers();
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.stdout.emit('data', raw('pong'));
+    ping.stop();
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(child.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(ping.outcome).resolves.toEqual({ result: 'ok' });
+  });
+
+  it('still reads what drains after the grace kill', async () => {
+    vi.useFakeTimers();
     const ping = startCliPing(600_000);
     const child = children.at(-1)!;
     child.kill.mockImplementation(() => undefined);
     child.stdout.emit('data', raw('Done part one.'));
     ping.stop();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    child.stdout.emit('data', raw('Spending limit reached', true));
+    child.emit('close', null);
+    await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
+  });
+
+  it('kills a client with no reply at once and still reads what drains', async () => {
+    const ping = startCliPing(600_000);
+    const child = children.at(-1)!;
+    child.kill.mockImplementation(() => undefined);
+    ping.stop();
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
     child.stdout.emit('data', raw('Spending limit reached', true));
     child.emit('close', null);
     await expect(ping.outcome).resolves.toEqual({ result: 'agent_failure', detail: 'Spending limit reached' });
