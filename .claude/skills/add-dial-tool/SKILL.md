@@ -18,7 +18,7 @@ CLI and the skill file land in every agent's container, but the **key** is
 injected per agent by OneCLI, so the operator chooses which agents get it. The
 key is attached to those agents only; every other agent, and every agent group
 created later, gets no Dial key, and the gateway answers its Dial requests
-`403 access_restricted`.
+with the error code `access_restricted`.
 
 Run this from the NanoClaw repo on the host (not from a chat with an agent — the
 container can't install itself). The mechanical steps carry `nc:` directive
@@ -249,10 +249,11 @@ ncl groups list --json --limit 100000 | jq -r '.data[].id' | while read -r gid; 
 ## Done
 
 The chosen agents can now use Dial from inside their containers; the others do
-not hold the key. Auth is injected by OneCLI. A `403 access_restricted` from the
-gateway means the agent does not hold the Dial key (it was not chosen, or was
-created after the last run: run `/add-dial-tool` again to change that); a `401`
-from Dial means the key is stale. Check which
+not hold the key. Auth is injected by OneCLI. Check the error code before the
+status: `access_restricted` from the gateway, whether the status is 401 or 403,
+means the agent does not hold the Dial key (it was not chosen, or was created
+after the last run: run `/add-dial-tool` again to change that); a `401` without
+that code comes from Dial and means the key is stale. Check which
 agents hold it with `onecli agents grants list --id <agent-id>`. Verify from a
 chat with a chosen agent: "run dial doctor" or "text +1… hi".
 
@@ -279,10 +280,11 @@ the `ag-…` id exactly; names are not accepted.
 `dial auth login <email> --force`, then `dial auth verify-otp --code <code>`, and
 re-run.
 
-**A chosen agent gets `401` or `403 access_restricted`.** A `401` comes from
-Dial: the vault secret is stale (a different account's key, or a rotated one).
-A `403 access_restricted` comes from the gateway: the agent group was created
-after the last run, so it does not hold the key. Re-run this skill: it rewrites
+**A chosen agent gets `401` or `access_restricted`.** Check the error code
+first. `access_restricted` comes from the gateway, with a 401 or 403 status: the
+agent group was created after the last run, so it does not hold the key. A
+`401` without that code comes from Dial: the vault secret is stale (a different
+account's key, or a rotated one). Re-run this skill: it rewrites
 the secret with the key the host is signed in with and attaches it to the
 agents you choose.
 

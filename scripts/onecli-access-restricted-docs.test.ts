@@ -7,7 +7,11 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const DOCS = ['.claude/skills/debug/SKILL.md'];
+const DOCS = [
+  '.claude/skills/debug/SKILL.md',
+  '.claude/skills/add-dial-tool/SKILL.md',
+  '.claude/skills/add-dial-tool/container-skills/dial-cli/SKILL.md',
+];
 
 describe.each(DOCS)('%s', (file) => {
   const doc = fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
