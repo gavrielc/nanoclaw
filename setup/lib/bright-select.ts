@@ -109,8 +109,6 @@ class AbortableSelect<T> extends SelectPrompt<Option<T>> {
   }
 }
 
-const ABORTED = Symbol('aborted');
-
 /**
  * Matches the return shape of `p.select` — resolves to the selected value
  * on submit, or to clack's cancel symbol on Ctrl-C / Esc. Callers pass
@@ -121,7 +119,6 @@ export async function brightSelect<T>(opts: BrightSelectOptions<T>): Promise<T |
   const { message, options, initialValue, signal, abortedLabel } = opts;
 
   await flushStdin();
-  if (signal?.aborted) return ABORTED;
   const prompt = new AbortableSelect<T>({
     options: options as Option<T>[],
     initialValue,
@@ -164,9 +161,12 @@ export async function brightSelect<T>(opts: BrightSelectOptions<T>): Promise<T |
     },
   });
   const abort = (): void => prompt.abort();
-  signal?.addEventListener('abort', abort, { once: true });
+  const answer = prompt.prompt() as Promise<T | symbol>;
+  // Closing through clack resolves to its own cancel symbol, which isCancel knows.
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
   try {
-    return (await prompt.prompt()) as T | symbol;
+    return await answer;
   } finally {
     signal?.removeEventListener('abort', abort);
   }

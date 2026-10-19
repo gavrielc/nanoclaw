@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { brightSelect } from './bright-select.js';
+import { brightSelect, isCancel } from './bright-select.js';
 
 // eslint-disable-next-line no-control-regex
 const plain = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
@@ -33,12 +33,11 @@ describe('brightSelect abort', () => {
     expect(last).not.toContain('Skip');
   });
 
-  it('does not open when already aborted', async () => {
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  it("returns clack's cancel when already aborted", async () => {
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const controller = new AbortController();
     controller.abort();
     const answer = await brightSelect({ message: 'Q?', options: [{ value: 1 }], signal: controller.signal });
-    expect(typeof answer).toBe('symbol');
-    expect(write).not.toHaveBeenCalled();
+    expect(isCancel(answer)).toBe(true);
   });
 });
