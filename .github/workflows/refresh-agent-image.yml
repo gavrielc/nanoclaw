@@ -1,4 +1,5 @@
-# Opens the versions.json bump PR after the AWS worker promotes a new agent image.
+# Opens the agent-images.json PR after the AWS worker promotes a new agent image:
+# one entry per release, naming the hardened image built from that release.
 #
 # The split is deliberate and is about which side holds which credential:
 #
@@ -48,7 +49,8 @@ jobs:
       tag: ${{ steps.candidate.outputs.tag }}
       ref: ${{ steps.candidate.outputs.ref }}
       branch: ${{ steps.candidate.outputs.branch }}
-      pin: ${{ steps.candidate.outputs.pin }}
+      release: ${{ steps.candidate.outputs.release }}
+      listed: ${{ steps.candidate.outputs.listed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -68,68 +70,65 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Newest image carrying a hardened-* tag. Read from the registry rather
-          # than from the dispatch payload: the payload says "go look", it does
-          # not get to say what we found.
+          # Newest image tagged <release>-<yyyymmdd>, the tag the worker writes
+          # after checking the image against that release. Read from the registry
+          # rather than from the dispatch payload: the payload says "go look", it
+          # does not get to say what we found.
           aws ecr describe-images --repository-name "$REPO_NAME" --region us-east-1 \
-            --query 'imageDetails[?imageTags]|[?length(imageTags[?starts_with(@,`hardened-`)])>`0`]' \
-            --output json > /tmp/candidates.json
+            --query 'imageDetails[?imageTags]' --output json > /tmp/candidates.json
 
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os, re
 
-          imgs = json.load(open('/tmp/candidates.json'))
+          RELEASE_TAG = re.compile(r'(v\d+\.\d+\.\d+)-(\d{8})')
+          imgs = [i for i in json.load(open('/tmp/candidates.json'))
+                  if any(RELEASE_TAG.fullmatch(t) for t in i['imageTags'])]
           if not imgs:
               print('found=false')
+              print('reason=no <release>-<date> image found')
               raise SystemExit(0)
 
           imgs.sort(key=lambda i: i['imagePushedAt'])
           newest = imgs[-1]
-          tag = sorted(t for t in newest['imageTags'] if t.startswith('hardened-'))[-1]
+          tag = sorted(t for t in newest['imageTags'] if RELEASE_TAG.fullmatch(t))[-1]
+          release = RELEASE_TAG.fullmatch(tag).group(1)
 
-          pin = json.load(open('versions.json')).get('agent-image', '')
-          if not isinstance(pin, str):
-              # A per-platform pin is a deliberate, hand-reviewed shape. Never
-              # rewrite one automatically — the entries must move together.
+          try:
+              listed_images = json.load(open('agent-images.json'))
+          except FileNotFoundError:
+              listed_images = {}
+          listed = listed_images.get(release, '')
+          listed_digest = listed.rsplit('@', 1)[-1] if '@' in listed else ''
+          if newest['imageDigest'] == listed_digest:
               print('found=false')
-              print('reason=per-platform pin, needs a human')
+              print(f'reason=already listed for {release}')
               raise SystemExit(0)
 
-          pinned_digest = pin.rsplit('@', 1)[-1] if '@' in pin else ''
-          if newest['imageDigest'] == pinned_digest:
-              print('found=false')
-              print('reason=already pinned')
-              raise SystemExit(0)
-
-          # Only ever move forward. If someone hand-pinned something newer than
-          # the newest hardened-* tag, proposing this would be a silent rollback.
+          # Only ever move forward. If someone listed something newer by hand,
+          # proposing this would be a silent rollback.
           pushed = {i['imageDigest']: i['imagePushedAt'] for i in imgs}
-          if pinned_digest in pushed and pushed[pinned_digest] >= newest['imagePushedAt']:
+          if listed_digest in pushed and pushed[listed_digest] >= newest['imagePushedAt']:
               print('found=false')
-              print('reason=pinned image is not older than the candidate')
+              print(f'reason=the image listed for {release} is not older than the candidate')
               raise SystemExit(0)
 
-          if not re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,60}', tag):
-              print('found=false')
-              print('reason=refusing an unexpected tag shape')
-              raise SystemExit(0)
-
-          # The registry host comes from the pin already in the file, so this
-          # workflow can never redirect the pin at a different registry. With no
-          # usable host there is nothing safe to synthesize — an empty one would
-          # commit "/nanoclaw/agent@sha256:…", which resolves nowhere.
-          registry = pin.split('/', 1)[0] if '/' in pin else ''
+          # The registry host comes from the versions.json pin, so this workflow
+          # can never point an install at a different registry. With no usable
+          # host there is nothing safe to synthesize — an empty one would commit
+          # "/nanoclaw/agent@sha256:…", which resolves nowhere.
+          pin = json.load(open('versions.json')).get('agent-image', '')
+          registry = pin.split('/', 1)[0] if isinstance(pin, str) and '/' in pin else ''
           if '.' not in registry:
               print('found=false')
-              print('reason=no registry host in the existing pin')
+              print('reason=no registry host in the versions.json pin')
               raise SystemExit(0)
 
           print('found=true')
           print(f'tag={tag}')
-          print(f'digest={newest["imageDigest"]}')
+          print(f'release={release}')
+          print(f'listed={listed}')
           print(f'ref={registry}/{os.environ["REPO_NAME"]}@{newest["imageDigest"]}')
-          print(f'branch=chore/repin-{tag}')
-          print(f'pin={pin}')
+          print(f'branch=chore/agent-image-{tag}')
           PY
 
       - name: Report the candidate
@@ -141,7 +140,7 @@ jobs:
           if [ "$FOUND" = "true" ]; then
             MSG="Candidate: ${REF}"
           else
-            MSG="No bump to open — ${REASON:-no hardened-* image found}."
+            MSG="No PR to open — ${REASON}."
           fi
           echo "::notice::$MSG"
           echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
@@ -175,23 +174,27 @@ jobs:
           ref: main
           token: ${{ steps.app.outputs.token }}
 
-      # Re-running only this job reuses find's outputs. If main's pin moved in
+      # Re-running only this job reuses find's outputs. If main's entry moved in
       # between, the candidate could now be a rollback, so stop.
-      - name: Main still has the pin find compared against
+      - name: Main still has the entry find compared against
         env:
-          PIN: ${{ needs.find.outputs.pin }}
+          RELEASE: ${{ needs.find.outputs.release }}
+          LISTED: ${{ needs.find.outputs.listed }}
         run: |
           python3 - <<'PY'
           import json, os, sys
-          now = json.load(open('versions.json')).get('agent-image', '')
-          if now != os.environ['PIN']:
-              print("::error::The pin on main changed since the candidate was chosen. Dispatch the workflow again: a re-run keeps the old commit.")
+          try:
+              now = json.load(open('agent-images.json')).get(os.environ['RELEASE'], '')
+          except FileNotFoundError:
+              now = ''
+          if now != os.environ['LISTED']:
+              print("::error::The entry on main changed since the candidate was chosen. Dispatch the workflow again: a re-run keeps the old commit.")
               sys.exit(1)
           PY
 
       # Deterministic branch name per image, so a duplicate dispatch finds the
       # existing PR instead of opening a second one.
-      - name: Check whether this bump is already open
+      - name: Check whether this PR is already open
         id: existing
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -208,7 +211,7 @@ jobs:
             echo "open=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Open the bump PR
+      - name: Open the PR
         # A dry run stops here, after the key, the environment and the
         # token's access have all been exercised with no writes.
         if: steps.existing.outputs.open == 'false' && !inputs.dry_run
@@ -216,6 +219,8 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
           TAG: ${{ needs.find.outputs.tag }}
+          RELEASE: ${{ needs.find.outputs.release }}
+          LISTED: ${{ needs.find.outputs.listed }}
           REF: ${{ needs.find.outputs.ref }}
           BRANCH: ${{ needs.find.outputs.branch }}
           # Prose only — never a decision input. See the header.
@@ -226,10 +231,13 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, os
-          v = json.load(open('versions.json'))
-          v['agent-image'] = os.environ['REF']
-          with open('versions.json', 'w') as f:
-              json.dump(v, f, indent=2)
+          try:
+              images = json.load(open('agent-images.json'))
+          except FileNotFoundError:
+              images = {}
+          images[os.environ['RELEASE']] = os.environ['REF']
+          with open('agent-images.json', 'w') as f:
+              json.dump(dict(sorted(images.items())), f, indent=2)
               f.write('\n')
           PY
           git diff --stat
@@ -239,8 +247,8 @@ jobs:
           git config user.name  "${APP_SLUG}[bot]"
           git config user.email "${BOT_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git add versions.json
-          git commit -m "versions: repin the agent image to ${TAG}"
+          git add agent-images.json
+          git commit -m "agent-images: ${RELEASE} -> ${TAG}"
           # The branch name belongs to this workflow and no PR is open on it, so
           # a re-run after a failed `gh pr create` replaces it. The lease only
           # overwrites the head seen here.
@@ -248,33 +256,36 @@ jobs:
           git push --force-with-lease="refs/heads/${BRANCH}:${SEEN}" origin "HEAD:refs/heads/${BRANCH}"
 
           {
-            echo "Repins the agent image to \`${TAG}\`."
+            echo "Lists \`${TAG}\` as the hardened image for \`${RELEASE}\`."
             echo
             echo '```'
             echo "${REF}"
             echo '```'
             echo
+            if [ -n "${LISTED:-}" ]; then
+              echo "Replaces \`${LISTED}\`, an earlier build of the same release."
+              echo
+            fi
             if [ -n "${PAYLOAD_CREATED:-}" ]; then
               echo "Built \`${PAYLOAD_CREATED}\`."
             fi
             if [ -n "${PAYLOAD_UPSTREAM:-}" ]; then
-              echo "Upstream digest \`${PAYLOAD_UPSTREAM}\` — compare against the current pin's to see"
-              echo "whether the NanoClaw content changed or only the hardened base underneath it."
+              echo "Upstream digest \`${PAYLOAD_UPSTREAM}\`."
             fi
             if [ -n "${PAYLOAD_LOCK:-}" ]; then
               echo "Agent-runner lock label \`${PAYLOAD_LOCK}\`."
             fi
             echo
-            echo "Promoted into \`nanoclaw/agent\` by the AWS refresh worker, which verified the"
-            echo "index shape, both platforms, the provenance label and the lock label before"
-            echo "copying. Those figures come from the dispatch payload and are here to read, not"
-            echo "to trust — \`verify-agent-image\` re-derives all of them on this PR from the"
-            echo "registry, under a different role, and is a required check."
+            echo "Promoted into \`nanoclaw/agent\` by the AWS refresh worker, which checked the"
+            echo "image's release and commit labels and its lock label against \`${RELEASE}\`."
+            echo "Those figures come from the dispatch payload and are here to read, not to"
+            echo "trust — \`verify-agent-image\` re-derives all of them on this PR, including the"
+            echo "publisher signature, under a different role, and is a required check."
             echo
             echo "Opened automatically by the \`${APP_SLUG}\` App. A person merges."
           } > /tmp/pr-body.md
 
           gh pr create \
             --base main --head "$BRANCH" \
-            --title "versions: repin the agent image to ${TAG}" \
+            --title "agent-images: ${RELEASE} -> ${TAG}" \
             --body-file /tmp/pr-body.md
