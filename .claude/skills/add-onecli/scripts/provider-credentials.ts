@@ -17,6 +17,8 @@ export interface OneCliCredential {
   name: string;
   type: 'openai' | 'generic';
   hostPattern: string;
+  /** Exact path the entry is limited to; absent means the whole host. */
+  pathPattern?: string;
   injectionConfig?: KeyInjection;
   authMode?: 'oauth';
 }
@@ -81,7 +83,7 @@ export function findOneCliCredential(payload: unknown, descriptor: OneCliCredent
     secret.valueSource !== undefined && secret.valueSource !== 'inline' ? 'valueSource' : undefined,
     secret.opRef !== undefined && secret.opRef !== null ? 'opRef' : undefined,
     secret.scope !== 'project' ? 'scope' : undefined,
-    secret.pathPattern ? 'pathPattern' : undefined,
+    (secret.pathPattern || undefined) !== descriptor.pathPattern ? 'pathPattern' : undefined,
     !knownKeyMapping ? 'injectionConfig' : undefined,
     descriptor.authMode && (!isRecord(secret.metadata) || secret.metadata.authMode !== descriptor.authMode)
       ? 'metadata.authMode'
@@ -204,6 +206,7 @@ export function createOneCliCredentialConnection(
         type: descriptor.type,
         valueSource: 'inline',
         hostPattern: descriptor.hostPattern,
+        ...(descriptor.pathPattern ? { pathPattern: descriptor.pathPattern } : {}),
         value,
         ...(descriptor.injectionConfig ? { injectionConfig: descriptor.injectionConfig } : {}),
       });
@@ -237,6 +240,7 @@ export function createProviderCredentialConnection(
       // refreshes the token and injects the account header itself.
       type: target.kind === 'oauth' ? 'openai' : 'generic',
       hostPattern: target.host,
+      ...(target.path ? { pathPattern: target.path } : {}),
       ...(target.kind === 'api-key' ? { injectionConfig: target.injection } : { authMode: 'oauth' as const }),
     },
     undefined,

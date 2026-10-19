@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { detectInstalledSkills, refreshInstalledSkills } from './update-skills.js';
 
@@ -53,6 +53,15 @@ describe('installed skill detection', () => {
 });
 
 describe('registry refresh end to end', () => {
+  // A registry override in the caller's environment would redirect these fixtures.
+  beforeEach(() => {
+    vi.stubEnv('NANOCLAW_REGISTRY_REMOTE', undefined);
+    vi.stubEnv('NANOCLAW_CHANNELS_REMOTE', undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('uses the container-pinned Bun through pnpm when Bun is unavailable on the host', async () => {
     const root = temp('nanoclaw-skills-bun-fallback-');
     write(root, 'src/channels/index.ts', "import './cli.js';\n");
