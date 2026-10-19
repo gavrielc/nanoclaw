@@ -397,6 +397,21 @@ describe('OneCLI gateway package', () => {
     await expect(grant(gateway, 'opencode')).resolves.toEqual(['sec-oc', 'sec-chatgpt']);
   });
 
+  it('a held record lock never fails or stalls the spawn: the matched credential is attached and the lock named', async () => {
+    fs.mkdirSync(path.join(data, 'onecli'), { recursive: true });
+    fs.writeFileSync(path.join(data, 'onecli', 'provider-credentials.json.lock'), 'other-host 1');
+    const gateway = fakeGateway({ vault: [{ id: 'sec-model', name: 'Anthropic' }] });
+    await expect(grant(gateway)).resolves.toEqual(['sec-model']);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not record'),
+      expect.objectContaining({
+        provider: 'claude',
+        lock: path.join(data, 'onecli', 'provider-credentials.json.lock'),
+      }),
+    );
+    expect(fs.existsSync(path.join(data, 'onecli', 'provider-credentials.json'))).toBe(false);
+  });
+
   it('a match another host finished meanwhile is not repeated (checked again under the lock)', async () => {
     const gateway = fakeGateway({
       vault: [

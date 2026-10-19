@@ -1,7 +1,6 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
-import { threadId } from 'node:worker_threads';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -10,7 +9,7 @@ import {
   isSavedProviderCredential,
   providerCredentialFile,
   readProviderCredentials,
-  reclaimStaleLock,
+  RecordLockedError,
   recordProviderCredentials,
   updateProviderCredentials,
 } from './onecli-provider-credentials.js';
@@ -58,57 +57,35 @@ describe('OneCLI provider credential record', () => {
     fs.writeFileSync(lockFile(), content);
     if (ageMs) fs.utimesSync(lockFile(), new Date(Date.now() - ageMs), new Date(Date.now() - ageMs));
   };
-  const deadPid = () => {
-    const child = spawnSync(process.execPath, ['-e', '']);
-    return child.pid!;
-  };
 
-  it('waits for a held lock without blocking the host event loop, then names the lock', async () => {
-    holdLock(`${os.hostname()} ${process.ppid} 0 other-process`);
+  it('waits for a held lock without blocking the event loop, then fails naming the lock', async () => {
+    holdLock(`${os.hostname()} ${process.ppid}`);
     let ticked = false;
     setTimeout(() => (ticked = true), 20);
-    await expect(updateProviderCredentials(data, () => {}, { lockTimeoutMs: 200 })).rejects.toThrow(/\.lock is held/);
+    const err = await updateProviderCredentials(data, () => {}, { lockTimeoutMs: 200 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RecordLockedError);
+    expect(String(err)).toContain(lockFile());
     expect(ticked).toBe(true);
-    expect(fs.existsSync(lockFile())).toBe(true);
-  });
-
-  it('takes over a lock whose writer on this host has exited', async () => {
-    holdLock(`${os.hostname()} ${deadPid()} 0 gone`);
-    await recordProviderCredentials(data, 'claude', ['a']);
-    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
-    expect(fs.existsSync(lockFile())).toBe(false);
-  });
-
-  it('takes over a lock this process id left in an earlier run (same pid, other run)', async () => {
-    holdLock(`${os.hostname()} ${process.pid} ${threadId} an-earlier-run`);
-    await recordProviderCredentials(data, 'claude', ['a']);
-    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
   });
 
   it.each([
-    ['a live writer', () => `${os.hostname()} ${process.ppid} 0 other-process`, 0],
-    ['another thread of this process', () => `${os.hostname()} ${process.pid} ${threadId + 1} other-thread`, 0],
-    ['another host', () => `some-other-host ${deadPid()} 0 gone`, 0],
-    ['an empty lock, however old (this module never leaves one)', () => '', 60_000],
-  ])('never takes over a lock from %s', async (_name, content, age) => {
-    holdLock(content(), age);
-    await expect(updateProviderCredentials(data, () => {}, { lockTimeoutMs: 150 })).rejects.toThrow(/\.lock is held/);
-    expect(fs.existsSync(lockFile())).toBe(true);
+    ['a live writer', `${os.hostname()} ${process.ppid}`, 0],
+    ['an old lock of a writer that is gone', `${os.hostname()} 999999`, 600_000],
+    ['an empty lock', '', 600_000],
+  ])('never takes over a lock (%s): a takeover could race a live writer', async (_name, content, age) => {
+    holdLock(content, age);
+    await expect(updateProviderCredentials(data, () => {}, { lockTimeoutMs: 100 })).rejects.toBeInstanceOf(
+      RecordLockedError,
+    );
+    expect(fs.readFileSync(lockFile(), 'utf8')).toBe(content);
   });
 
-  it('a writer that died before placing its lock leaves only a temp file, which blocks nobody', async () => {
-    fs.mkdirSync(path.dirname(lockFile()), { recursive: true });
-    fs.writeFileSync(`${lockFile()}.dead-run.tmp`, `${os.hostname()} ${deadPid()} 0 dead-run`);
-    await recordProviderCredentials(data, 'claude', ['a']);
-    expect(readProviderCredentials(data).providers).toEqual({ claude: ['a'] });
-    expect(fs.existsSync(lockFile())).toBe(false);
-  });
-
-  it('a reclaim that finds a different lock than the stale one it judged puts it back', () => {
-    holdLock(`${os.hostname()} ${process.ppid} 0 fresh-writer`);
-    reclaimStaleLock(lockFile(), `${os.hostname()} ${deadPid()} 0 gone`);
-    expect(fs.readFileSync(lockFile(), 'utf8')).toBe(`${os.hostname()} ${process.ppid} 0 fresh-writer`);
-    expect(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.includes('.stale-'))).toEqual([]);
+  it('names its writer in the lock, for whoever finds one left behind', async () => {
+    let seen = '';
+    await updateProviderCredentials(data, () => {
+      seen = fs.readFileSync(lockFile(), 'utf8');
+    });
+    expect(seen).toBe(`${os.hostname()} ${process.pid}`);
   });
 
   it('never drops an id when separate processes record at the same time', async () => {

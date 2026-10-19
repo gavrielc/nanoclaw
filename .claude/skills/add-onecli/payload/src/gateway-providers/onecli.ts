@@ -6,8 +6,11 @@ import { DATA_DIR } from '../config.js';
 import { combinedCaBundle, stageOnecliFile } from './onecli-files.js';
 import {
   isSavedProviderCredential,
+  providerCredentialFile,
   readProviderCredentials,
+  RecordLockedError,
   updateProviderCredentials,
+  type ProviderCredentialRecord,
 } from './onecli-provider-credentials.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
@@ -192,11 +195,24 @@ export async function grantProviderCredentials(
     const found = vault
       .filter((secret) => typeof secret.id === 'string' && isSavedProviderCredential(provider, secret))
       .map((secret) => secret.id as string);
-    record = await updateProviderCredentials(dataDir, (r) => {
+    const adopt = (r: ProviderCredentialRecord) => {
       if (r.matched.includes(provider)) return;
       r.providers[provider] = [...new Set([...(r.providers[provider] ?? []), ...found])];
       r.matched.push(provider);
-    });
+    };
+    try {
+      record = await updateProviderCredentials(dataDir, adopt, { lockTimeoutMs: 1_000 });
+    } catch (err) {
+      if (!(err instanceof RecordLockedError)) throw err;
+      // Never stall or fail a spawn on the record: use the match now, record it on a later spawn.
+      log.warn('OneCLI could not record the matched model credential; using it for this spawn only', {
+        agentGroupId: identifier,
+        provider,
+        lock: `${providerCredentialFile(dataDir)}.lock`,
+      });
+      record = structuredClone(record);
+      adopt(record);
+    }
   }
   const ids = (record.providers[provider] ?? []).filter((id) => live.has(id));
   const missing = ids.filter((id) => !held.has(id));
