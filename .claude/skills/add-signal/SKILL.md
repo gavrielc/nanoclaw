@@ -186,14 +186,15 @@ this channel with `/init-first-agent` (or `/manage-channels`).
 
 - Markdown formatting — `**bold**`, `*italic*` / `_italic_`, `` `code` ``, ` ```code fence``` `, `~~strike~~`, `||spoiler||` (converted to Signal's offset-based text styles).
 - Quoted replies — `replyTo*` fields populated from Signal quotes.
-- Typing indicators — DMs only (Signal doesn't support group typing).
+- Typing indicators — DMs and groups.
+- Group @mentions and quote-replies to the bot count as mentions (platform mention signal), so `pattern-or-mention`/mention engage modes work without a text pattern.
 - Note to Self — messages you send to your own account from another device route to the agent as inbound with `isFromMe: true`.
-- Voice attachments — detected but not transcribed by default; the agent receives a `[Voice Message]` placeholder. The raw audio is also forwarded as a file attachment (so it isn't lost when transcription is unavailable), including when a voice/audio attachment arrives alongside caption text (previously dropped — see Troubleshooting). Run `/add-voice-transcription` for local transcription.
+- Voice attachments — transcribed inside the adapter when `WHISPER_BIN` (local whisper.cpp, or openai-whisper when the binary is named `whisper`; optional `WHISPER_MODEL`) or `OPENAI_API_KEY` (OpenAI Whisper API) is set in the host process environment; the agent then receives `[Voice message, transcribed: …]`. Without a backend, or if transcription fails, it receives `[Voice message — audio attached, not transcribed]`. The raw audio is always also forwarded as a file attachment, including when a voice/audio attachment arrives alongside caption text (previously dropped — see Troubleshooting). Local transcription needs `ffmpeg` on PATH.
 - Inbound attachments of every type (images, voice, and general files — PDFs, documents, video, archives) — staged to disk and forwarded to the agent the same way every other chat adapter does, including attachment-only Note to Self messages (previously silently dropped — see Troubleshooting). A per-file `[<name> could not be read]` note replaces a missing/unreadable/oversized attachment instead of dropping the whole message. Size-capped per attachment (default 20MB, tune with `SIGNAL_MAX_INLINE_ATTACHMENT_BYTES`). See Troubleshooting below if your copy predates the fix.
-- Approval questions — `ask_question` (unknown-sender approval cards, `ask_user_question`) renders as text with `/approve`, `/reject`-style slash commands built from the option labels. Also implements `openDM`, so a cold DM to a user who's never messaged the bot (e.g. an approver being notified for the first time) resolves to the same `signal:{UUID}`-prefixed platform_id their real messages use — without it, the reply-matching card and the user's actual DM session would live in two different, unlinked messaging_groups.
-- Outbound sends queue while disconnected — a send attempted while the TCP connection to signal-cli is down is queued rather than dropped, and flushed in order the next time the adapter connects (today that means a service restart; there is no background reconnect loop yet).
+- Approval questions — `ask_question` (unknown-sender approval cards, `ask_user_question`) renders as text with `/approve`, `/reject`-style slash commands built from the option labels, each suffixed with a 4-character per-card code (e.g. `/approve a1b2`) so several open cards in one chat can be answered unambiguously. A bare `/approve` with more than one card open is not guessed — the adapter asks for the code. A card is removed once answered; open cards are held in memory (capped at 64) and do not survive a restart. Also implements `openDM`, so a cold DM to a user who's never messaged the bot (e.g. an approver being notified for the first time) resolves to the same `signal:{UUID}`-prefixed platform_id their real messages use — without it, the reply-matching card and the user's actual DM session would live in two different, unlinked messaging_groups.
+- Outbound sends queue while disconnected — a send attempted while the TCP connection to signal-cli is down is queued rather than dropped, and flushed in order once the connection is restored. A background reconnect loop (backoff 3–30s, respawning the managed daemon if it exited) re-establishes the connection without a service restart.
 
-Not supported yet: outbound file attachments (logged and dropped), edit/delete messages, reactions.
+Not supported yet: outbound file attachments (logged and dropped), edit/delete messages. Outbound reactions are supported.
 
 ## Alternatives
 
@@ -281,6 +282,10 @@ SIGNAL_CLI_PATH=/usr/local/bin/signal-cli
 # Set to false if you run signal-cli daemon externally.
 SIGNAL_MANAGE_DAEMON=true
 
+# Managed-daemon log file (default: logs/signal-cli-daemon.log under the working directory).
+# Passed to signal-cli as the global --log-file option.
+SIGNAL_DAEMON_LOG_FILE=logs/signal-cli-daemon.log
+
 # signal-cli data directory (default: ~/.local/share/signal-cli)
 SIGNAL_DATA_DIR=~/.local/share/signal-cli
 
@@ -339,11 +344,11 @@ Signal responses show `platformMsgId=undefined` in the main log. This means the 
 
 **Root cause:** Older adapter copies used the bare handle in one or more code paths (raw `platform_id`, or — before `openDM()` existed — the cold-DM fallback in `ensureUserDm`) while other paths already used the `signal:`-prefixed form. That leaves two `messaging_groups` rows per identity: an older bare-handle row, and the `signal:`-prefixed one that's actually wired and holds history. `user_dms` can end up caching the unprefixed one, rerouting cold-DM lookups to a dead end.
 
-**Fix:** Query `messaging_groups` for `channel_type='signal'` and compare `platform_id` values per person — a wired row with active sessions vs. an unwired duplicate (with/without the `signal:` prefix) for the same handle/UUID. If you find a pair: confirm which is wired, repoint any `user_dms` row at it, then delete the unwired duplicate once nothing else references it (check `messaging_group_agents`, `sessions`, `pending_approvals`, `pending_sender_approvals`/`pending_channel_approvals`, `unregistered_senders`). There's no automatic migration for this yet — it's manual reconciliation until one exists.
+**Fix:** Query `messaging_groups` for `channel_type='signal'` and compare `platform_id` values per person — a wired row with active sessions vs. an unwired duplicate (with/without the `signal:` prefix) for the same handle/UUID. If you find a pair: confirm which is wired, repoint any `user_dms` row at it, then delete the unwired duplicate once nothing else references it (check `messaging_group_agents`, `sessions`, `pending_approvals`, `pending_sender_approvals`/`pending_channel_approvals`, `unregistered_senders`). There's no automatic migration for this yet — it's manual reconciliation until one exists. Operators upgrading from a copy that used bare handles should run this check once after the upgrade, before relying on approval cards or cold DMs.
 
 ### Lost connection mid-session
 
-If you see `Signal channel lost TCP connection to signal-cli daemon` in the logs, the daemon dropped the connection. Restart the service to re-establish.
+If you see `Signal channel lost TCP connection to signal-cli daemon` in the logs, the adapter reconnects on its own (backoff 3–30s, respawning the managed daemon if needed) and flushes queued sends. If it never recovers, check the daemon log (`logs/signal-cli-daemon.log`, or `SIGNAL_DAEMON_LOG_FILE`) and restart the service.
 
 ### Messages dropped with `not_member`
 
