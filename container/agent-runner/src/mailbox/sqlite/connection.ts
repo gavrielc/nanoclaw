@@ -7,7 +7,10 @@
  *   inbound.db  — host writes new messages here; container opens READ-ONLY
  *   outbound.db — container writes responses + acks here; host opens read-only
  *
- * Each file has exactly one writer, so no cross-process lock contention.
+ * Each file has one writing side while a container runs, so host and
+ * container do not contend for its write lock. Inside the container, the
+ * runner, the MCP server and each `ncl` call all write outbound.db, so its
+ * opener must wait for the lock.
  *
  * ⚠ Cross-mount visibility: inbound.db MUST be journal_mode=DELETE (set by
  * the host when the file is created). WAL's `-shm` is memory-mapped and
@@ -69,12 +72,15 @@ export function getInboundDb(): Database {
   return _inbound;
 }
 
-/** Outbound DB — container owns this file (sole writer). `path` (tests only) applies to the first open. */
+/**
+ * Outbound DB, written by several container processes: the runner, the MCP
+ * server and each `ncl` call. `path` (tests only) applies to the first open.
+ */
 export function getOutboundDb(path = DEFAULT_OUTBOUND_PATH): Database {
   if (!_outbound) {
     _outbound = new Database(path);
     // busy_timeout first: bun:sqlite defaults it to 0, and the first schema
-    // read (journal_mode) fails at once if another writer holds the lock.
+    // read (journal_mode) fails at once while one of those writers holds the lock.
     _outbound.exec('PRAGMA busy_timeout = 5000');
     _outbound.exec('PRAGMA journal_mode = DELETE');
     _outbound.exec('PRAGMA foreign_keys = ON');
