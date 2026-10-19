@@ -792,29 +792,19 @@ describe('unknown-channel registration flow', () => {
     expect(mgaCount).toBe(0);
   });
 
-  it('a name too long for a folder creates nothing and asks again; the next name is created', async () => {
+  /** An unwired group chat with its registration card pending; returns its messaging group id. */
+  async function pendingRegistration(platformId: string): Promise<string> {
     const { routeInbound } = await import('../../router.js');
-    const { getResponseHandlers } = await import('../../response-registry.js');
-    const nameReply = (id: string, text: string) =>
-      routeInbound({
-        channelType: 'telegram',
-        platformId: 'dm-owner',
-        threadId: null,
-        message: {
-          id,
-          kind: 'chat' as const,
-          content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text }),
-          timestamp: now(),
-        },
-      });
+    await expectAsyncDelivery(() => routeInbound(groupMention(platformId)));
+    return (await getMessagingGroupByPlatform('telegram', platformId))!.id;
+  }
 
-    await expectAsyncDelivery(() => routeInbound(groupMention('chat-long-name')));
-    const pending = (await getDb().get<{ messaging_group_id: string }>(
-      'SELECT messaging_group_id FROM pending_channel_approvals',
-    ))!;
+  /** The owner clicks "Connect new agent" on that card; the name prompt lands in their DM. */
+  async function clickNewAgent(messagingGroupId: string): Promise<void> {
+    const { getResponseHandlers } = await import('../../response-registry.js');
     for (const handler of getResponseHandlers()) {
       const claimed = await handler({
-        questionId: pending.messaging_group_id,
+        questionId: messagingGroupId,
         value: 'new_agent',
         userId: 'owner',
         channelType: 'telegram',
@@ -823,6 +813,38 @@ describe('unknown-channel registration flow', () => {
       });
       if (claimed) break;
     }
+  }
+
+  async function nameReply(id: string, text: string): Promise<void> {
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound({
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+      message: {
+        id,
+        kind: 'chat' as const,
+        content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text }),
+        timestamp: now(),
+      },
+    });
+  }
+
+  async function expectCreatedAndWired(name: string, messagingGroupId: string): Promise<void> {
+    const created = await getDb().get<{ id: string }>('SELECT id FROM agent_groups WHERE name = ?', name);
+    expect(created).toBeDefined();
+    expect(
+      await countRows(
+        'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?',
+        messagingGroupId,
+        created!.id,
+      ),
+    ).toBe(1);
+  }
+
+  it('a name too long for a folder creates nothing and asks again; the next name is created', async () => {
+    const mgId = await pendingRegistration('chat-long-name');
+    await clickNewAgent(mgId);
 
     const longName = 'a'.repeat(70);
     const agentGroupsBefore = await countRows('SELECT COUNT(*) AS c FROM agent_groups');
@@ -839,15 +861,31 @@ describe('unknown-channel registration flow', () => {
     // The prompt is re-armed: the next reply is taken as the name.
     await nameReply('name-reply-retry', 'Newbie');
 
-    const created = await getDb().get<{ id: string }>("SELECT id FROM agent_groups WHERE name = 'Newbie'");
-    expect(created).toBeDefined();
-    expect(
-      await countRows(
-        'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?',
-        pending.messaging_group_id,
-        created!.id,
-      ),
-    ).toBe(1);
+    await expectCreatedAndWired('Newbie', mgId);
+  });
+
+  it("a failed re-prompt leaves another channel's newer name prompt in place", async () => {
+    const firstMgId = await pendingRegistration('chat-race-first');
+    const secondMgId = await pendingRegistration('chat-race-second');
+    await clickNewAgent(firstMgId);
+
+    // Hold the refusal's re-prompt in flight while the owner starts the second channel.
+    let failRePrompt: ((err: Error) => void) | undefined;
+    deliverMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          failRePrompt = reject;
+        }),
+    );
+    const refused = nameReply('name-reply-race', 'a'.repeat(70));
+    await vi.waitFor(() => expect(failRePrompt).toBeDefined());
+    await clickNewAgent(secondMgId);
+    failRePrompt!(new Error('delivery failed'));
+    await refused;
+
+    await nameReply('name-reply-second', 'Newbie');
+
+    await expectCreatedAndWired('Newbie', secondMgId);
   });
 });
 

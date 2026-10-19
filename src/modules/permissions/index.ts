@@ -676,7 +676,8 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
         messagingGroupId: row.messaging_group_id,
         err,
       });
-      awaitingNameInput.delete(userId);
+      // Another channel's prompt may have replaced ours while this was in flight.
+      if (awaitingNameInput.get(userId) === pending) awaitingNameInput.delete(userId);
     }
     return true;
   }
