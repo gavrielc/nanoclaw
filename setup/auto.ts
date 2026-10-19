@@ -58,12 +58,13 @@ import {
 import { EXTRA_WAIT_MS, MAX_WAIT_MS, waitForFirstReply, type WaitChoice } from './lib/first-chat-wait.js';
 import {
   createStageProbe,
+  fill,
+  FIRST_CHAT_COPY,
   keepWaitingQuestion,
   skippedWaitCopy,
   StageDisplay,
   type FirstChatStage,
 } from './lib/first-chat-progress.js';
-import { fill, FIRST_CHAT_COPY } from './lib/first-chat-copy.js';
 import { inspectAgentSession } from './central-db-inspection.js';
 import { getSetupProvider, listSetupProviders } from './providers/registry.js';
 import { applyProviderSkill, loadHostContractModules } from './providers/install.js';
