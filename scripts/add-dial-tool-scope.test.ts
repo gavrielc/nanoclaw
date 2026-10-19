@@ -603,6 +603,11 @@ describe('add-dial-tool: removal', () => {
     return /```bash\n([\s\S]*?)```/.exec(doc.slice(at))![1];
   })();
 
+  it('stops instead of reporting success when the secret list cannot be read', () => {
+    writeStub('onecli', `echo '{"data":null}'`);
+    expect(sh(REMOVE).status).not.toBe(0);
+  });
+
   it('deletes every api.getdial.ai secret, which takes its grants with it, and nothing else', () => {
     fs.rmSync(root, { recursive: true, force: true });
     setup({

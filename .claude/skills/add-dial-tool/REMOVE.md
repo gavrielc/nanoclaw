@@ -30,7 +30,7 @@ install, that install loses Dial too. This deletes every Dial secret the skill
 wrote (a name containing "dial", scoped to `api.getdial.ai`):
 
 ```bash
-L=$(onecli secrets list --max 0) && for id in $(printf '%s' "$L" | jq -r '.data[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id'); do onecli secrets delete --id "$id" || exit 1; done
+ids=$(onecli secrets list --max 0 | jq -r '(if type == "array" then . elif (type == "object") and ((.data | type) == "array") then .data else error("not a secret list") end)[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id') || { echo "could not read the OneCLI secrets; nothing deleted" >&2; exit 1; }; for id in $ids; do onecli secrets delete --id "$id" || exit 1; done
 ```
 
 An earlier version of this skill kept unchosen agents away with an OneCLI policy

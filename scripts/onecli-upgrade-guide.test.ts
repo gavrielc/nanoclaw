@@ -429,21 +429,23 @@ describe('OneCLI upgrade guide: Dial installs', () => {
   it('the delete removes only Dial keys on api.getdial.ai and stops on a failed delete', () => {
     const bin = path.join(home, 'bin');
     fs.mkdirSync(bin, { recursive: true });
-    const stub = (deleteExit: number) =>
+    const LIST =
+      '{"hint":"h","data":[{"id":"d1","name":"Dial API","hostPattern":"api.getdial.ai"},{"id":"x1","name":"Other key","hostPattern":"api.getdial.ai"},{"id":"m1","name":"Anthropic","hostPattern":"api.anthropic.com"}]}';
+    const stub = (deleteExit: number, list = LIST) =>
       fs.writeFileSync(
         path.join(bin, 'onecli'),
         `#!/bin/sh
-echo "$*" >> "${home}/onecli.log"
+echo "$ONECLI_API_HOST $*" >> "${home}/onecli.log"
 case "$1 $2" in
-  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"d1","name":"Dial API","hostPattern":"api.getdial.ai"},{"id":"x1","name":"Other key","hostPattern":"api.getdial.ai"},{"id":"m1","name":"Anthropic","hostPattern":"api.anthropic.com"}]}' ;;
+  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '${list}' ;;
   "secrets delete") exit ${deleteExit} ;;
 esac
 `,
         { mode: 0o755 },
       );
-    const run = () =>
+    const run = (gw: string | null = 'http://gw-being-upgraded:10254') =>
       spawnSync('sh', ['-c', del!.body], {
-        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home },
+        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, ...(gw ? { GW: gw } : {}) },
         encoding: 'utf8',
       });
     stub(0);
@@ -453,9 +455,39 @@ esac
         .readFileSync(path.join(home, 'onecli.log'), 'utf8')
         .trim()
         .split('\n')
-        .filter((l) => l.startsWith('secrets delete')),
-    ).toEqual(['secrets delete --id d1']);
+        .filter((l) => l.includes('secrets delete')),
+    ).toEqual(['http://gw-being-upgraded:10254 secrets delete --id d1']);
     stub(1);
     expect(run().status).not.toBe(0);
+  });
+
+  it('the delete asks the gateway being upgraded ($GW), and stops before any call without it', () => {
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'onecli'), `#!/bin/sh\necho "$*" >> "${home}/onecli.log"\necho '{"data":[]}'\n`, {
+      mode: 0o755,
+    });
+    const r = spawnSync('sh', ['-c', del!.body], {
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home },
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+    expect(fs.existsSync(path.join(home, 'onecli.log'))).toBe(false);
+  });
+
+  it('a secret list it cannot read stops the delete instead of passing as "no Dial keys"', () => {
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'onecli'), `#!/bin/sh\necho '{"data":null}'\n`, { mode: 0o755 });
+    const r = spawnSync('sh', ['-c', del!.body], {
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://gw:1' },
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+  });
+
+  it('an install already upgraded with the key in place deletes it now, before the re-run', () => {
+    const after = guide.slice(guide.indexOf('If you have already upgraded with the key in place'));
+    expect(after.split('\n')[0]).toMatch(/delete it now with the command above, then re-run `\/add-dial-tool`/);
   });
 });

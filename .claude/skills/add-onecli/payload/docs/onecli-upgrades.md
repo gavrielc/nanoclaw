@@ -51,13 +51,13 @@ If it stops with findings, do not upgrade yet: after the upgrade, access can onl
 onecli secrets list --max 0 | jq -r '(if type == "array" then . else .data end)[] | select(.name | test("(?i)dial")) | "\(.name)  \(.hostPattern)"'
 ```
 
-If it prints a Dial secret, `/add-dial-tool` is installed, and its `Dial: blocked agents` rule is one of the findings above: the conversion deletes the rule and would give the Dial key to every agent, OneCLI's default agent included. Dial spends money and reaches real people, so delete the Dial key before you pull, with the command below. No agent can use Dial until you re-run `/add-dial-tool` after the upgrade, a few minutes later: it recreates the key from the host's Dial sign-in and attaches it only to the agents you choose.
+If it prints a Dial secret, `/add-dial-tool` is installed, and its `Dial: blocked agents` rule is one of the findings above: the conversion deletes the rule and would give the Dial key to every agent, OneCLI's default agent included. Dial spends money and reaches real people, so delete the Dial key before you pull, with the command below (it asks the gateway at `$GW`, like the check above). No agent can use Dial until you re-run `/add-dial-tool` after the upgrade, a few minutes later: it recreates the key from the host's Dial sign-in and attaches it only to the agents you choose.
 
 ```bash
-L=$(onecli secrets list --max 0) && for id in $(printf '%s' "$L" | jq -r '(if type == "array" then . else .data end)[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id'); do onecli secrets delete --id "$id" || exit 1; done
+(export ONECLI_API_HOST="${GW:?set GW as in the Detect step}"; ids=$(onecli secrets list --max 0 | jq -r '(if type == "array" then . elif (type == "object") and ((.data | type) == "array") then .data else error("not a secret list") end)[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id') || { echo "STOP: could not read the OneCLI secrets" >&2; exit 2; }; for id in $ids; do onecli secrets delete --id "$id" || exit 1; done; echo "Dial keys deleted: ${ids:-none}")
 ```
 
-If you have already upgraded with the key in place, re-run `/add-dial-tool` now, then detach the key from OneCLI's default agent, which the re-run does not touch: `onecli agents grants detach-secret --id <default-agent-id> --secret-id <dial-secret-id>`.
+If you have already upgraded with the key in place, delete it now with the command above, then re-run `/add-dial-tool`: deleting it takes it from every agent at once, OneCLI's default agent included, even if the re-run waits on a Dial sign-in.
 
 Write the pin to `~/.onecli/.env`, which Docker Compose reads on every later `docker compose` command. A version given only on the command line is gone after that command, so the next plain `docker compose up` falls back to an older saved value or to `latest`. This keeps the file's other settings and its permissions, and the temporary copy is private to you. The command stops without touching the file when the value is empty or not a version:
 
