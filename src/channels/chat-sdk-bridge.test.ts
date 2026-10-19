@@ -393,6 +393,33 @@ describe('createChatSdkBridge.deliver — ask_question cards (button styles)', (
     expect(edited.card.children.some((child) => child.type === 'actions')).toBe(false);
   });
 
+  it('leaves a question the agent asked itself (fromAgent) unescaped', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      escapeCardText: (t) => `[${t}]`,
+    });
+
+    await bridge.deliver('slack:C1', null, {
+      kind: 'chat-sdk',
+      content: {
+        type: 'ask_question',
+        questionId: 'q-4',
+        title: 'Pick one',
+        question: 'See <https://example.com|docs>?',
+        options: ['Yes'],
+        fromAgent: true,
+      },
+    });
+    const posted = calls[0].message as {
+      card: { children: Array<{ type: string; content?: string }> };
+      fallbackText: string;
+    };
+    expect(posted.card.children[0]).toEqual({ type: 'text', content: 'See <https://example.com|docs>?' });
+    expect(posted.fallbackText).toBe('Pick one\n\nSee <https://example.com|docs>?\nOptions: Yes');
+  });
+
   it('runs open and resolved card text through escapeCardText, leaving the title alone', async () => {
     const { calls, postMessage } = makePostCapture();
     const edits: PostCall[] = [];

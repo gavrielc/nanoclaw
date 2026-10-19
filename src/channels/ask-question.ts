@@ -50,6 +50,8 @@ export interface AskQuestionPayload {
   title: string;
   question: string;
   options: NormalizedOption[];
+  /** Set by host delivery on questions an agent asks; their markup is the agent's own and is not escaped. */
+  fromAgent?: boolean;
 }
 
 /**
@@ -66,7 +68,18 @@ export function escapeInvisibles(s: string): string {
   });
 }
 
-/** Quote an untrusted name or value for card text: one line, no fence or hidden characters. */
+/**
+ * Quote an untrusted name or value for card text: one line, no fence or hidden
+ * characters. Markdown renderers would decode `&#10;` into a line break and
+ * turn `](` into a link that swallows host text, so both are shown escaped.
+ */
 export function quoteForCard(value: string): string {
-  return escapeInvisibles(JSON.stringify(value));
+  return escapeInvisibles(JSON.stringify(value))
+    .replace(/&(?=#?[0-9A-Za-z]+;)/g, '\\u0026')
+    .replace(/\]\(/g, ']\\u0028');
+}
+
+/** Fence untrusted multi-line text for card text: lines kept, nothing inside can close the fence. */
+export function fenceForCard(text: string): string {
+  return '```\n' + text.split('\n').map(escapeInvisibles).join('\n') + '\n```';
 }

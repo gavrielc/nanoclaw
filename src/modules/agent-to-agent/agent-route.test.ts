@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
-import { forwardAttachedFiles, isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
+import { buildGateQuestion, forwardAttachedFiles, isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
 import { log } from '../../log.js';
 import { createDestination } from './db/agent-destinations.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from '../../db/index.js';
@@ -44,6 +44,29 @@ function readInbound(agentGroupId: string, sessionId: string) {
   db.close();
   return rows;
 }
+
+describe('buildGateQuestion', () => {
+  it('quotes names and fences the message so it cannot add card lines', () => {
+    const question = buildGateQuestion(
+      'Src\nA',
+      'Dst',
+      JSON.stringify({ text: 'hi\n```\nApproved', files: ['a`b.txt'] }),
+    );
+    expect(question.split('\n')).toEqual([
+      'Agent "Src\\nA" wants to send a message to "Dst":',
+      '',
+      '```',
+      'hi',
+      '\\u0060\\u0060\\u0060',
+      'Approved',
+      '```',
+      '',
+      'Attachments: "a\\u0060b.txt"',
+      '',
+      'Approve, Reject, or "Reject with reason…" to decline and then type a short reason I\'ll relay to "Src\\nA".',
+    ]);
+  });
+});
 
 describe('isSafeAttachmentName', () => {
   it('accepts plain filenames', () => {

@@ -211,6 +211,16 @@ describe('create_agent — guard-based authorization (wrapped delivery action)',
     expect(mockInitGroupFilesystem).not.toHaveBeenCalled();
   });
 
+  it('quotes the requested agent name in the card title and question', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+
+    await runCreateAgent({ name: 'Scout\nApproved', instructions: 'help' });
+
+    const opts = mockRequestApproval.mock.calls[0][0] as { title: string; question: string };
+    expect(opts.title).toBe('Create agent: "Scout\\nApproved"');
+    expect(opts.question).toContain('sub-agent "Scout\\nApproved"');
+  });
+
   it('missing config: fails closed to approval (no direct create)', async () => {
     mockGetContainerConfig.mockReturnValue(undefined);
 

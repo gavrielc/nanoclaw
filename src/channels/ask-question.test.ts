@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { escapeInvisibles, normalizeOption, normalizeOptions, quoteForCard } from './ask-question.js';
+import { escapeInvisibles, fenceForCard, normalizeOption, normalizeOptions, quoteForCard } from './ask-question.js';
 
 describe('normalizeOption — style whitelist', () => {
   // The style value flows straight into the Chat SDK Button() and from there
@@ -95,7 +95,23 @@ describe('quoteForCard', () => {
     expect(quoteForCard('Group One')).toBe('"Group One"');
   });
 
+  it('keeps a character reference from decoding, leaving a plain ampersand alone', () => {
+    expect(quoteForCard('Eve&#10;x &amp; R&D')).toBe('"Eve\\u0026#10;x \\u0026amp; R&D"');
+  });
+
+  it('keeps a quoted value from opening a Markdown link', () => {
+    expect(quoteForCard('[Approved](https://example.com ')).toBe('"[Approved]\\u0028https://example.com "');
+  });
+
   it('keeps line breaks, fences and hidden characters visible on one line', () => {
     expect(quoteForCard('a\n```\n\u202eb')).toBe('"a\\n\\u0060\\u0060\\u0060\\n\\u202eb"');
+  });
+});
+
+describe('fenceForCard', () => {
+  it('keeps lines but escapes anything that could close the fence', () => {
+    expect(fenceForCard('line one\n```\nline `two`')).toBe(
+      '```\nline one\n\\u0060\\u0060\\u0060\nline \\u0060two\\u0060\n```',
+    );
   });
 });

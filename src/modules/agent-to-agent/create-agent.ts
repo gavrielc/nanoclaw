@@ -111,7 +111,7 @@ export async function requestCreateAgentHold(content: Record<string, unknown>, s
     agentName: sourceGroup.name,
     action: 'create_agent',
     payload: createAgentHoldPayload(content),
-    title: `Create agent: ${name}`,
+    title: `Create agent: ${quoteForCard(name)}`,
     question: `Agent ${quoteForCard(sourceGroup.name)} wants to create a new sub-agent ${quoteForCard(name)} (a new agent group with its own workspace and container).${templateApprovalNote(content)} Approve?`,
   });
 }

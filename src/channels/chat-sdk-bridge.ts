@@ -364,9 +364,10 @@ export interface ChatSdkBridgeConfig {
    */
   transformOutboundText?: (text: string) => string;
   /**
-   * Optional escape for ask_question card text (open and resolved cards).
-   * Approval cards mix host wording with untrusted values (agent arguments,
-   * sender names); channels whose card text is raw platform markup set this.
+   * Optional escape for host-built ask_question card text (open and resolved
+   * cards). Approval cards mix host wording with untrusted values (agent
+   * arguments, sender names); channels whose card text is raw platform markup
+   * set this. Questions an agent asks itself (`fromAgent`) keep their markup.
    */
   escapeCardText?: (text: string) => string;
   /**
@@ -879,10 +880,11 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         }
         if (content.requirePresentation) throw new Error('Approval presentation adapter is unavailable');
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
+        const shownQuestion = content.fromAgent === true ? question : cardText(question);
         const card = Card({
           title,
           children: [
-            CardText(cardText(question)),
+            CardText(shownQuestion),
             Actions(
               // Encode button id/value with the option index rather than the
               // full value. Telegram caps callback_data at 64 bytes, and
@@ -897,7 +899,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         });
         const result = await adapter.postMessage(tid, {
           card,
-          fallbackText: `${title}\n\n${cardText(question)}\nOptions: ${options.map((o) => o.label).join(', ')}`,
+          fallbackText: `${title}\n\n${shownQuestion}\nOptions: ${options.map((o) => o.label).join(', ')}`,
         });
         return result?.id;
       }

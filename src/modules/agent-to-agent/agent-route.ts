@@ -19,6 +19,7 @@
  * core throws with a "module not installed" message so retry → mark failed.
  */
 import { AnchoredDir, copyRegularFile } from '../../anchored-dir.js';
+import { fenceForCard, quoteForCard } from '../../channels/ask-question.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getSession } from '../../db/sessions.js';
@@ -264,14 +265,16 @@ function parseMessageContent(contentStr: string): { text: string; files: string[
   }
 }
 
-function buildGateQuestion(sourceName: string, targetName: string, contentStr: string): string {
+/** Exported for tests. */
+export function buildGateQuestion(sourceName: string, targetName: string, contentStr: string): string {
   const { text, files } = parseMessageContent(contentStr);
   const body = text.length > GATE_CARD_BODY_MAX ? `${text.slice(0, GATE_CARD_BODY_MAX)}… (truncated)` : text;
-  const lines = [`Agent "${sourceName}" wants to send a message to "${targetName}":`, '', body];
-  if (files.length > 0) lines.push('', `Attachments: ${files.join(', ')}`);
+  const source = quoteForCard(sourceName);
+  const lines = [`Agent ${source} wants to send a message to ${quoteForCard(targetName)}:`, '', fenceForCard(body)];
+  if (files.length > 0) lines.push('', `Attachments: ${files.map(quoteForCard).join(', ')}`);
   lines.push(
     '',
-    `Approve, Reject, or "Reject with reason…" to decline and then type a short reason I'll relay to "${sourceName}".`,
+    `Approve, Reject, or "Reject with reason…" to decline and then type a short reason I'll relay to ${source}.`,
   );
   return lines.join('\n');
 }
