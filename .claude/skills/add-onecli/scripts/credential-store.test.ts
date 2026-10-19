@@ -77,3 +77,34 @@ it('records the created Codex secret id so Codex groups are granted it, and only
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+it('Codex: a recorded id counts as connected; duplicate names without one do not, and nothing is recorded', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-dupes-'));
+  const file = path.join(root, 'data', 'onecli', 'provider-credentials.json');
+  try {
+    exec.mockReturnValueOnce(
+      JSON.stringify({
+        data: [
+          { id: 'c1', name: 'Codex' },
+          { id: 'c2', name: 'Codex' },
+        ],
+      }),
+    );
+    expect(await createCredentialStore(root).has('codex')).toBe(false);
+    expect(fs.existsSync(file)).toBe(false);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ providers: { codex: ['c1'] }, matched: [] }));
+    exec.mockReturnValueOnce(
+      JSON.stringify({
+        data: [
+          { id: 'c1', name: 'Codex' },
+          { id: 'c2', name: 'Codex' },
+        ],
+      }),
+    );
+    expect(await createCredentialStore(root).has('codex')).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).providers).toEqual({ codex: ['c1'] });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

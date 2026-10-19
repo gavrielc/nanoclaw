@@ -123,6 +123,26 @@ export function isSavedProviderCredential(provider: string, secret: { name?: unk
   return typeof secret.name === 'string' && (SAVED[provider]?.(secret.name) ?? false);
 }
 
+/**
+ * The secrets a provider's login saved, by name, for an install that recorded
+ * none. Several secrets under one name cannot be told apart (another install's,
+ * or a stray entry), so they come back as `duplicates` and nothing is chosen.
+ */
+export function savedProviderCredentials(
+  provider: string,
+  secrets: Array<{ id?: unknown; name?: unknown }>,
+): { ids: string[]; duplicates: string[] } {
+  const byName = new Map<string, string[]>();
+  for (const secret of secrets) {
+    if (typeof secret.id !== 'string' || !isSavedProviderCredential(provider, secret)) continue;
+    byName.set(secret.name as string, [...(byName.get(secret.name as string) ?? []), secret.id]);
+  }
+  const duplicates = [...byName]
+    .filter(([, ids]) => ids.length > 1)
+    .flatMap(([name, ids]) => ids.map((id) => `${name} ${id}`));
+  return duplicates.length ? { ids: [], duplicates } : { ids: [...byName.values()].flat(), duplicates };
+}
+
 /** Pulls the secret id out of `onecli secrets create` output (JSON, possibly with a `hint` key). */
 export function createdSecretId(output: string): string | null {
   try {

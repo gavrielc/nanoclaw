@@ -59,6 +59,7 @@ vi.mock('../env.js', () => ({
 }));
 
 import { contributionFromConfig, grantProviderCredentials, withProviderEnv } from './onecli.js';
+import { recordProviderCredentials } from './onecli-provider-credentials.js';
 import { log } from '../log.js';
 import { getGatewayProviderRegistration } from './gateway-provider-registry.js';
 
@@ -350,6 +351,30 @@ describe('OneCLI gateway package', () => {
     await expect(grant(gateway)).resolves.toEqual(['sec-model']);
   });
 
+  it('after the real writer records this install id, the first spawn attaches only that id, not another same-named key', async () => {
+    await recordProviderCredentials(data, 'claude', ['sec-own']);
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-own', name: 'Anthropic' },
+        { id: 'sec-other-install', name: 'Anthropic' },
+      ],
+    });
+    await expect(grant(gateway)).resolves.toEqual(['sec-own']);
+    expect(readRecord(data)).toEqual({ providers: { claude: ['sec-own'] }, matched: ['claude'] });
+  });
+
+  it('an unrecorded install with duplicate saved names refuses to guess, attaches nothing, and names the ids', async () => {
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-a', name: 'Anthropic' },
+        { id: 'sec-b', name: 'Anthropic' },
+      ],
+    });
+    await expect(grant(gateway)).rejects.toThrow(/sec-a.*sec-b|sec-b.*sec-a/);
+    expect(gateway.calls.some((c) => c.startsWith('PUT'))).toBe(false);
+    expect(fs.existsSync(path.join(data, 'onecli', 'provider-credentials.json'))).toBe(false);
+  });
+
   it('an install with no record matches the secrets NanoClaw saved once per provider, then records them', async () => {
     const gateway = fakeGateway({
       vault: [
@@ -386,15 +411,16 @@ describe('OneCLI gateway package', () => {
     expect(readRecord(data)).toEqual({ providers: { claude: ['sec-gone'] }, matched: ['claude'] });
   });
 
-  it('unions the one-time match with ids a login recorded before the first spawn', async () => {
-    writeRecord(data, { opencode: ['sec-oc'] }, []);
+  it('a login recorded before the first spawn wins over the legacy name match', async () => {
+    await recordProviderCredentials(data, 'opencode', ['sec-oc']);
     const gateway = fakeGateway({
       vault: [
         { id: 'sec-oc', name: 'OpenCode openrouter' },
         { id: 'sec-chatgpt', name: 'OpenCode ChatGPT', type: 'openai' },
       ],
     });
-    await expect(grant(gateway, 'opencode')).resolves.toEqual(['sec-oc', 'sec-chatgpt']);
+    await expect(grant(gateway, 'opencode')).resolves.toEqual(['sec-oc']);
+    expect(readRecord(data)).toEqual({ providers: { opencode: ['sec-oc'] }, matched: ['opencode'] });
   });
 
   it('a held record lock never fails or stalls the spawn: the matched credential is attached and the lock named', async () => {
@@ -417,38 +443,58 @@ describe('OneCLI gateway package', () => {
     fs.writeFileSync(path.join(data, 'onecli', 'provider-credentials.json.lock'), 'other-host 1');
     const gateway = fakeGateway({
       vault: [
-        { id: 'sec-mine', name: 'Anthropic' },
-        { id: 'sec-new', name: 'Anthropic' },
+        { id: 'sec-recorded', name: 'Claude for work' },
+        { id: 'sec-legacy', name: 'Anthropic' },
       ],
     });
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
       const res = await gateway.fetch(url, init);
-      // The lock holder commits its match (only sec-mine) and then dies holding the lock.
-      if (new URL(String(url)).pathname === '/v1/secrets') writeRecord(data, { claude: ['sec-mine'] });
+      // The lock holder commits its own recorded id and then dies holding the lock.
+      if (new URL(String(url)).pathname === '/v1/secrets') writeRecord(data, { claude: ['sec-recorded'] });
       return res;
     }) as typeof fetch;
     await expect(
       grantProviderCredentials('g1', 'claude', { baseUrl: 'http://gw.test', fetchImpl, dataDir: data }),
-    ).resolves.toEqual(['sec-mine']);
+    ).resolves.toEqual(['sec-recorded']);
+  });
+
+  it('a login that records its id while this spawn reads the vault wins over the legacy match', async () => {
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-recorded', name: 'Claude for work' },
+        { id: 'sec-legacy', name: 'Anthropic' },
+      ],
+    });
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await gateway.fetch(url, init);
+      // A setup script records its id (the real writer leaves `matched` unset) mid-spawn.
+      if (new URL(String(url)).pathname === '/v1/secrets')
+        await recordProviderCredentials(data, 'claude', ['sec-recorded']);
+      return res;
+    }) as typeof fetch;
+    await expect(
+      grantProviderCredentials('g1', 'claude', { baseUrl: 'http://gw.test', fetchImpl, dataDir: data }),
+    ).resolves.toEqual(['sec-recorded']);
+    expect(readRecord(data)).toEqual({ providers: { claude: ['sec-recorded'] }, matched: ['claude'] });
   });
 
   it('a match another host finished meanwhile is not repeated (checked again under the lock)', async () => {
     const gateway = fakeGateway({
       vault: [
-        { id: 'sec-mine', name: 'Anthropic' },
-        { id: 'sec-other', name: 'Anthropic' },
+        { id: 'sec-recorded', name: 'Claude for work' },
+        { id: 'sec-legacy', name: 'Anthropic' },
       ],
     });
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
       const res = await gateway.fetch(url, init);
-      // Another host process completes the one-time match while this one reads the vault.
-      if (new URL(String(url)).pathname === '/v1/secrets') writeRecord(data, { claude: ['sec-mine'] });
+      // Another host process records its id and finishes the match while this one reads the vault.
+      if (new URL(String(url)).pathname === '/v1/secrets') writeRecord(data, { claude: ['sec-recorded'] });
       return res;
     }) as typeof fetch;
     await expect(
       grantProviderCredentials('g1', 'claude', { baseUrl: 'http://gw.test', fetchImpl, dataDir: data }),
-    ).resolves.toEqual(['sec-mine']);
-    expect(readRecord(data)).toEqual({ providers: { claude: ['sec-mine'] }, matched: ['claude'] });
+    ).resolves.toEqual(['sec-recorded']);
+    expect(readRecord(data)).toEqual({ providers: { claude: ['sec-recorded'] }, matched: ['claude'] });
   });
 
   it('after the one-time match, only recorded ids count (a renamed or new same-named secret adds nothing)', async () => {

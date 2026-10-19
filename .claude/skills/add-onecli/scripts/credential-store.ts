@@ -1,9 +1,9 @@
 import { createProviderCredentialConnection } from './provider-credentials.js';
 import {
   createdSecretId,
-  isSavedProviderCredential,
   readProviderCredentials,
   recordProviderCredentials,
+  savedProviderCredentials,
 } from '../payload/src/gateway-providers/onecli-provider-credentials.js';
 import { getProviderModelEndpoint } from '../../../../src/provider-contracts/index.js';
 import { execFileSync } from 'node:child_process';
@@ -20,8 +20,9 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
   return {
     connection: (target) => createProviderCredentialConnection(target, root),
     connectionPaths: true,
-    // Connected means Codex groups will be granted a credential: a live
-    // recorded one, or one saved under Codex's name, which is then recorded.
+    // Connected means Codex groups will be granted a credential: a live recorded
+    // one, or, for an install that recorded none, one saved under Codex's name,
+    // which is then recorded. Duplicate names count as not connected.
     async has(provider) {
       check(provider);
       let secrets: Array<{ id?: string; name?: string; type?: string }>;
@@ -38,11 +39,10 @@ export function createCredentialStore(root = process.cwd()): ProviderCredentialS
       }
       const data = path.join(root, 'data');
       const recorded = new Set(readProviderCredentials(data).providers[provider] ?? []);
-      const ids = secrets.flatMap((s) =>
-        s.id && (recorded.has(s.id) || isSavedProviderCredential(provider, s)) ? [s.id] : [],
-      );
-      if (ids.length) await recordProviderCredentials(data, provider, ids);
-      return ids.length > 0;
+      if (secrets.some((s) => s.id && recorded.has(s.id))) return true;
+      const saved = savedProviderCredentials(provider, secrets);
+      if (saved.ids.length) await recordProviderCredentials(data, provider, saved.ids);
+      return saved.ids.length > 0;
     },
     async save(provider, credential) {
       check(provider);

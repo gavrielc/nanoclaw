@@ -31,13 +31,30 @@ const ATTACH = block('SKILL.md', '### Attach the secret to the groups that use V
 const DETACH = block('REMOVE.md', '## 3. Remove the OneCLI credential');
 const chosen = (groups: string) => ATTACH.replace(/^VERCEL_GROUPS=.*$/m, `VERCEL_GROUPS="${groups}"`);
 
+const MODEL = { id: 'sec-model', name: 'Anthropic', hostPattern: 'api.anthropic.com', preview: 'sk-a...PREVIEW' };
+const VERCEL = {
+  id: 'sec-vercel',
+  name: 'Vercel API Token',
+  hostPattern: 'api.vercel.com',
+  createdAt: '2026-10-01T10:00:00Z',
+  preview: 'vcp_...PREVIEW',
+};
+const VERCEL_2 = { ...VERCEL, id: 'sec-vercel-2', name: 'Vercel work', createdAt: '2026-10-18T09:00:00Z' };
+
 let root: string;
 let calls: string;
+/** What `onecli secrets list` prints. */
+const vault = (secrets: object[] | string) =>
+  fs.writeFileSync(
+    path.join(root, 'secrets.json'),
+    typeof secrets === 'string' ? secrets : JSON.stringify({ hint: 'h', data: secrets }),
+  );
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'add-vercel-onecli-'));
   calls = path.join(root, 'calls.log');
   fs.writeFileSync(calls, '');
+  vault([MODEL, VERCEL]);
   const bin = path.join(root, 'bin');
   fs.mkdirSync(bin);
   fs.writeFileSync(
@@ -45,7 +62,7 @@ beforeEach(() => {
     `#!/usr/bin/env bash
 echo "onecli $*" >> "$CALLS"
 case "$1 $2" in
-  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"sec-model","name":"Anthropic"},{"id":"sec-vercel","name":"Vercel API Token"}]}' ;;
+  "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; cat "$ROOT/secrets.json" ;;
   "agents list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"oc-default","identifier":"default","isDefault":true},{"id":"oc-sales","identifier":"ag-sales"},{"id":"oc-ops","identifier":"ag-ops"}]}' ;;
   "agents create") echo '{"hint":"h","id":"oc-new"}' ;;
   "agents secrets"|"agents set-secrets") echo '{"error":"removed","code":"GONE"}'; exit 1 ;;
@@ -66,14 +83,21 @@ echo '{"data":[{"id":"ag-sales","name":"Sales"},{"id":"ag-ops","name":"Ops"},{"i
 
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-function run(script: string) {
-  const r = spawnSync('sh', ['-c', script], {
+function run(script: string, shell = 'sh') {
+  const r = spawnSync(shell, ['-c', script], {
     cwd: root,
-    env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls },
+    env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls, ROOT: root },
     encoding: 'utf8',
   });
-  return { status: r.status, stderr: r.stderr, lines: fs.readFileSync(calls, 'utf8').trim().split('\n') };
+  return {
+    status: r.status,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    lines: fs.readFileSync(calls, 'utf8').trim().split('\n'),
+  };
 }
+const attached = (lines: string[]) => lines.filter((l) => l.includes('grants attach-secret'));
+const shells = ['sh', 'bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'true']).status === 0);
 
 describe('/add-vercel OneCLI steps', () => {
   it('attaches the Vercel secret only to the chosen groups', () => {
@@ -93,6 +117,64 @@ describe('/add-vercel OneCLI steps', () => {
     expect(lines.filter((l) => l.startsWith('onecli agents create'))).toHaveLength(1);
   });
 
+  it('finds the token by its host, not by a name that mentions Vercel', () => {
+    vault([MODEL, { id: 'sec-notes', name: 'vercel notes', hostPattern: 'notes.example.com' }, VERCEL]);
+    const { status, lines } = run(chosen('ag-sales'));
+    expect(status).toBe(0);
+    expect(attached(lines)).toEqual(['onecli agents grants attach-secret --id oc-sales --secret-id sec-vercel']);
+  });
+
+  it('with two Vercel tokens, lists them without previews and attaches nothing', () => {
+    vault([MODEL, VERCEL, VERCEL_2]);
+    const { status, stdout, stderr, lines } = run(chosen('ag-sales'));
+    expect(status).not.toBe(0);
+    expect(attached(lines)).toEqual([]);
+    expect(stderr).toContain('sec-vercel  Vercel API Token  created 2026-10-01T10:00:00Z');
+    expect(stderr).toContain('sec-vercel-2  Vercel work  created 2026-10-18T09:00:00Z');
+    expect(stderr).toContain('VERCEL_SECRET');
+    expect(stdout + stderr).not.toContain('PREVIEW');
+  });
+
+  it('VERCEL_SECRET picks the token to attach when there are several', () => {
+    vault([MODEL, VERCEL, VERCEL_2]);
+    const { status, lines } = run(chosen('ag-sales').replace(/^VERCEL_SECRET=.*$/m, 'VERCEL_SECRET="sec-vercel-2"'));
+    expect(status).toBe(0);
+    expect(attached(lines)).toEqual(['onecli agents grants attach-secret --id oc-sales --secret-id sec-vercel-2']);
+  });
+
+  it('refuses a VERCEL_SECRET that is not a Vercel token', () => {
+    const { status, stderr, lines } = run(
+      chosen('ag-sales').replace(/^VERCEL_SECRET=.*$/m, 'VERCEL_SECRET="sec-model"'),
+    );
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("'sec-model' is not a Vercel token");
+    expect(attached(lines)).toEqual([]);
+  });
+
+  it.each([
+    ['no Vercel token', () => vault([MODEL]), 'no Vercel token in OneCLI'],
+    ['a blank list', () => vault(''), 'could not list OneCLI secrets'],
+  ])('refuses with %s and attaches nothing', (_name, setup, message) => {
+    setup();
+    const { status, stderr, lines } = run(chosen('ag-sales'));
+    expect(status).not.toBe(0);
+    expect(stderr).toContain(message);
+    expect(attached(lines)).toEqual([]);
+  });
+
+  it.each(shells)('a refusal under %s leaves the calling shell open', (shell) => {
+    vault([MODEL]);
+    const { status, stdout } = run(`${chosen('ag-sales')}\necho shell-still-open`, shell);
+    expect(status).toBe(0);
+    expect(stdout).toContain('shell-still-open');
+  });
+
+  it.each(shells)('attaches under %s', (shell) => {
+    const { status, lines } = run(chosen('ag-sales,ag-ops'), shell);
+    expect(status).toBe(0);
+    expect(attached(lines)).toHaveLength(2);
+  });
+
   it('refuses an unknown group id before attaching anything', () => {
     const { status, stderr, lines } = run(chosen('ag-nope'));
     expect(status).not.toBe(0);
@@ -108,10 +190,38 @@ describe('/add-vercel OneCLI steps', () => {
   });
 
   it('removal detaches the Vercel secret from every agent, then deletes it', () => {
+    vault([MODEL, { id: 'sec-notes', name: 'vercel notes', hostPattern: 'notes.example.com' }, VERCEL]);
     const { lines } = run(DETACH);
     for (const id of ['oc-default', 'oc-sales', 'oc-ops'])
       expect(lines).toContain(`onecli agents grants detach-secret --id ${id} --secret-id sec-vercel`);
     expect(lines.at(-1)).toBe('onecli secrets delete --id sec-vercel');
+    expect(lines.some((l) => l.includes('sec-notes'))).toBe(false);
+  });
+
+  it('removal with two Vercel tokens lists them, deletes nothing, and leaves the shell open', () => {
+    vault([MODEL, VERCEL, VERCEL_2]);
+    const { status, stdout, stderr, lines } = run(`${DETACH}\necho shell-still-open`);
+    expect(status).toBe(0);
+    expect(stdout).toContain('shell-still-open');
+    expect(lines.some((l) => /detach-secret|secrets delete/.test(l))).toBe(false);
+    expect(stderr).toContain('sec-vercel-2  Vercel work  created 2026-10-18T09:00:00Z');
+    expect(stdout + stderr).not.toContain('PREVIEW');
+  });
+
+  it('removal with VERCEL_SECRET removes only that token', () => {
+    vault([MODEL, VERCEL, VERCEL_2]);
+    const { lines } = run(DETACH.replace(/^VERCEL_SECRET=.*$/m, 'VERCEL_SECRET="sec-vercel-2"'));
+    expect(lines.at(-1)).toBe('onecli secrets delete --id sec-vercel-2');
+    expect(lines.some((l) => l.endsWith('--secret-id sec-vercel'))).toBe(false);
+  });
+
+  it.each([
+    ['the existing-credential check', '### Check if Vercel credential already exists', 0],
+    ['the check after saving', 'Once the user provides the token, add it to OneCLI:', 1],
+  ])('%s shows Vercel tokens by host without previews', (_name, heading, skip) => {
+    vault([MODEL, { id: 'sec-notes', name: 'vercel notes', hostPattern: 'notes.example.com' }, VERCEL]);
+    const { stdout } = run(block('SKILL.md', heading, skip));
+    expect(stdout.trim()).toBe('sec-vercel  Vercel API Token  created 2026-10-01T10:00:00Z');
   });
 
   it.each([
