@@ -54,6 +54,7 @@ import {
   getMessagingGroupByPlatform,
 } from '../src/db/messaging-groups.js';
 import { runMigrations } from '../src/db/migrations/index.js';
+import { assertValidGroupFolder } from '../src/group-folder.js';
 import { stageGroupPersona } from '../src/group-persona.js';
 import { normalizeName } from '../src/modules/agent-to-agent/db/agent-destinations.js';
 import { addMember } from '../src/modules/permissions/db/agent-group-members.js';
@@ -288,6 +289,7 @@ async function main(): Promise<void> {
       ag = existing;
       console.log(`Reusing agent group: ${ag.id} (${folder})`);
     } else {
+      assertValidGroupFolder(folder);
       const agId = generateId('ag');
       await createAgentGroup({
         id: agId,

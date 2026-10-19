@@ -32,6 +32,7 @@ import {
   getMessagingGroupByPlatform,
 } from '../src/db/messaging-groups.js';
 import { runMigrations } from '../src/db/migrations/index.js';
+import { assertValidGroupFolder } from '../src/group-folder.js';
 import { normalizeName } from '../src/modules/agent-to-agent/db/agent-destinations.js';
 import { upsertUser } from '../src/modules/permissions/db/users.js';
 import { initGroupFilesystem } from '../src/group-init.js';
@@ -108,6 +109,7 @@ async function main(): Promise<void> {
   const pickedProvider = process.env.NANOCLAW_PICKED_PROVIDER?.trim().toLowerCase();
   let ag: AgentGroup | undefined = await getAgentGroupByFolder(folder);
   if (!ag) {
+    assertValidGroupFolder(folder);
     const agId = generateId('ag');
     await createAgentGroup({
       id: agId,
