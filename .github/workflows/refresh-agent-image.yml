@@ -70,19 +70,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Newest image tagged <release>-<yyyymmdd>, the tag the worker writes
-          # after checking the image against that release. Read from the registry
-          # rather than from the dispatch payload: the payload says "go look", it
-          # does not get to say what we found.
+          # Newest image tagged <release>-<yyyymmdd>T<hhmm>, the tag the worker
+          # writes after checking the image against that release (date-only tags
+          # come from its first version). Read from the registry rather than from
+          # the dispatch payload: the payload says "go look", it does not get to
+          # say what we found.
           aws ecr describe-images --repository-name "$REPO_NAME" --region us-east-1 \
             --query 'imageDetails[?imageTags]' --output json > /tmp/candidates.json
 
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os, re
 
-          RELEASE_TAG = re.compile(r'(v\d+\.\d+\.\d+)-(\d{8})')
-          imgs = [i for i in json.load(open('/tmp/candidates.json'))
-                  if any(RELEASE_TAG.fullmatch(t) for t in i['imageTags'])]
+          RELEASE_TAG = re.compile(r'(v\d+\.\d+\.\d+)-(\d{8})(T\d{4})?')
+          tagged = json.load(open('/tmp/candidates.json'))
+          imgs = [i for i in tagged if any(RELEASE_TAG.fullmatch(t) for t in i['imageTags'])]
           if not imgs:
               print('found=false')
               print('reason=no <release>-<date> image found')
@@ -104,9 +105,9 @@ jobs:
               print(f'reason=already listed for {release}')
               raise SystemExit(0)
 
-          # Only ever move forward. If someone listed something newer by hand,
-          # proposing this would be a silent rollback.
-          pushed = {i['imageDigest']: i['imagePushedAt'] for i in imgs}
+          # Only ever move forward. If someone listed something newer by hand, any
+          # tag included, proposing this would be a silent rollback.
+          pushed = {i['imageDigest']: i['imagePushedAt'] for i in tagged}
           if listed_digest in pushed and pushed[listed_digest] >= newest['imagePushedAt']:
               print('found=false')
               print(f'reason=the image listed for {release} is not older than the candidate')
