@@ -134,6 +134,9 @@ function err(text: string) {
   return { content: [{ type: 'text' as const, text: `Error: ${text}` }], isError: true };
 }
 
+/** Same as MAX_CARD_QUESTION_LENGTH in the host's src/channels/ask-question.ts. */
+export const MAX_CARD_QUESTION_LENGTH = 2000;
+
 export const askUserQuestion: McpToolDefinition = {
   tool: {
     name: 'ask_user_question',
@@ -143,7 +146,10 @@ export const askUserQuestion: McpToolDefinition = {
       type: 'object' as const,
       properties: {
         title: { type: 'string', description: 'Short card title shown above the question' },
-        question: { type: 'string', description: 'The question to ask' },
+        question: {
+          type: 'string',
+          description: 'The question to ask. Title and question together: at most 2000 characters',
+        },
         options: {
           type: 'array',
           items: {
@@ -175,6 +181,12 @@ export const askUserQuestion: McpToolDefinition = {
     const timeout = ((args.timeout as number) || 300) * 1000;
     if (!title || !question || !rawOptions?.length) {
       return err('title, question, and options are required');
+    }
+    // The host refuses longer cards; say so now instead of waiting out the timeout.
+    if (title.length + question.length > MAX_CARD_QUESTION_LENGTH) {
+      return err(
+        `title and question are too long to show in full on a card (${title.length + question.length} characters, limit ${MAX_CARD_QUESTION_LENGTH}). Shorten the question.`,
+      );
     }
 
     const options = rawOptions.map((o) => {
