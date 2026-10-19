@@ -219,6 +219,27 @@ describe('add-dashboard integration point (startDashboard)', () => {
       expect(body.context_windows[0].outputTokens).toBe(4);
     });
 
+    it('reads a line several chunks long, finished or still being written', async () => {
+      // 3.5 MB: longer than three 1 MB read chunks, so the line crosses several chunk edges.
+      const long = filler(3_500_000);
+      const last = usage(3);
+      fs.writeFileSync(transcript, usage(1) + long + usage(2) + long.slice(0, 2_500_000));
+      let body = await snapshot();
+      expect(body.tokens.totals.requests).toBe(2);
+      expect(body.context_windows[0].outputTokens).toBe(2);
+
+      fs.appendFileSync(transcript, long.slice(2_500_000) + last);
+      body = await snapshot();
+      expect(body.tokens.totals.requests).toBe(3);
+      expect(body.tokens.totals.outputTokens).toBe(1 + 2 + 3);
+      expect(body.context_windows[0].outputTokens).toBe(3);
+
+      // Usage behind a long last line: the tail window has to grow past it.
+      fs.appendFileSync(transcript, long);
+      body = await snapshot();
+      expect(body.context_windows[0].outputTokens).toBe(3);
+    });
+
     it('starts over when a transcript is replaced by a smaller one', async () => {
       fs.writeFileSync(transcript, usage(1) + usage(2) + usage(3));
       expect((await snapshot()).tokens.totals.requests).toBe(3);

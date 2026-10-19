@@ -121,21 +121,30 @@ function readLines(
   const fd = fs.openSync(file, 'r');
   try {
     const buf = Buffer.alloc(READ_CHUNK_BYTES);
-    let carry = Buffer.alloc(0);
+    // An unfinished line, kept as chunks and joined once, so a long line is copied once.
+    let pending: Buffer[] = [];
+    let pendingLen = 0;
     let pos = start;
     while (pos < end) {
       const n = fs.readSync(fd, buf, 0, Math.min(buf.length, end - pos), pos);
       if (n === 0) break;
       pos += n;
-      const data = carry.length > 0 ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
+      const chunk = buf.subarray(0, n);
       let from = 0;
-      for (let nl = data.indexOf(10); nl !== -1; nl = data.indexOf(10, from)) {
-        onLine(data.toString('utf-8', from, nl));
+      for (let nl = chunk.indexOf(10); nl !== -1; nl = chunk.indexOf(10, from)) {
+        if (pendingLen > 0) {
+          onLine(Buffer.concat([...pending, chunk.subarray(from, nl)]).toString('utf-8'));
+          pending = [];
+          pendingLen = 0;
+        } else onLine(chunk.toString('utf-8', from, nl));
         from = nl + 1;
       }
-      carry = Buffer.from(data.subarray(from));
+      if (from < n) {
+        pending.push(Buffer.from(chunk.subarray(from)));
+        pendingLen += n - from;
+      }
     }
-    return { next: pos - carry.length, rest: carry.toString('utf-8') };
+    return { next: pos - pendingLen, rest: Buffer.concat(pending).toString('utf-8') };
   } finally {
     fs.closeSync(fd);
   }
