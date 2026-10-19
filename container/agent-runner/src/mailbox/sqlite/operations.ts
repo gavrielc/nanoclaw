@@ -179,6 +179,17 @@ export function sqliteGetMessageIdBySeq(sequence: number): string | null {
   return delivered?.platform_message_id || outboundRow.id;
 }
 
+export function sqliteGetDeliveryStatus(messageOutId: string): 'delivered' | 'failed' | null {
+  const row = readInbound(
+    (inbound) =>
+      inbound.prepare('SELECT status FROM delivered WHERE message_out_id = ?').get(messageOutId) as
+        | { status: string }
+        | undefined,
+  );
+  if (!row) return null;
+  return row.status === 'failed' ? 'failed' : 'delivered';
+}
+
 export function sqliteGetRoutingBySeq(
   sequence: number,
 ): { channel_type: string | null; platform_id: string | null; thread_id: string | null } | null {

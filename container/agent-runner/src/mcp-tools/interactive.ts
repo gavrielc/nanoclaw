@@ -8,7 +8,7 @@ import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { findQuestionResponse, markCompleted } from '../db/messages-in.js';
-import { writeMessageOut } from '../db/messages-out.js';
+import { getDeliveryStatus, writeMessageOut } from '../db/messages-out.js';
 import { getSessionRouting, resolveDestinationThread } from '../db/session-routing.js';
 import { getCurrentReplyRoute } from '../db/session-state.js';
 import { registerTools } from './server.js';
@@ -212,6 +212,9 @@ export const askUserQuestion: McpToolDefinition = {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       if (context?.signal.aborted) return err('Question cancelled');
+      // Read the delivery outcome before the answer, so an answer that lands
+      // between the two reads still wins.
+      const deliveryFailed = getDeliveryStatus(questionId) === 'failed';
       const response = findQuestionResponse(questionId);
 
       if (response) {
@@ -221,6 +224,14 @@ export const askUserQuestion: McpToolDefinition = {
 
         log(`ask_user_question response: ${questionId} → ${parsed.selectedOption}`);
         return ok(parsed.selectedOption);
+      }
+
+      // The host gave up delivering the card: stop waiting for an answer.
+      if (deliveryFailed) {
+        log(`ask_user_question undeliverable: ${questionId}`);
+        return err(
+          'The question card could not be delivered, so no answer will be collected. Try a shorter question, or ask in a plain message.',
+        );
       }
 
       try {

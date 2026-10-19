@@ -12,6 +12,7 @@ import {
   sqliteFindCliResponse,
   sqliteFindQuestionResponse,
   sqliteGetAllDestinations,
+  sqliteGetDeliveryStatus,
   sqliteGetMessageIn,
   sqliteGetMessageIdBySeq,
   sqliteGetPendingMessages,
@@ -181,6 +182,10 @@ export class SqliteAgentMailbox implements AgentMailbox {
 
   getUndeliveredMessages(): OutboundMessage[] {
     return sqliteGetUndeliveredMessages().map(outboundMessage);
+  }
+
+  getDeliveryStatus(messageOutId: string) {
+    return sqliteGetDeliveryStatus(messageOutId);
   }
 
   getState(key: string) {

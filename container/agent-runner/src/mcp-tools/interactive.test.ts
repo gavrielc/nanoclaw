@@ -41,6 +41,57 @@ describe('ask_user_question cancellation', () => {
   });
 });
 
+/** The host's delivery outcome, as delivery.ts records it in the session's inbound.db. */
+function recordDelivery(messageOutId: string, status: 'delivered' | 'failed'): void {
+  getInboundDb()
+    .prepare('INSERT INTO delivered (message_out_id, platform_message_id, status, delivered_at) VALUES (?, NULL, ?, ?)')
+    .run(messageOutId, status, new Date().toISOString());
+}
+
+async function postedQuestionId(): Promise<string> {
+  while (!getUndeliveredMessages().length) await Bun.sleep(1);
+  return JSON.parse(getUndeliveredMessages()[0].content).questionId;
+}
+
+describe('ask_user_question — card the host could not post', () => {
+  const args = { title: 'Fixture', question: 'Choose', options: ['yes', 'no'] };
+
+  it('returns an error once the host gives up on the card, instead of waiting out the timeout', async () => {
+    const waiting = askUserQuestion.handler(args);
+    const questionId = await postedQuestionId();
+    const started = Date.now();
+    recordDelivery(questionId, 'failed');
+    const result = await waiting;
+    expect(Date.now() - started).toBeLessThan(2500);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('could not be delivered');
+  });
+
+  it('still returns an answer that arrived by the time the host gave up on the card', async () => {
+    const waiting = askUserQuestion.handler(args);
+    const questionId = await postedQuestionId();
+    answerQuestion(questionId, null);
+    recordDelivery(questionId, 'failed');
+    const result = await waiting;
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe('yes');
+  });
+
+  it('keeps waiting for the answer while its card is delivered, whatever happened to other messages', async () => {
+    let settled = false;
+    const waiting = askUserQuestion.handler({ ...args, timeout: 10 }).finally(() => (settled = true));
+    const questionId = await postedQuestionId();
+    recordDelivery(questionId, 'delivered');
+    recordDelivery('msg-other-card', 'failed');
+    await Bun.sleep(1200);
+    expect(settled).toBe(false);
+    answerQuestion(questionId, null);
+    const result = await waiting;
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe('yes');
+  });
+});
+
 describe('send_card', () => {
   it('tells the agent when callback actions will be dropped', async () => {
     const result = await sendCard.handler({
