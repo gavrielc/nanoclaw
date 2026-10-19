@@ -21,7 +21,7 @@
  * one); all requester notifications go through the approvals module's
  * notifyAgent. Token values never appear in notify texts or logs.
  */
-import { quoteForCard } from '../../channels/ask-question.js';
+import { quoteForCard } from '../../card-text.js';
 import { SlackApiError } from '../../channels/slack-lib.js';
 import { reenterGuardedDeliveryAction, registerDeliveryAction, registerDeliveryBatchPreview } from '../../delivery.js';
 import { getAgentGroup } from '../../db/agent-groups.js';

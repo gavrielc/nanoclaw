@@ -44,13 +44,8 @@
  *   - Approver has no reachable DM.
  *   - Delivery adapter missing.
  */
-import {
-  escapeInvisibles,
-  normalizeOptions,
-  quoteForCard,
-  type NormalizedOption,
-  type RawOption,
-} from '../../channels/ask-question.js';
+import { normalizeOptions, type NormalizedOption, type RawOption } from '../../channels/ask-question.js';
+import { escapeInvisibles, quoteForCard } from '../../card-text.js';
 import { resolveWiringDefaults } from '../../channels/channel-defaults.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getChannelAdapter } from '../../channels/channel-registry.js';

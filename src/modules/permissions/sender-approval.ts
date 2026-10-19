@@ -31,7 +31,8 @@
  * deduped per (sender, messaging group) per 24h via a persisted decline
  * stamp reusing this table's UNIQUE key. See declineAndNotify at the bottom.
  */
-import { normalizeOptions, quoteForCard, type RawOption } from '../../channels/ask-question.js';
+import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
+import { quoteForCard } from '../../card-text.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';

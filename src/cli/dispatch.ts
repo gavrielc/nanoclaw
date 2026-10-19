@@ -12,7 +12,7 @@
  * the structural checks live, and the `approved: true` boolean no longer
  * exists.
  */
-import { escapeInvisibles, quoteForCard } from '../channels/ask-question.js';
+import { escapeInvisibles, quoteForCard } from '../card-text.js';
 import { getContainerConfig } from '../db/container-configs.js';
 import { getAgentGroup } from '../db/agent-groups.js';
 import { getMessagingGroupAgentByPair } from '../db/messaging-groups.js';

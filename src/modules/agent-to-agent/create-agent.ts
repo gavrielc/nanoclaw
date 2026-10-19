@@ -18,7 +18,7 @@
  */
 import path from 'path';
 
-import { quoteForCard } from '../../channels/ask-question.js';
+import { quoteForCard } from '../../card-text.js';
 import { GROUPS_DIR } from '../../config.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';

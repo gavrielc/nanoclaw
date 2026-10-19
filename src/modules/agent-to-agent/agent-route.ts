@@ -19,7 +19,7 @@
  * core throws with a "module not installed" message so retry → mark failed.
  */
 import { AnchoredDir, copyRegularFile } from '../../anchored-dir.js';
-import { fenceForCard, quoteForCard } from '../../channels/ask-question.js';
+import { fenceForCard, quoteForCard } from '../../card-text.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getSession } from '../../db/sessions.js';

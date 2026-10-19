@@ -24,7 +24,7 @@
  *
  * Failures surface to the requesting agent via notifyAgent — never silent.
  */
-import { quoteForCard } from '../../channels/ask-question.js';
+import { quoteForCard } from '../../card-text.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import {
   getAllMessagingGroups,

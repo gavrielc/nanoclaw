@@ -14,7 +14,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { escapeInvisibles, quoteForCard } from '../../channels/ask-question.js';
+import { escapeInvisibles, quoteForCard } from '../../card-text.js';
 import { mcpServerPluginOwner, parseMcpServerConfig, validateMcpServerName } from '../../container-config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
