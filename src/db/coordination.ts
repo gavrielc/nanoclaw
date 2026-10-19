@@ -127,6 +127,12 @@ export async function listLiveHostInstances(now: string): Promise<HostInstanceRo
   );
 }
 
+/**
+ * Insert guard for writers that can race a delete: deletes clear a session's
+ * rows, and nothing may write them back for a session that is gone.
+ */
+const SESSION_EXISTS = 'WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ?)';
+
 // ── session_claims ──
 
 export async function getSessionClaim(sessionId: string): Promise<SessionClaimRow | undefined> {
@@ -139,6 +145,8 @@ export async function getSessionClaim(sessionId: string): Promise<SessionClaimRo
  * (or a stale `finish()` racing a fresh spawn) loses the CAS and must reload.
  * Creating the row (first spawn ever) is the `expectedIncarnation: 0` case.
  * Returns the new incarnation on success, null when the CAS lost.
+ * Not SESSION_EXISTS-guarded: callers read null as a live peer, so adoption
+ * would leave a just-deleted session's container running unsupervised.
  */
 export async function tryClaimSession(args: {
   sessionId: string;
@@ -218,7 +226,7 @@ export async function setStopIntent(
   }
   await db.run(
     `INSERT INTO session_claims (session_id, incarnation, stop_intent, updated_at)
-     SELECT ?, 0, ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ?)
+     SELECT ?, 0, ?, ? ${SESSION_EXISTS}
      ON CONFLICT (session_id) DO UPDATE SET stop_intent = excluded.stop_intent, updated_at = excluded.updated_at`,
     sessionId,
     intent,
@@ -229,7 +237,7 @@ export async function setStopIntent(
 
 // ── delivery_attempts ──
 
-/** Record one attempt; returns the new attempt count. */
+/** Record one attempt; returns the new attempt count (1 when the session is gone and nothing was recorded). */
 export async function recordDeliveryAttempt(args: {
   messageId: string;
   sessionId: string;
@@ -240,7 +248,7 @@ export async function recordDeliveryAttempt(args: {
   const db = getDb();
   await db.run(
     `INSERT INTO delivery_attempts (message_id, session_id, attempts, last_attempt_at, next_attempt_at, last_error)
-     VALUES (?, ?, 1, ?, ?, ?)
+     SELECT ?, ?, 1, ?, ?, ? ${SESSION_EXISTS}
      ON CONFLICT (message_id) DO UPDATE SET
        attempts = delivery_attempts.attempts + 1,
        last_attempt_at = excluded.last_attempt_at,
@@ -251,6 +259,7 @@ export async function recordDeliveryAttempt(args: {
     args.now,
     args.nextAttemptAt,
     args.error ?? null,
+    args.sessionId,
   );
   const row = await db.get<{ attempts: number }>(
     'SELECT attempts FROM delivery_attempts WHERE message_id = ?',
@@ -270,14 +279,16 @@ export async function clearDeliveryAttempt(messageId: string): Promise<void> {
 
 // ── wake_signals (the wake-signal outbox) ──
 
+/** Nothing is written for a session that no longer exists. */
 export async function writeWakeSignal(sessionId: string, reason: string, now: string): Promise<string> {
   const id = randomUUID();
   await getDb().run(
-    'INSERT INTO wake_signals (id, session_id, reason, created_at) VALUES (?, ?, ?, ?)',
+    `INSERT INTO wake_signals (id, session_id, reason, created_at) SELECT ?, ?, ?, ? ${SESSION_EXISTS}`,
     id,
     sessionId,
     reason,
     now,
+    sessionId,
   );
   return id;
 }
