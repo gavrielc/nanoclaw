@@ -111,8 +111,7 @@ jobs:
 
           # The versions.json pin. A release can never carry its own image, so the
           # pin can move to an image listed for a release, checked against that
-          # release; anything else must match this branch's bun.lock. Older branches
-          # may predate versions.json; an empty old pin still gets the new one verified.
+          # release; anything else must match this branch's bun.lock.
           new_pin = load(head, 'versions.json').get('agent-image', '')
           if new_pin != base_pin:
               # A per-platform object is deliberately not verified here: its entries
