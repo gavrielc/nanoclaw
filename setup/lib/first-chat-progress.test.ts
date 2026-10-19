@@ -272,6 +272,12 @@ describe('exact first-chat wording', () => {
     );
     expect(skippedWaitCopy(undefined).spinner).toBe('Stopped waiting for the first reply.');
   });
+
+  it('does not promise a startup time the wait itself outlasts', () => {
+    expect(FIRST_CHAT_COPY.intro).toBe(
+      "Your assistant runs in an isolated sandbox. I'm going to send it a quick test message (ping) and wait for a reply (pong) to confirm it's responding. The first reply can take a minute or more while the sandbox starts and the model loads.",
+    );
+  });
 });
 
 describe('keepWaitingQuestion', () => {

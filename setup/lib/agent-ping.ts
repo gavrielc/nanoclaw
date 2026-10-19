@@ -165,7 +165,8 @@ function outcomeSoFar(stdout: string, stderr: string): PingOutcome {
 const GUARD_GRACE_MS = 5_000;
 // After a kill, how long to wait for the client's close before settling.
 const DRAIN_MS = 2_000;
-// A client with a reply exits once its silence window passes; allow that long.
+// A client with a reply exits once chat.ts's SILENCE_MS passes after its last
+// line; this allows a little more than that.
 const REPLY_GRACE_MS = 3_000;
 
 /** Start the setup ping. The chat client gives up after `deadlineMs`; stop() ends it sooner. */

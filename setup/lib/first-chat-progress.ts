@@ -33,7 +33,7 @@ interface StageCopy {
 
 export const FIRST_CHAT_COPY = {
   intro:
-    "Your assistant runs in an isolated sandbox. I'm going to send it a quick test message (ping) and wait for a reply (pong) to confirm it's responding. First startup typically takes 30–60 seconds while the sandbox warms up.",
+    "Your assistant runs in an isolated sandbox. I'm going to send it a quick test message (ping) and wait for a reply (pong) to confirm it's responding. The first reply can take a minute or more while the sandbox starts and the model loads.",
   skippedTitle: 'Skipping the first chat',
   waking: 'Waking your assistant…',
   ready: 'Your assistant is ready.',
