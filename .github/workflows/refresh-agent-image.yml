@@ -74,7 +74,8 @@ jobs:
           # writes after checking the image against that release (date-only tags
           # come from its first version). Read from the registry rather than from
           # the dispatch payload: the payload says "go look", it does not get to
-          # say what we found.
+          # say what we found. Only the newest image overall is proposed, so a
+          # release missed before a later one was listed needs its entry by hand.
           aws ecr describe-images --repository-name "$REPO_NAME" --region us-east-1 \
             --query 'imageDetails[?imageTags]' --output json > /tmp/candidates.json
 
