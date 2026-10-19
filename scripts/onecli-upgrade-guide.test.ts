@@ -549,14 +549,16 @@ esac
 });
 
 describe('OneCLI upgrade guide: skills that wrote standing instructions', () => {
-  it('tells /add-tavily-tool installs to re-run its Phase 5 after the conversion check', () => {
+  it('tells /add-tavily-tool installs to re-run its Phase 5 once the NanoClaw service is back', () => {
     const guide = fs.readFileSync(GUIDE, 'utf8');
-    const check = guide.indexOf('grep grant-conversion');
-    const verify = guide.indexOf('## 3. Verify');
+    const restart = guide.indexOf('systemctl --user restart $(systemd_unit)');
+    const rollback = guide.indexOf('## 4. Rollback');
     const line = guide
-      .slice(check, verify)
+      .slice(restart, rollback)
       .split('\n')
       .find((l) => l.includes('/add-tavily-tool'));
+    expect(restart).toBeGreaterThan(-1);
     expect(line).toMatch(/re-run its Phase 5/);
+    expect(guide.slice(0, restart)).not.toContain('/add-tavily-tool');
   });
 });
