@@ -63,6 +63,7 @@ vi.mock('node:net', () => ({
 }));
 
 import type { ChannelSetup } from './adapter.js';
+import { spawn } from 'node:child_process';
 import { computeSignalIsMention, createSignalAdapter } from './signal.js';
 
 // --- Test helpers ---
@@ -730,7 +731,7 @@ describe('SignalAdapter', () => {
           null,
           expect.objectContaining({
             content: expect.objectContaining({
-              text: '[Voice Message]',
+              text: '[Voice message — audio attached, not transcribed]',
               attachments: [
                 expect.objectContaining({
                   type: 'voice',
@@ -1070,6 +1071,42 @@ describe('SignalAdapter', () => {
   // --- Text styles ---
 
   describe('text styles', () => {
+    it('does not italicise underscores inside snake_case identifiers', async () => {
+      const adapter = createAdapter();
+      await adapter.setup(createMockSetup());
+      tcpRef.fakeSocket.write.mockClear();
+
+      await adapter.deliver('+15555550123', null, {
+        kind: 'text',
+        content: { text: 'Set AWS_REGION and check my_config.yaml' },
+      });
+
+      const sendCalls = getRpcCallsForMethod('send');
+      const last = sendCalls[sendCalls.length - 1];
+      expect(last.params.message).toBe('Set AWS_REGION and check my_config.yaml');
+      expect(last.params.textStyle).toBeUndefined();
+
+      await adapter.teardown();
+    });
+
+    it('leaves URLs unstyled even when they contain markdown delimiters', async () => {
+      const adapter = createAdapter();
+      await adapter.setup(createMockSetup());
+      tcpRef.fakeSocket.write.mockClear();
+
+      await adapter.deliver('+15555550123', null, {
+        kind: 'text',
+        content: { text: 'see https://example.com/_a_/b*c*d now' },
+      });
+
+      const sendCalls = getRpcCallsForMethod('send');
+      const last = sendCalls[sendCalls.length - 1];
+      expect(last.params.message).toBe('see https://example.com/_a_/b*c*d now');
+      expect(last.params.textStyle).toBeUndefined();
+
+      await adapter.teardown();
+    });
+
     it('sends bold text with textStyle parameter', async () => {
       const adapter = createAdapter();
       await adapter.setup(createMockSetup());
@@ -1338,6 +1375,136 @@ describe('SignalAdapter', () => {
 
   // --- setTyping ---
 
+  describe('ask_question replies', () => {
+    const card = (questionId: string) => ({
+      kind: 'chat' as const,
+      content: {
+        type: 'ask_question',
+        questionId,
+        title: 'Approve?',
+        question: 'Run it?',
+        options: [
+          { label: 'Approve', selectedLabel: 'Approved', value: 'approve' },
+          { label: 'Reject', selectedLabel: 'Rejected', value: 'reject' },
+        ],
+      },
+    });
+    const reply = (message: string) =>
+      pushEvent({
+        sourceNumber: '+15555550123',
+        sourceName: 'Alice',
+        dataMessage: { timestamp: Date.now(), message },
+      });
+    const settle = () => new Promise((r) => setTimeout(r, 50));
+
+    it('puts a short code on each option line of the card', async () => {
+      const adapter = createAdapter();
+      await adapter.setup(createMockSetup());
+      tcpRef.fakeSocket.write.mockClear();
+
+      await adapter.deliver('signal:+15555550123', null, card('appr-aaaa-1111'));
+
+      const sent = getRpcCallsForMethod('send');
+      expect(sent[sent.length - 1].params.message).toContain('/approve 1111');
+      expect(sent[sent.length - 1].params.message).toContain('/reject 1111');
+      await adapter.teardown();
+    });
+
+    it('resolves a bare /approve when exactly one card is open', async () => {
+      const adapter = createAdapter();
+      const cfg = createMockSetup();
+      await adapter.setup(cfg);
+      await adapter.deliver('signal:+15555550123', null, card('appr-aaaa-1111'));
+
+      reply('/approve');
+      await settle();
+
+      expect(cfg.onAction).toHaveBeenCalledWith('appr-aaaa-1111', 'approve', '+15555550123');
+      expect(cfg.onInbound).not.toHaveBeenCalled();
+      await adapter.teardown();
+    });
+
+    it('keeps two open cards in one chat distinct by code', async () => {
+      const adapter = createAdapter();
+      const cfg = createMockSetup();
+      await adapter.setup(cfg);
+      await adapter.deliver('signal:+15555550123', null, card('appr-aaaa-1111'));
+      await adapter.deliver('signal:+15555550123', null, card('appr-bbbb-2222'));
+
+      reply('/reject 1111');
+      await settle();
+      expect(cfg.onAction).toHaveBeenCalledWith('appr-aaaa-1111', 'reject', '+15555550123');
+
+      reply('/approve 2222');
+      await settle();
+      expect(cfg.onAction).toHaveBeenCalledWith('appr-bbbb-2222', 'approve', '+15555550123');
+      expect(cfg.onAction).toHaveBeenCalledTimes(2);
+      await adapter.teardown();
+    });
+
+    it('asks for the code instead of guessing when a bare reply is ambiguous', async () => {
+      const adapter = createAdapter();
+      const cfg = createMockSetup();
+      await adapter.setup(cfg);
+      await adapter.deliver('signal:+15555550123', null, card('appr-aaaa-1111'));
+      await adapter.deliver('signal:+15555550123', null, card('appr-bbbb-2222'));
+      tcpRef.fakeSocket.write.mockClear();
+
+      reply('/approve');
+      await settle();
+
+      expect(cfg.onAction).not.toHaveBeenCalled();
+      const sent = getRpcCallsForMethod('send');
+      expect(sent[sent.length - 1].params.message).toContain('/approve 1111');
+      expect(sent[sent.length - 1].params.message).toContain('/approve 2222');
+      await adapter.teardown();
+    });
+
+    it('does not treat a reply with an unknown code as an answer', async () => {
+      const adapter = createAdapter();
+      const cfg = createMockSetup();
+      await adapter.setup(cfg);
+      await adapter.deliver('signal:+15555550123', null, card('appr-aaaa-1111'));
+
+      reply('/approve 9999');
+      await settle();
+
+      expect(cfg.onAction).not.toHaveBeenCalled();
+      await adapter.teardown();
+    });
+  });
+
+  describe('managed daemon', () => {
+    it('passes --log-file before the daemon subcommand (signal-cli rejects it after)', async () => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: vi.fn(),
+        killed: false,
+      });
+      vi.mocked(spawn).mockReturnValue(child as never);
+
+      const adapter = createSignalAdapter({
+        cliPath: 'signal-cli',
+        account: '+15551234567',
+        tcpHost: '127.0.0.1',
+        tcpPort: 7583,
+        manageDaemon: true,
+        daemonLogFile: '/tmp/signal-daemon.log',
+        signalDataDir: '/tmp/signal-cli-test-data',
+      });
+      await adapter.setup(createMockSetup());
+
+      const args = vi.mocked(spawn).mock.calls[0][1] as string[];
+      expect(args.indexOf('--log-file')).toBeGreaterThanOrEqual(0);
+      expect(args.indexOf('--log-file')).toBeLessThan(args.indexOf('daemon'));
+      expect(args[args.indexOf('--log-file') + 1]).toBe('/tmp/signal-daemon.log');
+
+      child.emit('exit', 0, null);
+      await adapter.teardown();
+    });
+  });
+
   describe('setTyping', () => {
     it('sends typing indicator for DMs', async () => {
       const adapter = createAdapter();
@@ -1350,13 +1517,16 @@ describe('SignalAdapter', () => {
       await adapter.teardown();
     });
 
-    it('skips typing for groups', async () => {
+    it('sends typing indicator for groups via groupId', async () => {
       const adapter = createAdapter();
       await adapter.setup(createMockSetup());
 
       await adapter.setTyping!('group:abc123', null);
 
-      expect(getRpcCallsForMethod('sendTyping')).toHaveLength(0);
+      const calls = getRpcCallsForMethod('sendTyping');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].params.groupId).toBe('abc123');
+      expect(calls[0].params.recipient).toBeUndefined();
 
       await adapter.teardown();
     });
@@ -1400,5 +1570,28 @@ describe('computeSignalIsMention', () => {
   it('is undefined in groups without mentions', () => {
     expect(computeSignalIsMention(account, true)).toBeUndefined();
     expect(computeSignalIsMention(account, true, [])).toBeUndefined();
+  });
+
+  it('is true for a plain-text @account in groups, with or without the +', () => {
+    expect(computeSignalIsMention(account, true, [], { text: 'hey @+15551234567' })).toBe(true);
+    expect(computeSignalIsMention(account, true, [], { text: 'hey @15551234567' })).toBe(true);
+  });
+
+  it('matches a mention by the bot uuid once known', () => {
+    expect(computeSignalIsMention(account, true, [{ uuid: 'bot-uuid' }])).toBeUndefined();
+    expect(computeSignalIsMention(account, true, [{ uuid: 'bot-uuid' }], { botUuid: 'bot-uuid' })).toBe(true);
+  });
+
+  it('is true for a quote-reply to the bot by number, uuid, or sync-echoed timestamp', () => {
+    expect(computeSignalIsMention(account, true, [], { quote: { authorNumber: account } })).toBe(true);
+    expect(computeSignalIsMention(account, true, [], { quote: { authorUuid: 'bot-uuid' }, botUuid: 'bot-uuid' })).toBe(
+      true,
+    );
+    expect(
+      computeSignalIsMention(account, true, [], { quote: { id: 1234 }, recentlySentTimestamps: new Set([1234]) }),
+    ).toBe(true);
+    expect(
+      computeSignalIsMention(account, true, [], { quote: { id: 99 }, recentlySentTimestamps: new Set([1234]) }),
+    ).toBe(undefined);
   });
 });

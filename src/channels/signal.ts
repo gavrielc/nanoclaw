@@ -7,11 +7,11 @@
  *
  * Ported from v1 — see v1 source for commit history.
  */
-import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, type Socket } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 
 import type { ChannelAdapter, ChannelDefaults, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
@@ -54,9 +54,17 @@ interface DaemonHandle {
   isExited: () => boolean;
 }
 
-function spawnSignalDaemon(cliPath: string, account: string, host: string, port: number): DaemonHandle {
+function spawnSignalDaemon(
+  cliPath: string,
+  account: string,
+  host: string,
+  port: number,
+  logFile?: string,
+): DaemonHandle {
   const args: string[] = [];
   if (account) args.push('-a', account);
+  // --log-file is a global option: signal-cli rejects it after the subcommand.
+  if (logFile) args.push('--log-file', logFile);
   args.push('daemon', '--tcp', `${host}:${port}`, '--no-receive-stdout');
   args.push('--receive-mode', 'on-start');
   // Send read receipts (in addition to signal-cli's default delivery receipts)
@@ -308,7 +316,7 @@ class EchoCache {
 // Signal envelope types
 // ---------------------------------------------------------------------------
 
-interface SignalQuote {
+export interface SignalQuote {
   id?: number;
   author?: string;
   authorNumber?: string;
@@ -392,9 +400,33 @@ export function computeSignalIsMention(
   account: string,
   isGroup: boolean,
   mentions?: SignalMention[],
+  extra?: {
+    botUuid?: string | null;
+    text?: string;
+    quote?: SignalQuote;
+    recentlySentTimestamps?: ReadonlySet<number>;
+  },
 ): true | undefined {
   if (!isGroup) return true;
-  return mentions?.some((m) => m.number === account || m.uuid === account) ? true : undefined;
+  const normalizedAccount = account.replace(/^\+/, '');
+  const botUuid = extra?.botUuid ?? null;
+  const text = extra?.text ?? '';
+  const quote = extra?.quote;
+  const quotedId = quote?.id !== undefined ? Number(quote.id) : NaN;
+  const hit =
+    mentions?.some(
+      (m) =>
+        m.number === account || m.number === normalizedAccount || m.uuid === account || (botUuid && m.uuid === botUuid),
+    ) ||
+    // Plain-text "@<account>" typed by the user rather than a protocol mention.
+    (text !== '' && (text.includes(`@${account}`) || text.includes(`@${normalizedAccount}`))) ||
+    // Native quote-reply to one of the bot's own messages.
+    quote?.authorNumber === account ||
+    quote?.authorNumber === normalizedAccount ||
+    (botUuid !== null && quote?.authorUuid === botUuid) ||
+    // Quote-reply detected via a sync-echoed timestamp (authorNumber may be omitted).
+    (!isNaN(quotedId) && extra?.recentlySentTimestamps?.has(quotedId) === true);
+  return hit ? true : undefined;
 }
 
 /**
@@ -402,7 +434,7 @@ export function computeSignalIsMention(
  *   1. local whisper.cpp CLI when `WHISPER_BIN` is set
  *   2. OpenAI Whisper API when `OPENAI_API_KEY` is set
  * Returns null if neither path is configured or transcription fails — caller
- * falls back to a `[Voice Message]` placeholder.
+ * falls back to a placeholder noting the audio is attached.
  *
  * Signal voice notes are AAC/ADTS; whisper-cpp wants WAV. ffmpeg is invoked
  * if available to convert; if ffmpeg is missing the local path is skipped.
@@ -412,17 +444,44 @@ async function transcribeAudioOptional(filePath: string): Promise<string | null>
   if (whisperBin) {
     try {
       const wavPath = `${filePath}.wav`;
-      execSync(`ffmpeg -y -loglevel error -i "${filePath}" -ar 16000 -ac 1 "${wavPath}"`, { stdio: 'ignore' });
-      const model = process.env.WHISPER_MODEL || `${homedir()}/.local/share/whisper/models/ggml-base.en.bin`;
-      const out = execSync(`"${whisperBin}" -m "${model}" -f "${wavPath}" -nt -otxt -of "${wavPath}"`, {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'ignore'],
+      execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', filePath, '-ar', '16000', '-ac', '1', wavPath], {
+        stdio: 'ignore',
       });
-      try {
-        unlinkSync(wavPath);
-        unlinkSync(`${wavPath}.txt`);
-      } catch (cleanupErr) {
-        log.debug('Signal: whisper temp file cleanup failed', { cleanupErr });
+      let out: string;
+      if (basename(whisperBin) === 'whisper') {
+        // openai-whisper CLI: writes <name>.txt into --output_dir, nothing on stdout.
+        const model = process.env.WHISPER_MODEL || 'base';
+        const outDir = mkdtempSync(join(tmpdir(), 'nanoclaw-whisper-'));
+        try {
+          execFileSync(
+            whisperBin,
+            [wavPath, '--model', model, '--output_format', 'txt', '--output_dir', outDir, '--fp16', 'False'],
+            { stdio: 'ignore' },
+          );
+          const outFile = join(outDir, `${basename(wavPath, extname(wavPath))}.txt`);
+          out = existsSync(outFile) ? readFileSync(outFile, 'utf-8') : '';
+          rmSync(outDir, { recursive: true, force: true });
+        } catch (err) {
+          rmSync(outDir, { recursive: true, force: true });
+          throw err;
+        }
+        try {
+          unlinkSync(wavPath);
+        } catch (cleanupErr) {
+          log.debug('Signal: whisper temp file cleanup failed', { cleanupErr });
+        }
+      } else {
+        const model = process.env.WHISPER_MODEL || `${homedir()}/.local/share/whisper/models/ggml-base.en.bin`;
+        out = execFileSync(whisperBin, ['-m', model, '-f', wavPath, '-nt', '-otxt', '-of', wavPath], {
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        try {
+          unlinkSync(wavPath);
+          unlinkSync(`${wavPath}.txt`);
+        } catch (cleanupErr) {
+          log.debug('Signal: whisper temp file cleanup failed', { cleanupErr });
+        }
       }
       const text = out.replace(/\[[^\]]*\]/g, '').trim();
       if (text) return text;
@@ -512,18 +571,23 @@ function parseSignalStyles(input: string): StyledText {
   // Ordering matters: longer/greedier delimiters first so `` ``` `` beats
   // `` ` ``, `**` beats `*`. The italic-`*` pattern refuses to start on
   // whitespace so `*` isn't mistakenly opened on " * " in list-like text.
-  const patterns: Array<{ regex: RegExp; style: SignalTextStyle['style'] }> = [
+  // URLs are matched first as LITERAL so underscores/asterisks inside them
+  // are never interpreted as italic/bold markers.
+  type PatternStyle = SignalTextStyle['style'] | 'LITERAL';
+  const patterns: Array<{ regex: RegExp; style: PatternStyle }> = [
+    { regex: /https?:\/\/\S+/, style: 'LITERAL' },
     { regex: /```([\s\S]+?)```/, style: 'MONOSPACE' },
     { regex: /`([^`]+)`/, style: 'MONOSPACE' },
     { regex: /\*\*([^]+?)\*\*/, style: 'BOLD' },
     { regex: /~~([^]+?)~~/, style: 'STRIKETHROUGH' },
     { regex: /\|\|([^]+?)\|\|/, style: 'SPOILER' },
     { regex: /\*([^*\s][^*]*?)\*/, style: 'ITALIC' },
-    { regex: /_([^_\s][^_]*?)_/, style: 'ITALIC' },
+    // Lookbehind/ahead prevent snake_case from splitting into italic spans.
+    { regex: /(?<![a-zA-Z0-9_])_([^_\s][^_]*?)_(?![a-zA-Z0-9_])/, style: 'ITALIC' },
   ];
 
   function walk(segment: string, outputBase: number): string {
-    let earliest: { start: number; match: RegExpExecArray; style: SignalTextStyle['style'] } | null = null;
+    let earliest: { start: number; match: RegExpExecArray; style: PatternStyle } | null = null;
     for (const { regex, style } of patterns) {
       const m = regex.exec(segment);
       if (!m) continue;
@@ -535,9 +599,16 @@ function parseSignalStyles(input: string): StyledText {
 
     const before = segment.slice(0, earliest.start);
     const fullMatch = earliest.match[0];
-    const inner = earliest.match[1];
     const afterStart = earliest.start + fullMatch.length;
     const after = segment.slice(afterStart);
+
+    // LITERAL: emit URL as-is, no style, no recursion into its content
+    if (earliest.style === 'LITERAL') {
+      const afterOut = walk(after, outputBase + before.length + fullMatch.length);
+      return before + fullMatch + afterOut;
+    }
+
+    const inner = earliest.match[1];
 
     const innerOut = walk(inner, outputBase + before.length);
     styles.push({
@@ -573,6 +644,7 @@ export function createSignalAdapter(config: {
   tcpPort: number;
   manageDaemon: boolean;
   signalDataDir: string;
+  daemonLogFile?: string;
   /** Inbound attachments over this size are skipped with a note rather than
    * read into the base64 payload. Defaults to DEFAULT_MAX_INLINE_ATTACHMENT_BYTES. */
   maxInlineAttachmentBytes?: number;
@@ -581,10 +653,24 @@ export function createSignalAdapter(config: {
   let daemon: DaemonHandle | null = null;
   let tcp: SignalTcpClient | null = null;
   let connected = false;
+  let shutdownRequested = false;
+  let reconnecting = false;
   const echoCache = new EchoCache();
-  // Pending questions: platformId → { questionId, options }
-  // User replies with /approve, /reject, etc. to answer
-  const pendingQuestions = new Map<string, { questionId: string; options: NormalizedOption[] }>();
+  // Timestamps (ms) of messages we've sent, captured from sync echoes.
+  // Used to detect when someone quote-replies to us without relying on
+  // authorNumber (which signal-cli may omit when only the UUID is known).
+  const recentlySentTimestamps = new Set<number>();
+  // Open question cards keyed by questionId (insertion-ordered, capped at
+  // PENDING_QUESTIONS_MAX). Several cards can be open in one chat; each carries
+  // a short code so a reply can say which one it answers. Replies are
+  // `/approve <code>`, or a bare `/approve` when exactly one card is open.
+  const pendingQuestions = new Map<
+    string,
+    { platformId: string; questionId: string; code: string; options: NormalizedOption[] }
+  >();
+  // Bot's own UUID, captured from sync-sent envelopes (sourceUuid).
+  // Newer signal-cli versions send mentions/quotes with uuid instead of number.
+  let botUuid: string | null = null;
   let setup: ChannelSetup | null = null;
 
   // Outbound sends attempted while disconnected are queued here and flushed
@@ -592,7 +678,8 @@ export function createSignalAdapter(config: {
   // being silently dropped.
   type QueuedSend =
     | { kind: 'text'; platformId: string; text: string }
-    | { kind: 'attachments'; platformId: string; files: { filename: string; data: Buffer }[] };
+    | { kind: 'attachments'; platformId: string; files: { filename: string; data: Buffer }[] }
+    | { kind: 'reaction'; platformId: string; emoji: string; targetAuthorNumber: string; targetTimestamp: number };
   const outgoingQueue: QueuedSend[] = [];
   let flushingOutgoingQueue = false;
 
@@ -723,7 +810,16 @@ export function createSignalAdapter(config: {
         await setup.onInbound(platformId, null, msg);
         return;
       }
-      // Other sync messages are our outbound — skip
+      // Other sync messages are our outbound to a group or DM. Capture the
+      // timestamp so we can detect quote-replies to our messages later.
+      // Also capture our own UUID for UUID-only mention/quote detection.
+      if (envelope.sourceUuid && !botUuid) botUuid = envelope.sourceUuid;
+      if (typeof syncSent.timestamp === 'number' && syncSent.timestamp > 0) {
+        recentlySentTimestamps.add(syncSent.timestamp);
+        if (recentlySentTimestamps.size > 200) {
+          recentlySentTimestamps.delete(recentlySentTimestamps.values().next().value!);
+        }
+      }
       return;
     }
 
@@ -761,13 +857,25 @@ export function createSignalAdapter(config: {
     const platformId = isGroup ? `group:${groupId}` : `signal:${sender}`;
 
     // Check if this reply answers a pending question via slash command
-    const pending = pendingQuestions.get(platformId);
-    if (pending && text.startsWith('/')) {
-      const cmd = text.trim().toLowerCase();
-      const matched = pending.options.find((o) => optionToCommand(o.label) === cmd);
-      if (matched) {
+    if (text.startsWith('/')) {
+      const [cmd, arg] = text.trim().toLowerCase().split(/\s+/);
+      const open = [...pendingQuestions.values()].filter(
+        (q) => q.platformId === platformId && q.options.some((o) => optionToCommand(o.label) === cmd),
+      );
+      const pending = arg ? open.find((q) => q.code === arg || q.questionId.toLowerCase() === arg) : open[0];
+      if (!arg && open.length > 1) {
+        await sendText(
+          platformId,
+          `${open.length} questions are open — add the code of the one you mean: ${open
+            .map((q) => `${cmd} ${q.code}`)
+            .join(', ')}`,
+        );
+        return;
+      }
+      const matched = pending?.options.find((o) => optionToCommand(o.label) === cmd);
+      if (pending && matched) {
         setup.onAction(pending.questionId, matched.value, sender);
-        pendingQuestions.delete(platformId);
+        pendingQuestions.delete(pending.questionId);
         await sendText(platformId, `${matched.selectedLabel} by ${senderName}`);
         log.info('Signal: question answered', {
           questionId: pending.questionId,
@@ -802,10 +910,10 @@ export function createSignalAdapter(config: {
         log.info('Signal: voice attachment received', { platformId, attachmentId: audioAttachment.id });
         const transcript = await transcribeAudioOptional(attachmentPath);
         if (transcript) {
-          content = `[Voice: ${transcript}]`;
+          content = `[Voice message, transcribed: ${transcript}]`;
           log.info('Signal: voice transcribed', { platformId, length: transcript.length });
         } else {
-          content = '[Voice Message]';
+          content = '[Voice message — audio attached, not transcribed]';
         }
       }
       // No marker written here when the file is missing: the staging read
@@ -834,7 +942,12 @@ export function createSignalAdapter(config: {
         ...(fileEntries.length > 0 ? { attachments: fileEntries } : {}),
         ...(dataMessage.quote ? quoteToContent(dataMessage.quote) : {}),
       },
-      isMention: computeSignalIsMention(config.account, isGroup, dataMessage.mentions),
+      isMention: computeSignalIsMention(config.account, isGroup, dataMessage.mentions, {
+        botUuid,
+        text,
+        quote: dataMessage.quote,
+        recentlySentTimestamps,
+      }),
       isGroup,
       timestamp,
     };
@@ -975,6 +1088,42 @@ export function createSignalAdapter(config: {
     }
   }
 
+  async function sendReaction(
+    platformId: string,
+    emoji: string,
+    targetAuthorNumber: string,
+    targetTimestamp: number,
+  ): Promise<void> {
+    if (!connected || !tcp) {
+      outgoingQueue.push({ kind: 'reaction', platformId, emoji, targetAuthorNumber, targetTimestamp });
+      log.info('Signal disconnected, queued outbound reaction', { platformId, queueSize: outgoingQueue.length });
+      return;
+    }
+    await sendReactionNow(platformId, emoji, targetAuthorNumber, targetTimestamp);
+  }
+
+  async function sendReactionNow(
+    platformId: string,
+    emoji: string,
+    targetAuthorNumber: string,
+    targetTimestamp: number,
+  ): Promise<void> {
+    if (!tcp) return;
+    try {
+      const params: Record<string, unknown> = { emoji, targetAuthorNumber, targetTimestamp };
+      if (config.account) params.account = config.account;
+      if (platformId.startsWith('group:')) {
+        params.groupId = platformId.slice('group:'.length);
+      } else {
+        params.recipient = [stripSignalPrefix(platformId)];
+      }
+      await tcp.rpc('sendReaction', params);
+      log.info('Signal reaction sent', { platformId, emoji });
+    } catch (err) {
+      log.debug('Signal: sendReaction failed', { platformId, emoji, err });
+    }
+  }
+
   async function flushOutgoingQueue(): Promise<void> {
     if (flushingOutgoingQueue || outgoingQueue.length === 0) return;
     flushingOutgoingQueue = true;
@@ -986,8 +1135,10 @@ export function createSignalAdapter(config: {
         try {
           if (item.kind === 'text') {
             await sendTextNow(item.platformId, item.text);
-          } else {
+          } else if (item.kind === 'attachments') {
             await sendAttachmentsNow(item.platformId, item.files);
+          } else {
+            await sendReactionNow(item.platformId, item.emoji, item.targetAuthorNumber, item.targetTimestamp);
           }
         } catch (err) {
           log.error('Signal: failed to flush queued send, re-queueing', {
@@ -1018,6 +1169,86 @@ export function createSignalAdapter(config: {
     return false;
   }
 
+  /** Mark the channel disconnected and start reconnecting (no-op during shutdown). */
+  function handleTcpClose(): void {
+    if (!connected || shutdownRequested) return;
+    connected = false;
+    log.warn('Signal channel lost TCP connection to signal-cli daemon', {
+      account: config.account,
+      host: config.tcpHost,
+      port: config.tcpPort,
+    });
+    void reconnectLoop();
+  }
+
+  /**
+   * signal-cli ≥ 0.14.x requires an explicit subscribeReceive call before it
+   * will push inbound `receive` notifications on a TCP connection; without it
+   * send works but incoming messages are silently dropped.
+   */
+  async function subscribeReceive(client: SignalTcpClient): Promise<void> {
+    try {
+      await client.rpc('subscribeReceive', { account: config.account });
+      log.debug('Signal: subscribed to receive notifications');
+    } catch {
+      log.debug('Signal: subscribeReceive not supported (older daemon, notifications pushed automatically)');
+    }
+  }
+
+  async function reconnectLoop(): Promise<void> {
+    if (reconnecting) return;
+    reconnecting = true;
+    const BACKOFF = [3_000, 5_000, 10_000, 15_000, 30_000];
+    let attempt = 0;
+    while (!shutdownRequested) {
+      const delay = BACKOFF[Math.min(attempt, BACKOFF.length - 1)];
+      log.info('Signal: scheduling reconnect to signal-cli daemon', {
+        account: config.account,
+        attempt: attempt + 1,
+        delayMs: delay,
+      });
+      await sleep(delay);
+      if (shutdownRequested) break;
+
+      // When we manage the daemon and it has exited, respawn it first.
+      if (config.manageDaemon && daemon?.isExited()) {
+        log.info('Signal: respawning signal-cli daemon', { attempt: attempt + 1 });
+        daemon = spawnSignalDaemon(
+          config.cliPath,
+          config.account,
+          config.tcpHost,
+          config.tcpPort,
+          config.daemonLogFile,
+        );
+        const ready = await waitForDaemon();
+        if (!ready) {
+          log.warn('Signal: daemon failed to start, will retry', { attempt: attempt + 1 });
+          attempt++;
+          continue;
+        }
+      }
+
+      try {
+        tcp?.close();
+        const client = new SignalTcpClient(config.tcpHost, config.tcpPort);
+        await client.connect({ onNotification: handleNotification, onClose: handleTcpClose });
+        await subscribeReceive(client);
+        tcp = client;
+        connected = true;
+        log.info('Signal channel reconnected', { account: config.account, attempt: attempt + 1 });
+        void flushOutgoingQueue();
+        reconnecting = false;
+        return;
+      } catch (err) {
+        log.warn('Signal: reconnect attempt failed', { attempt: attempt + 1, err });
+        tcp?.close();
+        tcp = null;
+        attempt++;
+      }
+    }
+    reconnecting = false;
+  }
+
   // -- adapter --
 
   const adapter: ChannelAdapter = {
@@ -1030,7 +1261,13 @@ export function createSignalAdapter(config: {
       setup = cfg;
 
       if (config.manageDaemon) {
-        daemon = spawnSignalDaemon(config.cliPath, config.account, config.tcpHost, config.tcpPort);
+        daemon = spawnSignalDaemon(
+          config.cliPath,
+          config.account,
+          config.tcpHost,
+          config.tcpPort,
+          config.daemonLogFile,
+        );
         const ready = await waitForDaemon();
         if (!ready) {
           daemon.stop();
@@ -1050,20 +1287,9 @@ export function createSignalAdapter(config: {
       tcp = new SignalTcpClient(config.tcpHost, config.tcpPort);
       await tcp.connect({
         onNotification: handleNotification,
-        // Signal the adapter that the daemon dropped us. No auto-reconnect yet
-        // — subsequent deliver/setTyping calls short-circuit on `connected`
-        // and log rather than throw into the retry loop. Operators see this in
-        // logs/nanoclaw.log and can restart the service.
-        onClose: () => {
-          if (!connected) return;
-          connected = false;
-          log.warn('Signal channel lost TCP connection to signal-cli daemon', {
-            account: config.account,
-            host: config.tcpHost,
-            port: config.tcpPort,
-          });
-        },
+        onClose: handleTcpClose,
       });
+      await subscribeReceive(tcp);
 
       try {
         await tcp.rpc('updateProfile', {
@@ -1090,9 +1316,29 @@ export function createSignalAdapter(config: {
         port: config.tcpPort,
       });
       void flushOutgoingQueue();
+
+      // Eagerly resolve our own UUID so UUID-only @mentions work immediately
+      // after a restart, rather than waiting for the first sync-sent echo.
+      try {
+        const groups = (await tcp.rpc('listGroups', { account: config.account })) as Array<{
+          members?: Array<{ uuid?: string; number?: string }>;
+        }>;
+        const normalizedAccount = config.account.replace(/^\+/, '');
+        for (const g of groups) {
+          const self = g.members?.find((m) => m.number === config.account || m.number === normalizedAccount);
+          if (self?.uuid) {
+            botUuid = self.uuid;
+            log.debug('Signal: resolved own UUID from group roster', { botUuid });
+            break;
+          }
+        }
+      } catch {
+        log.debug('Signal: could not resolve own UUID at startup');
+      }
     },
 
     async teardown(): Promise<void> {
+      shutdownRequested = true;
       connected = false;
       tcp?.close();
       tcp = null;
@@ -1127,13 +1373,24 @@ export function createSignalAdapter(config: {
           return undefined;
         }
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
-        const optionLines = options.map((o) => `  ${optionToCommand(o.label)}`).join('\n');
+        const code = questionId.slice(-4).toLowerCase();
+        const optionLines = options.map((o) => `  ${optionToCommand(o.label)} ${code}`).join('\n');
         const text = `*${title}*\n\n${question ?? ''}\n\nReply with:\n${optionLines}`;
         await sendText(platformId, text);
-        pendingQuestions.set(platformId, { questionId, options });
+        pendingQuestions.set(questionId, { platformId, questionId, code, options });
         if (pendingQuestions.size > PENDING_QUESTIONS_MAX) {
           const oldest = pendingQuestions.keys().next().value!;
           pendingQuestions.delete(oldest);
+        }
+        return undefined;
+      }
+
+      if (content && typeof content === 'object' && content.operation === 'reaction') {
+        const emoji = content.emoji as string | undefined;
+        const targetAuthorNumber = content.targetAuthorNumber as string | undefined;
+        const targetTimestamp = content.targetTimestamp as number | undefined;
+        if (emoji && targetAuthorNumber && targetTimestamp) {
+          await sendReaction(platformId, emoji, targetAuthorNumber, targetTimestamp);
         }
         return undefined;
       }
@@ -1157,10 +1414,14 @@ export function createSignalAdapter(config: {
 
     async setTyping(platformId: string, _threadId: string | null): Promise<void> {
       if (!connected || !tcp) return;
-      if (platformId.startsWith('group:')) return;
 
       try {
-        const params: Record<string, unknown> = { recipient: [stripSignalPrefix(platformId)] };
+        const params: Record<string, unknown> = {};
+        if (platformId.startsWith('group:')) {
+          params.groupId = platformId.slice('group:'.length);
+        } else {
+          params.recipient = [stripSignalPrefix(platformId)];
+        }
         if (config.account) params.account = config.account;
         await tcp.rpc('sendTyping', params);
       } catch (err) {
@@ -1217,6 +1478,7 @@ registerChannelAdapter('signal', {
       'SIGNAL_MANAGE_DAEMON',
       'SIGNAL_DATA_DIR',
       'SIGNAL_MAX_INLINE_ATTACHMENT_BYTES',
+      'SIGNAL_DAEMON_LOG_FILE',
     ]);
 
     const account = process.env.SIGNAL_ACCOUNT || envVars.SIGNAL_ACCOUNT || '';
@@ -1229,6 +1491,12 @@ registerChannelAdapter('signal', {
     const tcpHost = process.env.SIGNAL_TCP_HOST || envVars.SIGNAL_TCP_HOST || DEFAULT_TCP_HOST;
     const tcpPort = parseInt(process.env.SIGNAL_TCP_PORT || envVars.SIGNAL_TCP_PORT || String(DEFAULT_TCP_PORT), 10);
     const manageDaemon = (process.env.SIGNAL_MANAGE_DAEMON || envVars.SIGNAL_MANAGE_DAEMON || 'true') === 'true';
+
+    const daemonLogFile = manageDaemon
+      ? process.env.SIGNAL_DAEMON_LOG_FILE ||
+        envVars.SIGNAL_DAEMON_LOG_FILE ||
+        join(process.cwd(), 'logs', 'signal-cli-daemon.log')
+      : undefined;
 
     const signalDataDir =
       process.env.SIGNAL_DATA_DIR || envVars.SIGNAL_DATA_DIR || join(homedir(), '.local', 'share', 'signal-cli');
@@ -1255,6 +1523,7 @@ registerChannelAdapter('signal', {
       tcpHost,
       tcpPort,
       manageDaemon,
+      daemonLogFile,
       signalDataDir,
       maxInlineAttachmentBytes,
     });
