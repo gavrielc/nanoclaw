@@ -63,3 +63,15 @@ describe('emoji joiner', () => {
     );
   });
 });
+
+describe('fenceForCard with a limit', () => {
+  it('cuts after escaping, never inside an escape or a surrogate pair', () => {
+    // The cap includes the 13-character truncation mark.
+    expect(fenceForCard('ab`cd' + 'x'.repeat(20), 18)).toBe('```\nab… (truncated)\n```');
+    expect(fenceForCard('ab\u{1F468}' + 'x'.repeat(20), 16)).toBe('```\nab… (truncated)\n```');
+  });
+
+  it('leaves text within the limit alone', () => {
+    expect(fenceForCard('short', 100)).toBe('```\nshort\n```');
+  });
+});

@@ -43,7 +43,25 @@ export function quoteForCard(value: string): string {
     .replace(/\]\(/g, ']\\u0028');
 }
 
-/** Fence untrusted multi-line text for card text: lines kept, nothing inside can close the fence. */
-export function fenceForCard(text: string): string {
-  return '```\n' + text.split('\n').map(escapeInvisibles).join('\n') + '\n```';
+/** Appended by fenceForCard when it cuts text to its cap. */
+export const TRUNCATED_MARK = '… (truncated)';
+
+/**
+ * Fence untrusted multi-line text for card text: lines kept, nothing inside can
+ * close the fence. `maxLength` caps the escaped text (truncation mark
+ * included), cut never inside an escape or a surrogate pair, since escaping
+ * can grow text several times.
+ */
+export function fenceForCard(text: string, maxLength?: number): string {
+  // Escaping never shortens text, so a raw prefix one past the cap is enough.
+  const raw = maxLength !== undefined && text.length > maxLength ? text.slice(0, maxLength + 1) : text;
+  let body = raw.split('\n').map(escapeInvisibles).join('\n');
+  if (maxLength !== undefined && body.length > maxLength) {
+    const cut = body
+      .slice(0, Math.max(0, maxLength - TRUNCATED_MARK.length))
+      .replace(/\\(?:u(?:\{[0-9a-f]*|[0-9a-f]{0,3})?)?$/, '')
+      .replace(/[\uD800-\uDBFF]$/, '');
+    body = cut + TRUNCATED_MARK;
+  }
+  return '```\n' + body + '\n```';
 }

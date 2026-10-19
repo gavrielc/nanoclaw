@@ -20,6 +20,7 @@
  */
 import { AnchoredDir, copyRegularFile } from '../../anchored-dir.js';
 import { fenceForCard, quoteForCard } from '../../card-text.js';
+import { MAX_CARD_QUESTION_LENGTH } from '../../channels/ask-question.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getSession } from '../../db/sessions.js';
@@ -231,7 +232,7 @@ export async function routeAgentMessage(
       agentName: sourceName,
       action: A2A_MESSAGE_GATE_ACTION,
       approverUserId: decision.approverUserId,
-      title: 'Message approval',
+      title: GATE_CARD_TITLE,
       question: buildGateQuestion(sourceName, targetName, msg.content),
       payload: {
         id: msg.id,
@@ -252,6 +253,7 @@ export async function routeAgentMessage(
 }
 
 const GATE_CARD_BODY_MAX = 1500;
+const GATE_CARD_TITLE = 'Message approval';
 
 function parseMessageContent(contentStr: string): { text: string; files: string[] } {
   try {
@@ -268,15 +270,19 @@ function parseMessageContent(contentStr: string): { text: string; files: string[
 /** Exported for tests. */
 export function buildGateQuestion(sourceName: string, targetName: string, contentStr: string): string {
   const { text, files } = parseMessageContent(contentStr);
-  const body = text.length > GATE_CARD_BODY_MAX ? `${text.slice(0, GATE_CARD_BODY_MAX)}… (truncated)` : text;
   const source = quoteForCard(sourceName);
-  const lines = [`Agent ${source} wants to send a message to ${quoteForCard(targetName)}:`, '', fenceForCard(body)];
-  if (files.length > 0) lines.push('', `Attachments: ${files.map(quoteForCard).join(', ')}`);
-  lines.push(
+  const head = `Agent ${source} wants to send a message to ${quoteForCard(targetName)}:\n\n`;
+  const tailLines = files.length > 0 ? ['', `Attachments: ${files.map(quoteForCard).join(', ')}`] : [];
+  tailLines.push(
     '',
     `Approve, Reject, or "Reject with reason…" to decline and then type a short reason I'll relay to ${source}.`,
   );
-  return lines.join('\n');
+  const tail = `\n${tailLines.join('\n')}`;
+  // The body gets whatever the card limit leaves once title, frame and fence
+  // count; escaping can grow text several times, so the cap is on escaped text.
+  const room = MAX_CARD_QUESTION_LENGTH - GATE_CARD_TITLE.length - head.length - tail.length - fenceForCard('').length;
+  const budget = Math.max(0, Math.min(GATE_CARD_BODY_MAX, room));
+  return head + fenceForCard(text, budget) + tail;
 }
 
 /**
