@@ -31,7 +31,7 @@ import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { createSession } from '../../db/sessions.js';
 import { inboundDbPath } from '../../mailbox/sqlite/paths.js';
-import { initSessionFolder } from '../../session-manager.js';
+import { initSessionFolder, resolveSession, writeSessionRouting } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
 import { projectDestinationsToSessions } from './destinations.js';
 // Side-effect import: registers the `messaging-groups-*` commands.
@@ -231,6 +231,15 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
       AG,
       now(),
     );
+    await db.run(
+      `INSERT INTO unregistered_senders (channel_type, platform_id, reason, messaging_group_id, first_seen, last_seen)
+       VALUES (?, ?, 'no_agent_engaged', ?, ?, ?)`,
+      channelType,
+      `${mgId}-platform`,
+      mgId,
+      now(),
+      now(),
+    );
   }
 
   /** Rows still pointing at a messaging group or its session, keyed like the delete's `removed`. */
@@ -260,6 +269,10 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
         'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?',
         mgId,
       ),
+      unregistered_senders: await count(
+        'SELECT COUNT(*) AS c FROM unregistered_senders WHERE messaging_group_id = ?',
+        mgId,
+      ),
     };
   }
 
@@ -275,6 +288,7 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
     pending_sender_approvals: 1,
     pending_channel_approvals: 1,
     messaging_group_agents: 1,
+    unregistered_senders: 1,
   };
 
   beforeEach(async () => {
@@ -305,7 +319,11 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
       { caller: 'host' },
     );
 
-    expect(resp).toEqual({ id: 'req-mg-del', ok: true, data: { deleted: MG, removed: allOnes } });
+    expect(resp).toEqual({
+      id: 'req-mg-del',
+      ok: true,
+      data: { deleted: MG, removed: allOnes, kept_sessions: [] },
+    });
     expect(await count('SELECT COUNT(*) AS c FROM messaging_groups WHERE id = ?', MG)).toBe(0);
     expect(Object.values(await remaining(MG, 'sess-target')).every((n) => n === 0)).toBe(true);
 
@@ -313,6 +331,204 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
     expect(await remaining(OTHER, 'sess-other')).toEqual(allOnes);
     expect(await count('SELECT COUNT(*) AS c FROM agent_groups WHERE id = ?', AG)).toBe(1);
     expect(await count('SELECT COUNT(*) AS c FROM users WHERE id = ?', UID)).toBe(1);
+  });
+
+  describe('the session agent-shared chats reuse', () => {
+    const SHARED_AG = 'ag-shared';
+    const SHARED = 'sess-agent-shared';
+
+    async function wire(mgId: string, mode: 'shared' | 'agent-shared'): Promise<void> {
+      await getDb().run(
+        `INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, engage_mode, sender_scope, ignored_message_policy, session_mode, priority, created_at)
+         VALUES (?, ?, ?, 'mention', 'all', 'drop', ?, 0, ?)`,
+        `mga-shared-${mgId}`,
+        mgId,
+        SHARED_AG,
+        mode,
+        now(),
+      );
+    }
+
+    async function session(id: string, threadId: string | null, createdAt: string): Promise<void> {
+      await createSession({
+        id,
+        agent_group_id: SHARED_AG,
+        messaging_group_id: MG,
+        thread_id: threadId,
+        agent_provider: null,
+        status: 'active',
+        container_status: 'stopped',
+        last_active: null,
+        created_at: createdAt,
+      });
+    }
+
+    const deleteMg = async () => {
+      const resp = await dispatch(
+        { id: 'req-mg-del-shared', command: 'messaging-groups-delete', args: { id: MG } },
+        { caller: 'host' },
+      );
+      expect(resp.ok).toBe(true);
+      return (
+        resp as {
+          ok: true;
+          data: {
+            removed: Record<string, number>;
+            kept_sessions: Array<{ id: string; messaging_group_id: string | null }>;
+          };
+        }
+      ).data;
+    };
+
+    beforeEach(async () => {
+      await createAgentGroup({
+        id: SHARED_AG,
+        name: 'shared',
+        folder: 'shared',
+        agent_provider: null,
+        created_at: now(),
+      });
+    });
+
+    it("moves it to the agent's other agent-shared chat, with its routing and its cards elsewhere", async () => {
+      await wire(MG, 'agent-shared');
+      await wire(OTHER, 'agent-shared');
+      // Started in MG, so it carries MG's id while serving OTHER too.
+      await session(SHARED, null, now());
+      for (const [questionId, channelType, mgId] of [
+        ['q-in-mg', 'telegram', MG],
+        ['q-in-other', 'discord', OTHER],
+      ]) {
+        await getDb().run(
+          `INSERT INTO pending_questions (question_id, session_id, message_out_id, platform_id, channel_type, title, options_json, created_at)
+           VALUES (?, ?, 'mout', ?, ?, 'q', '[]', ?)`,
+          questionId,
+          SHARED,
+          `${mgId}-platform`,
+          channelType,
+          now(),
+        );
+      }
+      initSessionFolder(SHARED_AG, SHARED);
+      await writeSessionRouting(SHARED_AG, SHARED);
+      const routing = () => {
+        const inbound = new Database(inboundDbPath(SHARED_AG, SHARED), { readonly: true });
+        const row = inbound.prepare('SELECT channel_type, platform_id FROM session_routing').get();
+        inbound.close();
+        return row;
+      };
+      expect(routing()).toEqual({ channel_type: 'telegram', platform_id: `${MG}-platform` });
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: OTHER }]);
+      expect(data.removed.sessions).toBe(1); // only the shared-mode sess-target
+      expect(data.removed.pending_questions).toBe(2); // sess-target's, and the kept session's card in MG
+      expect(await getDb().get('SELECT messaging_group_id, thread_id FROM sessions WHERE id = ?', SHARED)).toEqual({
+        messaging_group_id: OTHER,
+        thread_id: null,
+      });
+      expect(await getDb().all('SELECT question_id FROM pending_questions WHERE session_id = ?', SHARED)).toEqual([
+        { question_id: 'q-in-other' },
+      ]);
+      // Cards follow the bound chat: they now go to OTHER, not the deleted chat.
+      expect(routing()).toEqual({ channel_type: 'discord', platform_id: `${OTHER}-platform` });
+      expect(await resolveSession(SHARED_AG, OTHER, null, 'agent-shared')).toMatchObject({
+        created: false,
+        session: { id: SHARED },
+      });
+    });
+
+    it('keeps it with no chat when this was the only agent-shared chat; agent-to-agent still reuses it', async () => {
+      await wire(MG, 'agent-shared');
+      await session(SHARED, null, now());
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
+      expect(await resolveSession(SHARED_AG, null, null, 'agent-shared')).toMatchObject({
+        created: false,
+        session: { id: SHARED },
+      });
+    });
+
+    it("keeps the session reuse picks even when this chat's own wiring is not agent-shared", async () => {
+      await wire(MG, 'shared');
+      await wire(OTHER, 'agent-shared');
+      await session('sess-older', null, '2026-01-01T00:00:00.000Z');
+      await session(SHARED, 'thread-1', '2026-01-02T00:00:00.000Z');
+      expect((await resolveSession(SHARED_AG, OTHER, null, 'agent-shared')).session.id).toBe(SHARED);
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: OTHER }]);
+      expect(await getDb().get('SELECT messaging_group_id, thread_id FROM sessions WHERE id = ?', SHARED)).toEqual({
+        messaging_group_id: OTHER,
+        thread_id: null,
+      });
+      expect(await count("SELECT COUNT(*) AS c FROM sessions WHERE id = 'sess-older'")).toBe(0);
+    });
+
+    it('moves it to a chat the bot is still in before an older detached one', async () => {
+      await getDb().run(
+        `INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
+         VALUES ('mg-third', 'slack', 'mg-third-platform', 'slack', 'third', 1, 'strict', ?)`,
+        now(),
+      );
+      await getDb().run('UPDATE messaging_groups SET detached_at = ? WHERE id = ?', now(), OTHER);
+      await wire(MG, 'agent-shared');
+      await wire(OTHER, 'agent-shared');
+      await wire('mg-third', 'agent-shared');
+      await session(SHARED, null, now());
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: 'mg-third' }]);
+    });
+  });
+
+  it.each([['an older group id', 'mg-previous'] as const, ['no group id', null] as const])(
+    "clears the chat's dropped-message row when it carries %s",
+    async (_label, staleId) => {
+      await getDb().run(
+        'UPDATE unregistered_senders SET messaging_group_id = ? WHERE messaging_group_id = ?',
+        staleId,
+        MG,
+      );
+
+      const resp = await dispatch(
+        { id: 'req-mg-del-dropped', command: 'messaging-groups-delete', args: { id: MG } },
+        { caller: 'host' },
+      );
+
+      expect(resp.ok).toBe(true);
+      expect((resp as { ok: true; data: { removed: Record<string, number> } }).data.removed.unregistered_senders).toBe(
+        1,
+      );
+      expect(await count('SELECT COUNT(*) AS c FROM unregistered_senders')).toBe(1); // OTHER's row stays
+    },
+  );
+
+  it("keeps the chat's dropped-message row when it names a surviving group of another adapter instance", async () => {
+    await getDb().run(
+      `INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
+       VALUES ('mg-twin', 'telegram', ?, 'telegram-work', 'twin', 1, 'strict', ?)`,
+      `${MG}-platform`,
+      now(),
+    );
+    await getDb().run(
+      "UPDATE unregistered_senders SET messaging_group_id = 'mg-twin' WHERE messaging_group_id = ?",
+      MG,
+    );
+
+    const resp = await dispatch(
+      { id: 'req-mg-del-twin', command: 'messaging-groups-delete', args: { id: MG } },
+      { caller: 'host' },
+    );
+
+    expect(resp.ok).toBe(true);
+    expect((resp as { ok: true; data: { removed: Record<string, number> } }).data.removed.unregistered_senders).toBe(0);
+    expect(await count("SELECT COUNT(*) AS c FROM unregistered_senders WHERE messaging_group_id = 'mg-twin'")).toBe(1);
   });
 
   it("drops the deleted chat from a surviving session's inbound.db destinations", async () => {

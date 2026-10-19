@@ -4,8 +4,10 @@ import { resolveUnknownSenderPolicy } from '../../channels/channel-defaults.js';
 import { hasDeclaredChannelDefaults } from '../../channels/channel-registry.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
+import { findSessionByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { routeInbound } from '../../router.js';
+import { writeSessionRouting } from '../../session-manager.js';
 import { UNKNOWN_SENDER_POLICIES } from '../../types.js';
 import { registerResource } from '../crud.js';
 import { projectDestinationsToSessions } from './destinations.js';
@@ -99,20 +101,27 @@ registerResource({
         'Delete a messaging group and the rows that point at it (its sessions with their questions, approvals and ' +
         'host bookkeeping; channel destinations; DM cache entries; pending sender and channel approvals; wirings). ' +
         'FK-ordered cascade in a single transaction. Use --id <messaging-group-id>. ' +
-        'An agent-shared session that started in this chat goes too; the agent starts a fresh one on its next message. ' +
+        'The session an agent-shared agent reuses is kept when it started in this chat: it moves to another of ' +
+        "the agent's agent-shared chats (or to none), so the conversation carries on there. " +
         "The host sweep stops the deleted sessions' containers within about a minute. " +
-        'Out of scope: on-disk cleanup of data/v2-sessions/.',
+        'Their folders under data/v2-sessions/ stay on disk on purpose: they hold the conversation history, ' +
+        'and a container can still have them mounted until the sweep stops it.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
         const db = getDb();
 
-        const exists = await db.get('SELECT 1 FROM messaging_groups WHERE id = ? LIMIT 1', id);
-        if (!exists) throw new Error(`messaging-group not found: ${id}`);
+        const mg = await db.get<{ channel_type: string; platform_id: string }>(
+          'SELECT channel_type, platform_id FROM messaging_groups WHERE id = ?',
+          id,
+        );
+        if (!mg) throw new Error(`messaging-group not found: ${id}`);
 
         const hasAgentDestinations = await hasTable(db, 'agent_destinations');
         const hasPendingApprovals = await hasTable(db, 'pending_approvals');
+        const hasUnregisteredSenders = await hasTable(db, 'unregistered_senders');
         const sessionIds = 'SELECT id FROM sessions WHERE messaging_group_id = ?';
+        const kept: Array<{ id: string; agent_group_id: string; messaging_group_id: string | null }> = [];
         let destinationOwners: string[] = [];
 
         // Same shape as `groups delete`: one transaction, counts from each
@@ -130,9 +139,48 @@ registerResource({
             pending_sender_approvals: 0,
             pending_channel_approvals: 0,
             messaging_group_agents: 0,
+            unregistered_senders: 0,
           };
 
-          counts.pending_questions = (
+          // Agent-shared chats and agent-to-agent reuse whichever session
+          // findSessionByAgentGroup picks, wherever it started. Move that one off
+          // this chat before the session-scoped deletes so it and its rows stay;
+          // cards follow the bound chat, so prefer another agent-shared chat.
+          const sharedAgents = await db.all<{ agent_group_id: string }>(
+            `SELECT DISTINCT agent_group_id FROM messaging_group_agents WHERE session_mode = 'agent-shared'
+               AND agent_group_id IN (SELECT agent_group_id FROM sessions WHERE messaging_group_id = ?)`,
+            id,
+          );
+          for (const { agent_group_id } of sharedAgents) {
+            const reused = await findSessionByAgentGroup(agent_group_id);
+            if (reused?.messaging_group_id !== id) continue;
+            // Prefer a chat the bot is still in; a detached one only comes back on rejoin.
+            const next = await db.get<{ messaging_group_id: string }>(
+              `SELECT mga.messaging_group_id FROM messaging_group_agents mga
+                 JOIN messaging_groups m ON m.id = mga.messaging_group_id
+                 WHERE mga.agent_group_id = ? AND mga.session_mode = 'agent-shared' AND mga.messaging_group_id != ?
+                 ORDER BY m.detached_at IS NOT NULL, mga.created_at, mga.messaging_group_id LIMIT 1`,
+              agent_group_id,
+              id,
+            );
+            const rebound = next?.messaging_group_id ?? null;
+            await db.run(
+              'UPDATE sessions SET messaging_group_id = ?, thread_id = NULL WHERE id = ?',
+              rebound,
+              reused.id,
+            );
+            // Its open question cards sit in this chat; answers from there must not reach it.
+            counts.pending_questions += (
+              await db.run(
+                'DELETE FROM pending_questions WHERE session_id = ? AND channel_type = ? AND platform_id = ?',
+                reused.id,
+                mg.channel_type,
+                mg.platform_id,
+              )
+            ).changes;
+            kept.push({ id: reused.id, agent_group_id, messaging_group_id: rebound });
+          }
+          counts.pending_questions += (
             await db.run(`DELETE FROM pending_questions WHERE session_id IN (${sessionIds})`, id)
           ).changes;
           if (hasPendingApprovals) {
@@ -173,14 +221,41 @@ registerResource({
           counts.messaging_group_agents = (
             await db.run('DELETE FROM messaging_group_agents WHERE messaging_group_id = ?', id)
           ).changes;
+          if (hasUnregisteredSenders) {
+            // No FK; without this the chat keeps showing in `dropped-messages list`. Rows are
+            // keyed by chat, so also clear this chat's row when it carries no id or a deleted
+            // group's id; a row naming a surviving group (another adapter instance) stays.
+            counts.unregistered_senders = (
+              await db.run(
+                `DELETE FROM unregistered_senders WHERE messaging_group_id = ?
+                   OR (channel_type = ? AND platform_id = ?
+                       AND (messaging_group_id IS NULL OR messaging_group_id NOT IN (SELECT id FROM messaging_groups)))`,
+                id,
+                mg.channel_type,
+                mg.platform_id,
+              )
+            ).changes;
+          }
           await db.run('DELETE FROM messaging_groups WHERE id = ?', id);
           return counts;
         });
 
         // Like `destinations remove`: drop the chat from live session mailboxes now, not at next spawn.
         for (const agentGroupId of destinationOwners) await projectDestinationsToSessions(agentGroupId);
+        // A kept session's default reply route still names the deleted chat until rewritten.
+        for (const session of kept) {
+          try {
+            await writeSessionRouting(session.agent_group_id, session.id);
+          } catch (err) {
+            log.warn('Failed to rewrite session routing after rebind', { sessionId: session.id, err });
+          }
+        }
 
-        return { deleted: id, removed };
+        return {
+          deleted: id,
+          removed,
+          kept_sessions: kept.map(({ id: sessionId, messaging_group_id }) => ({ id: sessionId, messaging_group_id })),
+        };
       },
     },
     send: {
