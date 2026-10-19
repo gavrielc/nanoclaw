@@ -618,6 +618,20 @@ describe('add-dial-tool: removal', () => {
     expect(sh(REMOVE).status).not.toBe(0);
   });
 
+  it('a secret list larger than a pipe buffer still works under pipefail', () => {
+    fs.rmSync(root, { recursive: true, force: true });
+    const others = Array.from({ length: 6000 }, (_, i) => ({
+      id: `sec-${i}`,
+      name: `Other ${i}`,
+      hostPattern: `h${i}.example.com`,
+    }));
+    setup({ secrets: [...others, DIAL] });
+    // GNU grep -q stops reading at its first match, closing the pipe on the writer.
+    writeStub('grep', 'head -c 1 >/dev/null');
+    expect(sh(`set -o pipefail\n${REMOVE}`).status).toBe(0);
+    expect(callLines()).toContain('onecli secrets delete --id sec-dial');
+  });
+
   it('deletes every api.getdial.ai secret, which takes its grants with it, and nothing else', () => {
     fs.rmSync(root, { recursive: true, force: true });
     setup({

@@ -542,6 +542,45 @@ esac
     },
   );
 
+  it.each(['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'true']).status === 0))(
+    'a secret list larger than a pipe buffer still works under %s with pipefail',
+    (shell) => {
+      const bin = path.join(home, 'bin');
+      fs.mkdirSync(bin, { recursive: true });
+      const others = Array.from({ length: 6000 }, (_, i) => ({
+        id: `x${i}`,
+        name: `Other ${i}`,
+        hostPattern: `h${i}.example.com`,
+      }));
+      fs.writeFileSync(
+        path.join(home, 'secrets.json'),
+        JSON.stringify({ data: [...others, { id: 'd1', name: 'Dial API', hostPattern: 'api.getdial.ai' }] }),
+      );
+      fs.writeFileSync(
+        path.join(bin, 'onecli'),
+        `#!/bin/sh\necho "$*" >> "${home}/onecli.log"\ncase "$1 $2" in "secrets list") cat "${home}/secrets.json" ;; esac\n`,
+        { mode: 0o755 },
+      );
+      // GNU grep -q stops reading at its first match, closing the pipe on the writer.
+      fs.writeFileSync(path.join(bin, 'grep'), '#!/bin/sh\nhead -c 1 >/dev/null\n', { mode: 0o755 });
+      fs.rmSync(path.join(home, 'onecli.log'), { force: true });
+      const pipefail = shell === 'zsh' ? 'setopt pipefail' : 'set -o pipefail';
+      const r = spawnSync(shell, ['-c', `${pipefail}\n${del!.body}`], {
+        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://gw:1' },
+        encoding: 'utf8',
+      });
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(
+        fs
+          .readFileSync(path.join(home, 'onecli.log'), 'utf8')
+          .trim()
+          .split('\n')
+          .filter((l) => l.startsWith('secrets delete')),
+      ).toEqual(['secrets delete --id d1']);
+    },
+  );
+
   it('an install already upgraded with the key in place deletes it now, before the re-run', () => {
     const after = guide.slice(guide.indexOf('If you have already upgraded with the key in place'));
     expect(after.split('\n')[0]).toMatch(/delete it now with the command above, then re-run `\/add-dial-tool`/);

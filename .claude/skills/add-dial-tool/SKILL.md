@@ -253,8 +253,9 @@ not hold the key. Auth is injected by OneCLI. Check the error code before the
 status, which the gateway keeps from Dial (401, 403, or 400): `access_restricted`
 means the agent does not hold the Dial key (it was not chosen, or was created
 after the last run: run `/add-dial-tool` again to change that), and
-`credential_not_found` or `app_not_connected` means no Dial key is stored. A
-`401` with none of these codes comes from Dial and means the key is stale.
+`credential_not_found` or `app_not_connected` means no stored key matched the
+request. A `401` with none of these codes comes from Dial and means the key is
+stale.
 Check which agents hold it with `onecli agents grants list --id <agent-id>`. Verify from a
 chat with a chosen agent: "run dial doctor" or "text +1… hi".
 
@@ -284,11 +285,11 @@ re-run.
 **A chosen agent gets `401` or `access_restricted`.** Check the error code
 first. `access_restricted` comes from the gateway, whatever the status: the
 agent group was created after the last run, so it does not hold the key.
-`credential_not_found` or `app_not_connected` means no Dial key is stored. A
-`401` with none of these codes comes from Dial: the vault secret is stale (a
-different account's key, or a rotated one). Re-run this skill: it rewrites
-the secret with the key the host is signed in with and attaches it to the
-agents you choose.
+`credential_not_found` or `app_not_connected` means no stored key matched the
+request. A `401` with none of these codes comes from Dial: the vault secret is
+stale (a different account's key, or a rotated one). Re-run this skill: it
+rewrites the secret with the key the host is signed in with and attaches it to
+the agents you choose.
 
 **An agent you left out can still use Dial.** It holds the key from before: an
 agent that is not one of this install's groups (another install on the same
