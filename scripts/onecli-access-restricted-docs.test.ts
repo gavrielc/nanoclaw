@@ -1,6 +1,7 @@
-// The OneCLI gateway can answer a missing grant with a 401 or a 403, so only
-// the `access_restricted` code tells it apart from a stale key. The docs that
-// explain auth errors must key on that code, never on the status alone.
+// The OneCLI gateway answers a request it injected nothing into with the
+// upstream status (401, 403, or 400) plus a code: `access_restricted` (not
+// attached), `credential_not_found` or `app_not_connected` (nothing stored).
+// Docs that explain auth errors must key on the code, never on the status.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,12 +17,13 @@ describe.each(DOCS)('%s', (file) => {
   it('never ties access_restricted to one status', () => {
     expect(doc).toContain('access_restricted');
     expect(doc).not.toMatch(/40[13]\s+access_restricted/);
-    expect(doc).toMatch(/401 or 403/);
+    expect(doc).toContain('credential_not_found');
+    expect(doc).toContain('app_not_connected');
   });
 
-  it('reads a 401 as a stale or wrong key only without the access_restricted code', () => {
+  it('reads a 401 as a stale or wrong key only when it carries none of those codes', () => {
     const staleAdvice = paragraphs.filter((p) => /\b401\b/.test(p) && /\b(stale|wrong|expired)\b/.test(p));
     expect(staleAdvice.length).toBeGreaterThan(0);
-    for (const p of staleAdvice) expect(p).toMatch(/401`?\s+without\s+that\s+code/);
+    for (const p of staleAdvice) expect(p).toMatch(/401`?\s+with\s+none\s+of\s+these\s+codes/);
   });
 });
