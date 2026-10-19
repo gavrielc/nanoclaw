@@ -266,6 +266,48 @@ describe('create_agent — guard-based authorization (wrapped delivery action)',
   });
 });
 
+describe('create_agent — the folder must fit the 63-character runtime label', () => {
+  function expectRefusedWithNothingCreated(folder: string): void {
+    expect(mockCreateAgentGroup).not.toHaveBeenCalled();
+    expect(mockInitGroupFilesystem).not.toHaveBeenCalled();
+    expect(mockWriteDestinations).not.toHaveBeenCalled();
+    const text = notifyTexts().at(-1);
+    expect(text).toContain(`Invalid group folder "${folder}"`);
+    expect(text).toMatch(/^Cannot create agent ".+Nothing was created\.$/);
+  }
+
+  it('a name at the limit is created', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+    const name = 'a'.repeat(63);
+
+    await runCreateAgent({ name });
+
+    expect(mockCreateAgentGroup.mock.calls[0][0]).toMatchObject({ folder: name });
+  });
+
+  it('a longer name is refused and nothing is created', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+    const name = 'a'.repeat(70);
+
+    await runCreateAgent({ name });
+
+    expectRefusedWithNothingCreated(name);
+  });
+
+  it('a dedupe suffix that takes the folder past the limit is refused', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+    const name = 'b'.repeat(62);
+    fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+    try {
+      await runCreateAgent({ name });
+
+      expectRefusedWithNothingCreated(`${name}-2`);
+    } finally {
+      fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('create_agent — approved replay (grant-carrying re-entry)', () => {
   it('valid grant executes exactly once — decide hold is satisfied, create runs', async () => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });

@@ -16,15 +16,12 @@
  * request with a `template` ref is stamped from that template instead, under
  * the same authorization (the grant is bound to the ref, ./guard.ts).
  */
-import path from 'path';
-
 import { quoteForCard } from '../../card-text.js';
-import { GROUPS_DIR } from '../../config.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
 import { requestWake } from '../../request-wake.js';
-import { groupFolderExistsOnDisk } from '../../group-folder.js';
+import { assertValidGroupFolder, groupFolderExistsOnDisk } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
@@ -119,7 +116,7 @@ export async function requestCreateAgentHold(content: Record<string, unknown>, s
 export interface CreateAgentOptions {
   /**
    * Suppress the terminal `Agent "<name>" created…` success notify. Error
-   * notifies (collision, invalid path) still fire. For wrappers whose own
+   * notifies (collision, invalid folder) still fire. For wrappers whose own
    * completion text is the requester's only "done" signal — e.g.
    * slack-agent-flow, where Slack provisioning runs AFTER this returns and
    * relaying the upstream text would report "done" ~a minute early.
@@ -246,12 +243,13 @@ async function performCreateAgent(
     suffix++;
   }
 
-  const groupPath = path.join(GROUPS_DIR, folder);
-  const resolvedPath = path.resolve(groupPath);
-  const resolvedGroupsDir = path.resolve(GROUPS_DIR);
-  if (!resolvedPath.startsWith(resolvedGroupsDir + path.sep)) {
-    await notify(`Cannot create agent "${name}": invalid folder path.`);
-    log.error('create_agent path traversal attempt', { folder, resolvedPath });
+  // Checked after the suffix: a name that fits can still overflow once deduped.
+  try {
+    assertValidGroupFolder(folder);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await notify(`Cannot create agent "${name}": ${msg}. Nothing was created.`);
+    log.warn('create_agent refused: invalid folder', { name, folder });
     return;
   }
 
