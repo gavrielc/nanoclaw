@@ -75,7 +75,7 @@ until they're done.
 > 4. Go to **Google Chat API** > **Configuration**:
 >    - App name and description
 >    - Connection settings: select **HTTP endpoint URL** and set to `https://your-domain/webhook/gchat`
->    - Authentication Audience: select **Project Number**
+>    - Make sure **Build this Chat app as a Google Workspace add-on** is checked, and under **Triggers** use that same URL for every trigger
 > 5. Create a **Service Account**:
 >    - Go to **IAM & Admin** > **Service Accounts** > **Create Service Account**
 >    - Grant the Chat Bot role
@@ -105,18 +105,28 @@ ngrok (`ngrok http 3000`), a Cloudflare Tunnel, or a reverse proxy on a VPS.
 
 ### Webhook verification
 
-Google signs every webhook, and the adapter refuses to start until it can check
-the signature. It checks against your Google Cloud project number, which only
-works when the Chat app's **Authentication Audience** is **Project Number**.
-Tell the user:
+Google signs every webhook, and Google Chat won't start until NanoClaw can
+check the signature. The adapter reads only Workspace add-on events, and an
+add-on signs each webhook for its HTTP endpoint URL with a service account
+named after your project number. So it needs both values. Tell the user:
 
 ```nc:operator
-In Google Cloud Console, open Google Chat API → Configuration, set Authentication Audience to Project Number, and save.
-Then copy the project number from the project's Dashboard. It is all digits; the project ID is a different value.
+In Google Cloud Console, open Google Chat API → Configuration. Make sure "Build this Chat app as a Google Workspace add-on" is checked, and that every trigger (Message, Added to space, and the rest) uses the same HTTP endpoint URL, ending in /webhook/gchat. Save.
+An existing Chat app that is not an add-on has no such checkbox: it needs Google's "Convert to add-on" steps first (https://developers.google.com/workspace/chat/convert), and that conversion can't be undone.
+Then find the project number. It is all digits, not the project ID. It is on the project's Dashboard, or run: gcloud projects describe <project_id> --format='value(projectNumber)' (the project_id is in the service account key).
 ```
 
-Store it in `.env` (set-if-absent):
+Store both in `.env` (set-if-absent). The URL must match the console exactly,
+or every webhook is rejected. Re-running this skill keeps a value already in
+`.env`, so when the URL changes (a new tunnel), edit `GOOGLE_CHAT_ENDPOINT_URL`
+there yourself and restart:
 
+```nc:prompt gchat_endpoint_url normalize:trim validate:^https://\S+/webhook/gchat$
+Paste the HTTP endpoint URL from the Chat app configuration, e.g. `https://chat.example.com/webhook/gchat`. A URL already in `.env` is kept, so after a URL change edit `GOOGLE_CHAT_ENDPOINT_URL` in `.env` and restart.
+```
+```nc:env-set
+GOOGLE_CHAT_ENDPOINT_URL={{gchat_endpoint_url}}
+```
 ```nc:prompt gchat_project_number normalize:trim validate:^\d+$
 Paste your Google Cloud project number, digits only, e.g. `123456789012`.
 ```
@@ -142,7 +152,11 @@ If you're in the middle of `/setup`, return to the setup flow now. Otherwise run
 
 **The adapter starts, then errors about credentials.** `GCHAT_CREDENTIALS` must be the *entire* service account JSON collapsed to one line — inspect `.env` and confirm it still contains `"type":"service_account"`, `"private_key"`, and `"client_email"`. A truncated paste (shells often mangle the multi-line private key) is the usual cause; download a fresh JSON key under **IAM & Admin → Service Accounts → Keys** and re-paste it as a single line.
 
-**The adapter won't start: "Webhook signature verification is required".** `GOOGLE_CHAT_PROJECT_NUMBER` is missing from `.env`. Add it as described under **Webhook verification** and restart. If it is set but every webhook is rejected, check that **Authentication Audience** under **Google Chat API → Configuration** is **Project Number**, and that the number matches the project the Chat app belongs to.
+**Google Chat won't start: "needs GOOGLE_CHAT_ENDPOINT_URL and GOOGLE_CHAT_PROJECT_NUMBER".** One of them is missing from `.env`, or the number has something other than digits. Add both as described under **Webhook verification** and restart.
+
+**Every webhook is rejected (401), with a JWT warning in the log.** `GOOGLE_CHAT_ENDPOINT_URL` must match the trigger URL in **Google Chat API → Configuration** exactly, and `GOOGLE_CHAT_PROJECT_NUMBER` must be the number of the project the Chat app belongs to. After a URL change, edit `.env` by hand: re-running the skill keeps the old value.
+
+**Webhooks arrive without errors, but nothing reaches the agent.** The app isn't a Workspace add-on, and the adapter ignores the older event format. Convert it with Google's **Convert to add-on** steps (https://developers.google.com/workspace/chat/convert); the conversion can't be undone.
 
 **Messages sent in the space never reach the agent.** Google Chat delivers only to the HTTP endpoint URL set under **Google Chat API → Configuration**, and that URL must be publicly reachable at `/webhook/gchat` (shared webhook server, port 3000). Tunnel hostnames (ngrok free tier) change on restart — make sure the Configuration URL matches the tunnel that's actually up.
 
