@@ -134,6 +134,28 @@ Paste your Google Cloud project number, digits only, e.g. `123456789012`.
 GOOGLE_CHAT_PROJECT_NUMBER={{gchat_project_number}}
 ```
 
+### Bot user id (for @mentions in spaces)
+
+DMs work without it, but in a space an @mention only counts when NanoClaw
+knows the app's own user id. It is easiest to find once the app has replied
+to you, so on a first install answer `later` and add it then.
+Tell the user:
+
+```nc:operator
+To find the bot user id: DM the app and let it reply. Open https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages/list, use "Try this method" with parent set to the DM space (spaces/<id>, the last part of the chat URL) and orderBy set to createTime desc, and copy sender.name from a message whose sender type is BOT. It looks like users/123456789.
+Without it, DMs still work; add GOOGLE_CHAT_BOT_USER_ID to .env later and restart.
+```
+
+```nc:prompt gchat_bot_id_ready normalize:lower validate:^(now|later)$ choices:now|later
+Do you have the bot user id now? `now` to paste it, `later` to add it to `.env` after the app has replied.
+```
+```nc:prompt gchat_bot_user_id normalize:trim validate:^users/\d+$ when:gchat_bot_id_ready=now
+Paste the bot user id, e.g. `users/123456789`.
+```
+```nc:env-set when:gchat_bot_id_ready=now
+GOOGLE_CHAT_BOT_USER_ID={{gchat_bot_user_id}}
+```
+
 ## Next Steps
 
 If you're in the middle of `/setup`, return to the setup flow now. Otherwise run
@@ -155,6 +177,8 @@ If you're in the middle of `/setup`, return to the setup flow now. Otherwise run
 **Google Chat won't start: "needs GOOGLE_CHAT_ENDPOINT_URL and GOOGLE_CHAT_PROJECT_NUMBER".** One of them is missing from `.env`, or the number has something other than digits. Add both as described under **Webhook verification** and restart.
 
 **Every webhook is rejected (401), with a JWT warning in the log.** `GOOGLE_CHAT_ENDPOINT_URL` must match the trigger URL in **Google Chat API → Configuration** exactly, and `GOOGLE_CHAT_PROJECT_NUMBER` must be the number of the project the Chat app belongs to. After a URL change, edit `.env` by hand: re-running the skill keeps the old value.
+
+**DMs work, but @mentions in a space are ignored.** `GOOGLE_CHAT_BOT_USER_ID` is missing (the log shows "Google Chat botUserId is not configured" at startup) or wrong (no warning; mentions just don't match). Find it as described under **Bot user id**, add it to `.env` and restart.
 
 **Webhooks arrive without errors, but nothing reaches the agent.** The app isn't a Workspace add-on, and the adapter ignores the older event format. Convert it with Google's **Convert to add-on** steps (https://developers.google.com/workspace/chat/convert); the conversion can't be undone.
 
