@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { closeSessionDb, getInboundDb, getOutboundDb, initTestSessionDb } from '../mailbox/sqlite/connection.js';
 import { getUndeliveredMessages } from '../db/messages-out.js';
 import { findQuestionResponse } from '../db/messages-in.js';
-import { askUserQuestion, LINK_ACTION_SCHEMA, sendCard } from './interactive.js';
+import { askUserQuestion, LINK_ACTION_SCHEMA, MAX_CARD_QUESTION_LENGTH, sendCard } from './interactive.js';
 
 beforeEach(() => initTestSessionDb());
 afterEach(() => closeSessionDb());
@@ -38,6 +38,29 @@ describe('ask_user_question cancellation', () => {
         JSON.stringify({ questionId, selectedOption: 'yes' }),
       );
     expect(findQuestionResponse(questionId)?.id).toBe('late-question-answer');
+  });
+});
+
+describe('ask_user_question length', () => {
+  it('refuses a title plus question too long for a card without publishing it', async () => {
+    const question = 'x'.repeat(MAX_CARD_QUESTION_LENGTH);
+    const result = await askUserQuestion.handler({ title: 'Fixture', question, options: ['yes'] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('too long to show in full');
+    expect(getUndeliveredMessages()).toHaveLength(0);
+  });
+
+  it('publishes a question right at the limit', async () => {
+    const controller = new AbortController();
+    const question = 'x'.repeat(MAX_CARD_QUESTION_LENGTH - 'Fixture'.length);
+    const waiting = askUserQuestion.handler(
+      { title: 'Fixture', question, options: ['yes'] },
+      { signal: controller.signal },
+    );
+    while (!getUndeliveredMessages().length) await Bun.sleep(1);
+    controller.abort();
+    await waiting;
+    expect(JSON.parse(getUndeliveredMessages()[0].content).question).toBe(question);
   });
 });
 
