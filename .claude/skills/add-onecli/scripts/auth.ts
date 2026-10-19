@@ -8,10 +8,9 @@ import * as p from '@clack/prompts';
 
 import {
   createdSecretId,
+  hasProviderCredential,
   isSavedProviderCredential,
-  readProviderCredentials,
   recordProviderCredentials,
-  savedProviderCredentials,
 } from '../payload/src/gateway-providers/onecli-provider-credentials.js';
 
 type Method = 'subscription' | 'oauth' | 'api' | 'skip';
@@ -38,10 +37,7 @@ function listSecrets(): SecretRow[] {
 
 const dataDir = () => path.join(process.cwd(), 'data');
 
-// Connected means Claude groups will be granted a credential: a live recorded
-// one, or, for an install that recorded none, one saved under NanoClaw's name,
-// which is then recorded. Duplicate names count as not connected, so the login
-// runs and records its own.
+// Connected means Claude groups will be granted a recorded credential.
 async function hasAnthropicSecret(): Promise<boolean> {
   let secrets: SecretRow[];
   try {
@@ -49,19 +45,20 @@ async function hasAnthropicSecret(): Promise<boolean> {
   } catch {
     return false;
   }
-  const recorded = new Set(readProviderCredentials(dataDir()).providers.claude ?? []);
-  if (secrets.some((s) => s.id && recorded.has(s.id))) return true;
-  const saved = savedProviderCredentials('claude', secrets);
-  if (saved.ids.length) await recordProviderCredentials(dataDir(), 'claude', saved.ids);
-  return saved.ids.length > 0;
+  return hasProviderCredential(dataDir(), 'claude', secrets);
 }
 
 // New groups get only the recorded model credential, so record what was saved:
-// the created id, or the Claude secrets that appeared since `before`.
+// the created id, or the one Claude secret that appeared since `before`.
 async function recordClaudeSecret(id: string | null, before = new Set<string>()): Promise<void> {
   const ids = id
     ? [id]
     : listSecrets().flatMap((s) => (s.id && !before.has(s.id) && isSavedProviderCredential('claude', s) ? [s.id] : []));
+  if (ids.length > 1) {
+    throw new Error(
+      `more than one Anthropic secret appeared during sign-in (${ids.join(', ')}), perhaps from another setup on this gateway: run setup again`,
+    );
+  }
   if (ids.length) await recordProviderCredentials(dataDir(), 'claude', ids);
 }
 

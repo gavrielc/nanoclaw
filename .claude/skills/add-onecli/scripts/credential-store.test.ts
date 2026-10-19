@@ -108,3 +108,31 @@ it('Codex: a recorded id counts as connected; duplicate names without one do not
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+it('Codex: a recorded id that left the vault is not replaced by another install’s same-named key', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-gone-'));
+  const file = path.join(root, 'data', 'onecli', 'provider-credentials.json');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ providers: { codex: ['c-gone'] }, matched: ['codex'] }));
+    exec.mockReturnValueOnce(JSON.stringify({ data: [{ id: 'c-other', name: 'Codex' }] }));
+    expect(await createCredentialStore(root).has('codex')).toBe(false);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).providers).toEqual({ codex: ['c-gone'] });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('Codex: after the one-time match found nothing, a later same-named key is not adopted', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-matched-'));
+  const file = path.join(root, 'data', 'onecli', 'provider-credentials.json');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ providers: { codex: [] }, matched: ['codex'] }));
+    exec.mockReturnValueOnce(JSON.stringify({ data: [{ id: 'c-other', name: 'Codex' }] }));
+    expect(await createCredentialStore(root).has('codex')).toBe(false);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).providers).toEqual({ codex: [] });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
