@@ -29,8 +29,8 @@ import type { ChannelDefaults } from '../../channels/adapter.js';
 import { registerChannelAdapter } from '../../channels/channel-registry.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
-import { createSession } from '../../db/sessions.js';
-import { inboundDbPath } from '../../mailbox/sqlite/paths.js';
+import { bindUnboundSession, createSession, unbindSession } from '../../db/sessions.js';
+import { inboundDbPath, outboundDbPath } from '../../mailbox/sqlite/paths.js';
 import { initSessionFolder, resolveSession, writeSessionRouting } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
 import { projectDestinationsToSessions } from './destinations.js';
@@ -484,6 +484,154 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
       const data = await deleteMg();
 
       expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: 'mg-third' }]);
+    });
+
+    /** A sent agent-to-agent message: the peer routes its replies back to this session (agent-route.ts). */
+    function sendToPeer(sessionId: string, toAgentGroupId = 'ag-peer'): void {
+      initSessionFolder(SHARED_AG, sessionId);
+      const outbound = new Database(outboundDbPath(SHARED_AG, sessionId));
+      outbound
+        .prepare(
+          `INSERT INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, content)
+           VALUES (?, 1, ?, 'chat', ?, 'agent', '{}')`,
+        )
+        .run(`out-${sessionId}`, now(), toAgentGroupId);
+      outbound.close();
+    }
+
+    /** A peer's assignment waiting in this session's inbox, as routeAgentMessage writes it. */
+    function receiveFromPeer(sessionId: string): void {
+      initSessionFolder(SHARED_AG, sessionId);
+      const inbound = new Database(inboundDbPath(SHARED_AG, sessionId));
+      inbound
+        .prepare(
+          `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, content, source_session_id)
+           VALUES (?, 2, 'chat', ?, 'pending', 'ag-peer', 'agent', '{}', 'sess-on-peer')`,
+        )
+        .run(`in-${sessionId}`, now());
+      inbound.close();
+    }
+
+    const routingOf = (sessionId: string) => {
+      const inbound = new Database(inboundDbPath(SHARED_AG, sessionId), { readonly: true });
+      const row = inbound.prepare('SELECT channel_type, platform_id FROM session_routing').get();
+      inbound.close();
+      return row;
+    };
+
+    it('keeps a session a peer agent still replies to, without its chat, under an ordinary wiring', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      sendToPeer(SHARED);
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
+      expect(data.removed.sessions).toBe(1); // only AG's sess-target, which has no peer conversation
+      expect(
+        await getDb().get('SELECT messaging_group_id, thread_id, status FROM sessions WHERE id = ?', SHARED),
+      ).toEqual({ messaging_group_id: null, thread_id: null, status: 'active' });
+    });
+
+    it('keeps a session holding a peer assignment it has not answered yet', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      receiveFromPeer(SHARED);
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
+      expect(await count('SELECT COUNT(*) AS c FROM sessions WHERE id = ?', SHARED)).toBe(1);
+    });
+
+    it('does not keep a session whose only agent message went to its own agent', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      sendToPeer(SHARED, SHARED_AG);
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toEqual([]);
+      expect(await count('SELECT COUNT(*) AS c FROM sessions WHERE id = ?', SHARED)).toBe(0);
+    });
+
+    it('keeps an older session with a peer conversation next to the one agent-shared chats reuse', async () => {
+      await wire(MG, 'agent-shared');
+      await wire(OTHER, 'agent-shared');
+      await session('sess-peer', null, '2026-01-01T00:00:00.000Z');
+      await session(SHARED, null, '2026-01-02T00:00:00.000Z');
+      sendToPeer('sess-peer');
+
+      const data = await deleteMg();
+
+      expect(data.kept_sessions).toHaveLength(2);
+      expect(data.kept_sessions).toEqual(
+        expect.arrayContaining([
+          { id: SHARED, messaging_group_id: OTHER },
+          { id: 'sess-peer', messaging_group_id: null },
+        ]),
+      );
+    });
+
+    it('binds a kept session with no chat to the next agent-shared chat that resumes it', async () => {
+      await wire(MG, 'agent-shared');
+      await session(SHARED, null, now());
+      initSessionFolder(SHARED_AG, SHARED);
+      await deleteMg();
+      await getDb().run(
+        `INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
+         VALUES ('mg-new', 'slack', 'mg-new-platform', 'slack', 'new', 1, 'strict', ?)`,
+        now(),
+      );
+      await wire('mg-new', 'agent-shared');
+
+      const resumed = await resolveSession(SHARED_AG, 'mg-new', null, 'agent-shared');
+
+      expect(resumed).toMatchObject({ created: false, session: { id: SHARED, messaging_group_id: 'mg-new' } });
+      expect(await getDb().get('SELECT messaging_group_id FROM sessions WHERE id = ?', SHARED)).toEqual({
+        messaging_group_id: 'mg-new',
+      });
+      // ask_user_question and send_card read this; null fields would drop them.
+      expect(routingOf(SHARED)).toEqual({ channel_type: 'slack', platform_id: 'mg-new-platform' });
+    });
+
+    it('leaves the session unbound when its routing cannot be written, so the next resume retries', async () => {
+      await wire(MG, 'agent-shared');
+      await session(SHARED, null, now());
+      initSessionFolder(SHARED_AG, SHARED);
+      await deleteMg();
+      await getDb().run(
+        `INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
+         VALUES ('mg-new', 'slack', 'mg-new-platform', 'slack', 'new', 1, 'strict', ?)`,
+        now(),
+      );
+      await wire('mg-new', 'agent-shared');
+      const inbound = inboundDbPath(SHARED_AG, SHARED);
+      fs.rmSync(inbound);
+      fs.mkdirSync(inbound); // a mailbox that cannot be opened
+
+      await expect(resolveSession(SHARED_AG, 'mg-new', null, 'agent-shared')).rejects.toThrow();
+      expect(await getDb().get('SELECT messaging_group_id FROM sessions WHERE id = ?', SHARED)).toEqual({
+        messaging_group_id: null,
+      });
+
+      fs.rmSync(inbound, { recursive: true });
+      initSessionFolder(SHARED_AG, SHARED);
+      await resolveSession(SHARED_AG, 'mg-new', null, 'agent-shared');
+      expect(routingOf(SHARED)).toEqual({ channel_type: 'slack', platform_id: 'mg-new-platform' });
+    });
+
+    it('undoes a bind only while the session still has that chat', async () => {
+      await getDb().run("UPDATE sessions SET messaging_group_id = NULL WHERE id = 'sess-target'");
+      expect(await bindUnboundSession('sess-target', MG)).toBe(true);
+      expect(await bindUnboundSession('sess-target', OTHER)).toBe(false);
+      await getDb().run("UPDATE sessions SET messaging_group_id = ? WHERE id = 'sess-target'", OTHER);
+
+      await unbindSession('sess-target', MG); // a stale undo after another rebind
+
+      expect(await getDb().get("SELECT messaging_group_id FROM sessions WHERE id = 'sess-target'")).toEqual({
+        messaging_group_id: OTHER,
+      });
     });
   });
 

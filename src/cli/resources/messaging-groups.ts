@@ -7,7 +7,7 @@ import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { findSessionByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { routeInbound } from '../../router.js';
-import { writeSessionRouting } from '../../session-manager.js';
+import { withExistingMailboxSession, writeSessionRouting } from '../../session-manager.js';
 import { UNKNOWN_SENDER_POLICIES } from '../../types.js';
 import { registerResource } from '../crud.js';
 import { projectDestinationsToSessions } from './destinations.js';
@@ -103,6 +103,8 @@ registerResource({
         'FK-ordered cascade in a single transaction. Use --id <messaging-group-id>. ' +
         'The session an agent-shared agent reuses is kept when it started in this chat: it moves to another of ' +
         "the agent's agent-shared chats (or to none), so the conversation carries on there. " +
+        'A session in a conversation with another agent (sent or received) is kept too, with no chat, so it carries on; ' +
+        'the next agent-shared chat that resumes a session with no chat becomes its chat. ' +
         "The host sweep stops the deleted sessions' containers within about a minute. " +
         'Their folders under data/v2-sessions/ stay on disk on purpose: they hold the conversation history, ' +
         'and a container can still have them mounted until the sweep stops it.',
@@ -124,6 +126,24 @@ registerResource({
         const kept: Array<{ id: string; agent_group_id: string; messaging_group_id: string | null }> = [];
         let destinationOwners: string[] = [];
 
+        // A peer agent's replies return to the session that messaged it (agent-route.ts),
+        // not to the newest one, and its assignments wait in this session's inbox, so every
+        // session here in a conversation with another agent stays. Read before the
+        // transaction: holding it across mailbox reads can deadlock.
+        const peerUsed: Array<{ id: string; agent_group_id: string }> = [];
+        for (const session of await db.all<{ id: string; agent_group_id: string }>(
+          'SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ?',
+          id,
+        )) {
+          const self = session.agent_group_id;
+          const withPeer = await withExistingMailboxSession(
+            self,
+            session.id,
+            (m) => m.hasMessagesToOtherAgents(self) || m.hasMessagesFromOtherAgents(self),
+          );
+          if (withPeer) peerUsed.push(session);
+        }
+
         // Same shape as `groups delete`: one transaction, counts from each
         // DELETE's `changes`, rolled back whole if any statement throws.
         const removed = await db.transaction(async () => {
@@ -142,10 +162,31 @@ registerResource({
             unregistered_senders: 0,
           };
 
+          // Move a kept session off this chat before the session-scoped deletes, so it
+          // and its rows stay. Its open question cards sit in this chat, though, and
+          // answers from there must not reach it.
+          const keep = async (sessionId: string, agentGroupId: string, chat: string | null) => {
+            const moved = await db.run(
+              'UPDATE sessions SET messaging_group_id = ?, thread_id = NULL WHERE id = ? AND messaging_group_id = ?',
+              chat,
+              sessionId,
+              id,
+            );
+            if (moved.changes === 0) return;
+            counts.pending_questions += (
+              await db.run(
+                'DELETE FROM pending_questions WHERE session_id = ? AND channel_type = ? AND platform_id = ?',
+                sessionId,
+                mg.channel_type,
+                mg.platform_id,
+              )
+            ).changes;
+            kept.push({ id: sessionId, agent_group_id: agentGroupId, messaging_group_id: chat });
+          };
+
           // Agent-shared chats and agent-to-agent reuse whichever session
-          // findSessionByAgentGroup picks, wherever it started. Move that one off
-          // this chat before the session-scoped deletes so it and its rows stay;
-          // cards follow the bound chat, so prefer another agent-shared chat.
+          // findSessionByAgentGroup picks, wherever it started. Cards follow the
+          // bound chat, so move that one to another agent-shared chat when there is one.
           const sharedAgents = await db.all<{ agent_group_id: string }>(
             `SELECT DISTINCT agent_group_id FROM messaging_group_agents WHERE session_mode = 'agent-shared'
                AND agent_group_id IN (SELECT agent_group_id FROM sessions WHERE messaging_group_id = ?)`,
@@ -163,23 +204,10 @@ registerResource({
               agent_group_id,
               id,
             );
-            const rebound = next?.messaging_group_id ?? null;
-            await db.run(
-              'UPDATE sessions SET messaging_group_id = ?, thread_id = NULL WHERE id = ?',
-              rebound,
-              reused.id,
-            );
-            // Its open question cards sit in this chat; answers from there must not reach it.
-            counts.pending_questions += (
-              await db.run(
-                'DELETE FROM pending_questions WHERE session_id = ? AND channel_type = ? AND platform_id = ?',
-                reused.id,
-                mg.channel_type,
-                mg.platform_id,
-              )
-            ).changes;
-            kept.push({ id: reused.id, agent_group_id, messaging_group_id: rebound });
+            await keep(reused.id, agent_group_id, next?.messaging_group_id ?? null);
           }
+          // The rest keep no chat; resolveSession binds one when an agent-shared chat resumes them.
+          for (const session of peerUsed) await keep(session.id, session.agent_group_id, null);
           counts.pending_questions += (
             await db.run(`DELETE FROM pending_questions WHERE session_id IN (${sessionIds})`, id)
           ).changes;

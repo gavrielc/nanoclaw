@@ -45,6 +45,7 @@
  *   - Delivery adapter missing.
  */
 import { normalizeOptions, type NormalizedOption, type RawOption } from '../../channels/ask-question.js';
+import { escapeInvisibles, quoteForCard } from '../../card-text.js';
 import { resolveWiringDefaults } from '../../channels/channel-defaults.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getChannelAdapter } from '../../channels/channel-registry.js';
@@ -124,7 +125,7 @@ async function buildApprovalOptions(agentGroups: AgentGroup[], approverUserId?: 
   if (visibleAgentGroups.length === 1) {
     options.push({
       label: `Connect to ${visibleAgentGroups[0].name}`,
-      selectedLabel: `✅ Connected to ${visibleAgentGroups[0].name}`,
+      selectedLabel: `✅ Connected to ${quoteForCard(visibleAgentGroups[0].name)}`,
       value: `${CONNECT_PREFIX}${visibleAgentGroups[0].id}`,
       style: 'primary',
     });
@@ -158,10 +159,10 @@ function buildQuestionText(
   ruleNote: string | null,
   resolvedConversation: ResolvedConversation | null,
 ): string {
-  const who = senderName ?? 'Someone';
+  const who = senderName ? quoteForCard(senderName) : 'Someone';
   const note = ruleNote ? ` If connected, the agent ${ruleNote}.` : '';
   if (conversationType === 'channel') {
-    const where = channelName ? `${channelName} on ${channelType}` : `a ${channelType} channel`;
+    const where = channelName ? `${quoteForCard(channelName)} on ${channelType}` : `a ${channelType} channel`;
     return `${who} mentioned your bot in ${where}.${note} ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle this channel?`;
   }
   if (conversationType === 'group_dm') {
@@ -171,7 +172,7 @@ function buildQuestionText(
     const otherParticipants = participantNames.filter((name, index) =>
       useParticipantIds ? participantIds![index] !== senderId : name.toLowerCase() !== senderName?.toLowerCase(),
     );
-    const participants = formatParticipantList(otherParticipants);
+    const participants = formatParticipantList(otherParticipants.map(quoteForCard));
     const withParticipants = participants ? ` with ${participants}` : '';
     return `${who} mentioned your bot in a group chat${withParticipants} on ${channelType}.${note} ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle this group chat?`;
   }
@@ -189,7 +190,8 @@ function formatParticipantList(names: string[]): string {
  * resolution the wire step uses. Null when the declaration is unresolvable
  * (mis-declared pattern mode) — the card still works without the preview.
  */
-function describeResolvedRule(
+/** Exported for tests. */
+export function describeResolvedRule(
   channelKey: string,
   isGroup: boolean,
   agentGroupName: string,
@@ -202,7 +204,7 @@ function describeResolvedRule(
     }
     return engage.engage_pattern === '.'
       ? 'will respond to all messages'
-      : `will respond to messages matching ${engage.engage_pattern}`;
+      : `will respond to messages matching \`${escapeInvisibles(engage.engage_pattern ?? '')}\``;
   } catch {
     return null;
   }
@@ -399,7 +401,7 @@ export async function buildAgentSelectionOptions(
   const visibleAgentGroups = await visibleAgentGroupsForApprover(agentGroups, approverUserId);
   const options: RawOption[] = visibleAgentGroups.map((ag) => ({
     label: ag.name,
-    selectedLabel: `✅ Connected to ${ag.name}`,
+    selectedLabel: `✅ Connected to ${quoteForCard(ag.name)}`,
     value: `${CONNECT_PREFIX}${ag.id}`,
   }));
   options.push({
