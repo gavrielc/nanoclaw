@@ -147,3 +147,20 @@ still mount them. Do not remove these files while agent containers are running.
 An unexpected file type, owner, permissions, or content stops the spawn instead
 of replacing existing data. A gateway fetch or staging failure also stops the
 spawn; the provider never falls back to a cached credential configuration.
+
+OneCLI 1.42.0's ChatGPT login stub carries the fixed account id
+`onecli-managed`. Codex 0.156.0 and later look that id up in the login's
+workspace list before any model request, so the provider replaces it with the
+workspace id OneCLI recorded when the login was saved (secret metadata, read
+from `/v1/secrets`). Tokens in the stub stay placeholders. The workspace id is
+an identifier, not a credential, and the agent can read it. If OneCLI cannot
+serve the metadata, the spawn stops like a failed configuration fetch. If the
+vault holds several ChatGPT logins, or one without a recorded id, the stub
+keeps the fixed id and the provider logs a warning. To fix that, delete the
+extra or stale login (`onecli secrets list`, then `onecli secrets delete --id
+<id>`) and sign in again with
+`pnpm exec tsx setup/index.ts --step provider-auth codex`. If that step says
+the account is already connected, another OpenAI secret (such as an API key) is
+still stored; delete it too. The new login has a new secret ID: grant it to
+each agent that had the old one, as described under Provider credentials in the
+add-onecli skill.
