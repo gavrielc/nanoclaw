@@ -421,7 +421,8 @@ describe('OneCLI upgrade guide: Dial installs', () => {
     expect(del!.at).toBeLessThan(guide.indexOf('docker compose pull onecli'));
     const before = guide.slice(0, del!.at).trimEnd();
     const paragraph = before.slice(before.lastIndexOf('\n\n'));
-    expect(paragraph).toMatch(/delete the Dial key before you pull/i);
+    expect(paragraph).toMatch(/delete any Dial key before you pull/i);
+    expect(paragraph).toMatch(/every upgrade/);
     expect(paragraph).toContain('/add-dial-tool');
     expect(guide).not.toMatch(/To keep every unchosen agent away from Dial in between/);
   });
@@ -479,6 +480,24 @@ esac
     const bin = path.join(home, 'bin');
     fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(path.join(bin, 'onecli'), `#!/bin/sh\necho '{"data":null}'\n`, { mode: 0o755 });
+    const r = spawnSync('sh', ['-c', del!.body], {
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://gw:1' },
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+  });
+
+  it('nothing gates the delete on a lookup that ignores $GW', () => {
+    const dialSection = guide.slice(guide.indexOf('Dial'), guide.indexOf('docker compose pull onecli'));
+    for (const line of dialSection.split('\n').filter((l) => l.includes('onecli secrets list'))) {
+      expect(line).toContain('ONECLI_API_HOST="${GW:?');
+    }
+  });
+
+  it('a secret list of only whitespace stops the delete', () => {
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'onecli'), `#!/bin/sh\nprintf ' \\t\\n'\n`, { mode: 0o755 });
     const r = spawnSync('sh', ['-c', del!.body], {
       env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://gw:1' },
       encoding: 'utf8',

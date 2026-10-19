@@ -45,16 +45,12 @@ GW="$GW" sh .claude/skills/add-onecli/scripts/pre-upgrade-check.sh
 
 The conversion runs for every project on the gateway. A local gateway has one; if yours has more, run the check once per project with `ONECLI_PROJECT=<project id>` in front.
 
-If it stops with findings, do not upgrade yet: after the upgrade, access can only be narrowed by detaching secrets from agents, so anything a rule, a rate limit or a `block` default enforced is gone. Note what each finding protects, and upgrade only once you accept that or have a replacement. Also check for `/add-dial-tool`, which keeps unchosen agents away from Dial with a `block` rule named `Dial: blocked agents`:
+If it stops with findings, do not upgrade yet: after the upgrade, access can only be narrowed by detaching secrets from agents, so anything a rule, a rate limit or a `block` default enforced is gone. Note what each finding protects, and upgrade only once you accept that or have a replacement.
+
+Then, on every upgrade, delete any Dial key before you pull, with the command below. `/add-dial-tool` keeps unchosen agents away from Dial with a `block` rule (`Dial: blocked agents`, one of the findings above); the conversion deletes it and would give the key to every agent, OneCLI's default agent included, and Dial spends money and reaches real people. The command asks the gateway at `$GW`, like the check above, and prints `none` when there is no Dial key. If it deleted one, no agent can use Dial until you re-run `/add-dial-tool` after the upgrade, a few minutes later: it recreates the key from the host's Dial sign-in and attaches it only to the agents you choose.
 
 ```bash
-onecli secrets list --max 0 | jq -r '(if type == "array" then . else .data end)[] | select(.name | test("(?i)dial")) | "\(.name)  \(.hostPattern)"'
-```
-
-If it prints a Dial secret, `/add-dial-tool` is installed, and its `Dial: blocked agents` rule is one of the findings above: the conversion deletes the rule and would give the Dial key to every agent, OneCLI's default agent included. Dial spends money and reaches real people, so delete the Dial key before you pull, with the command below (it asks the gateway at `$GW`, like the check above). No agent can use Dial until you re-run `/add-dial-tool` after the upgrade, a few minutes later: it recreates the key from the host's Dial sign-in and attaches it only to the agents you choose.
-
-```bash
-(export ONECLI_API_HOST="${GW:?set GW as in the Detect step}"; L=$(onecli secrets list --max 0) && [ -n "$L" ] && ids=$(printf '%s' "$L" | jq -r '(if type == "array" then . elif (type == "object") and ((.data | type) == "array") then .data else error("not a secret list") end)[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id') || { echo "STOP: could not read the OneCLI secrets" >&2; exit 2; }; for id in $(printf '%s' "$ids"); do onecli secrets delete --id "$id" || exit 1; done; echo "Dial keys deleted: ${ids:-none}")
+(export ONECLI_API_HOST="${GW:?set GW as in the Detect step}"; L=$(onecli secrets list --max 0) && printf '%s' "$L" | grep -q '[^[:space:]]' && ids=$(printf '%s' "$L" | jq -r '(if type == "array" then . elif (type == "object") and ((.data | type) == "array") then .data else error("not a secret list") end)[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id') || { echo "STOP: could not read the OneCLI secrets" >&2; exit 2; }; for id in $(printf '%s' "$ids"); do onecli secrets delete --id "$id" || exit 1; done; echo "Dial keys deleted: ${ids:-none}")
 ```
 
 If you have already upgraded with the key in place, delete it now with the command above, then re-run `/add-dial-tool`: deleting it takes it from every agent at once, OneCLI's default agent included, even if the re-run waits on a Dial sign-in.
