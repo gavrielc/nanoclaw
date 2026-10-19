@@ -50,7 +50,7 @@ head -5 container/skills/vercel-cli/SKILL.md
 ### Check if Vercel credential already exists
 
 ```bash
-onecli secrets list --max 0 2>/dev/null | grep -i vercel
+onecli secrets list --max 0 2>/dev/null | jq -r '(if type == "array" then . else .data end)[] | select(.hostPattern == "api.vercel.com") | "\(.id)  \(.name)  created \(.createdAt)"'
 ```
 
 If a Vercel credential already exists, skip to [Attach the secret to the groups that use Vercel](#attach-the-secret-to-the-groups-that-use-vercel): a re-run still asks which groups get it.
@@ -82,7 +82,7 @@ onecli secrets create \
 Verify:
 
 ```bash
-onecli secrets list --max 0 | grep -i vercel
+onecli secrets list --max 0 | jq -r '(if type == "array" then . else .data end)[] | select(.hostPattern == "api.vercel.com") | "\(.id)  \(.name)  created \(.createdAt)"'
 ```
 
 ### Attach the secret to the groups that use Vercel
@@ -93,11 +93,24 @@ A OneCLI agent receives only the secrets attached to it, and NanoClaw gives a gr
 ncl groups list --json --limit 100000 | jq -r '.data[] | "\(.id)  \(.name)"'
 ```
 
-Put the chosen group ids, comma-separated, in `VERCEL_GROUPS` and run the block. It attaches the Vercel secret to each chosen group's OneCLI agent, creating the agent for a group that has not run yet (NanoClaw adds its model credential on its first spawn). Attaching adds this one secret and leaves each agent's other grants alone; other groups, and groups created later, do not get it:
+Put the chosen group ids, comma-separated, in `VERCEL_GROUPS` and run the block. If OneCLI holds more than one Vercel token, the block lists them (id, name, creation time) and stops: ask the user which one they saved and put its id in `VERCEL_SECRET`. The block attaches the Vercel secret to each chosen group's OneCLI agent, creating the agent for a group that has not run yet (NanoClaw adds its model credential on its first spawn). Attaching adds this one secret and leaves each agent's other grants alone; other groups, and groups created later, do not get it:
 
 ```bash
+(
 VERCEL_GROUPS="<agent-group-id>,<agent-group-id>"
-S=$(onecli secrets list --max 0 | jq -r 'first(.data[] | select(.name | test("(?i)vercel"))) | .id // empty'); [ -n "$S" ] || { echo "no Vercel secret in the OneCLI vault" >&2; exit 1; }
+VERCEL_SECRET=""
+L=$(onecli secrets list --max 0) && printf '%s' "$L" | grep -q '[^[:space:]]' || { echo "could not list OneCLI secrets" >&2; exit 1; }
+T=$(printf '%s' "$L" | jq -c '[(if type == "array" then . else .data end)[] | select(.hostPattern == "api.vercel.com") | {id, name, createdAt}]') || { echo "could not read the OneCLI secret list" >&2; exit 1; }
+if [ -n "$VERCEL_SECRET" ]; then
+  S=$(printf '%s' "$T" | jq -r --arg s "$VERCEL_SECRET" '.[] | select(.id == $s) | .id'); [ -n "$S" ] || { echo "'$VERCEL_SECRET' is not a Vercel token in OneCLI" >&2; exit 1; }
+else
+  case "$(printf '%s' "$T" | jq length)" in
+    0) echo "no Vercel token in OneCLI yet: save it with the command above first" >&2; exit 1 ;;
+    1) S=$(printf '%s' "$T" | jq -r '.[0].id') ;;
+    *) echo "more than one Vercel token in OneCLI:" >&2; printf '%s' "$T" | jq -r '.[] | "  \(.id)  \(.name)  created \(.createdAt)"' >&2
+       echo "set VERCEL_SECRET to the one to attach (check its name and time; ask if unsure) and run this again" >&2; exit 1 ;;
+  esac
+fi
 G=$(ncl groups list --json --limit 100000) || { echo "could not list agent groups; is the NanoClaw host running?" >&2; exit 1; }
 AG=$(onecli agents list --max 0) || { echo "could not list OneCLI agents" >&2; exit 1; }
 for gid in $(printf '%s' "$VERCEL_GROUPS" | tr ',' ' '); do
@@ -107,6 +120,7 @@ for gid in $(printf '%s' "$VERCEL_GROUPS" | tr ',' ' '); do
   onecli agents grants attach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not attach the Vercel secret to $gname ($gid)" >&2; exit 1; }
   echo "Vercel attached to $gname ($gid)"
 done
+)
 ```
 
 To add a group later, run the block again with its id. To take Vercel away from one group: `onecli agents grants detach-secret --id <agent-id> --secret-id <vercel-secret-id>`. Check one agent with `onecli agents grants list --id <agent-id>`. This needs a OneCLI gateway with the grants API (1.44 or later; see `/add-onecli`).
