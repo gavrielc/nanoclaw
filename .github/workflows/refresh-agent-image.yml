@@ -1,21 +1,20 @@
-# Opens the agent-images.json PR after the AWS worker promotes a new agent image:
-# one entry per release, naming the hardened image built from that release.
+# Opens the agent-images.json PR for each image the AWS worker promotes: one
+# entry per release, naming the hardened image built from that release.
 #
 # The split is deliberate and is about which side holds which credential:
 #
-#   AWS   warms the Echo pull-through cache, verifies the image, and promotes it
-#         into nanoclaw/agent. It can push images; it cannot write this repo
-#         beyond firing the dispatch below.
+#   AWS   warms the Echo pull-through cache, checks the image against its
+#         release, and promotes it into nanoclaw/agent. It can push images; it
+#         holds no GitHub credential.
 #   here  reads the registry read-only and opens a pull request. It can write
 #         this repo; it cannot push an image.
 #
-# So neither side can complete a bump alone, and the copy never leaves AWS —
+# So neither side can complete a change alone, and the copy never leaves AWS:
 # a ~1.2 GB round trip through a runner would buy nothing.
 #
-# What arrives in client_payload is used for PROSE ONLY. Every decision this
-# workflow makes is re-derived from the registry, because a dispatch payload is
-# attacker-supplied the moment that token leaks. Payload values are passed
-# through env: rather than inlined into run: blocks, for the same reason.
+# Every 6 hours rather than on a dispatch from AWS: `find` reads the registry
+# itself, so a dispatch would only say "go look", and sending one would need a
+# key to this repo on the AWS side. Run it by hand to list a new image sooner.
 #
 # The PR is opened by the nanoclaw-image-refresh App, not GITHUB_TOKEN: GitHub
 # refuses PRs from GITHUB_TOKEN here, and one it did open would start no
@@ -24,14 +23,9 @@
 name: refresh-agent-image
 
 on:
-  repository_dispatch:
-    types: [agent-image-promoted]
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: Find the candidate and mint the App token; push nothing and open no PR
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -44,8 +38,9 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC for the read-only ECR role
+      pull-requests: read # the existing-PR check below
     outputs:
-      found: ${{ steps.candidate.outputs.found }}
+      found: ${{ steps.candidate.outputs.found == 'true' && steps.pr.outputs.skip == '' }}
       tag: ${{ steps.candidate.outputs.tag }}
       ref: ${{ steps.candidate.outputs.ref }}
       branch: ${{ steps.candidate.outputs.branch }}
@@ -72,10 +67,9 @@ jobs:
 
           # Newest image tagged <release>-<yyyymmdd>T<hhmm>, the tag the worker
           # writes after checking the image against that release (date-only tags
-          # come from its first version). Read from the registry rather than from
-          # the dispatch payload: the payload says "go look", it does not get to
-          # say what we found. Only the newest image overall is proposed, so a
-          # release missed before a later one was listed needs its entry by hand.
+          # come from its first version). Only the newest image overall is
+          # proposed, so a release missed before a later one was listed needs its
+          # entry by hand.
           aws ecr describe-images --repository-name "$REPO_NAME" --region us-east-1 \
             --query 'imageDetails[?imageTags]' --output json > /tmp/candidates.json
 
@@ -133,16 +127,39 @@ jobs:
           print(f'branch=chore/agent-image-{tag}')
           PY
 
+      # Every run while a PR waits for review would otherwise mint the App
+      # token and record a deployment. A PR closed without merging means a
+      # person declined this image, so it is not proposed again.
+      - name: Skip an image that already has a PR
+        id: pr
+        if: steps.candidate.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.candidate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          # Only this App's PRs count: --head alone also matches fork branches of
+          # the same name.
+          PR="$(gh pr list --repo "$GITHUB_REPOSITORY" --app nanoclaw-image-refresh \
+            --head "$BRANCH" --state all --json number,state \
+            --jq '.[0] | select(.) | "#\(.number), \(.state | ascii_downcase)"')"
+          if [ -n "$PR" ]; then
+            echo "skip=$PR" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Report the candidate
         env:
           FOUND: ${{ steps.candidate.outputs.found }}
           REASON: ${{ steps.candidate.outputs.reason }}
           REF: ${{ steps.candidate.outputs.ref }}
+          SKIP: ${{ steps.pr.outputs.skip }}
         run: |
-          if [ "$FOUND" = "true" ]; then
+          if [ "$FOUND" = "true" ] && [ -n "$SKIP" ]; then
+            MSG="No PR to open: ${REF} already has PR ${SKIP}."
+          elif [ "$FOUND" = "true" ]; then
             MSG="Candidate: ${REF}"
           else
-            MSG="No PR to open — ${REASON}."
+            MSG="No PR to open: ${REASON}."
           fi
           echo "::notice::$MSG"
           echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
@@ -152,7 +169,7 @@ jobs:
     if: needs.find.outputs.found == 'true'
     runs-on: ubuntu-26.04
     environment: agent-image-pr
-    # One at a time, so two dispatches can't both find no PR and race the push.
+    # One at a time, so two runs can't both find no PR and race the push.
     concurrency:
       group: agent-image-repin-pr
       cancel-in-progress: false
@@ -190,13 +207,13 @@ jobs:
           except FileNotFoundError:
               now = ''
           if now != os.environ['LISTED']:
-              print("::error::The entry on main changed since the candidate was chosen. Dispatch the workflow again: a re-run keeps the old commit.")
+              print("::error::The entry on main changed since the candidate was chosen. Start a new run (the next scheduled one will do): a re-run keeps the old commit.")
               sys.exit(1)
           PY
 
-      # Deterministic branch name per image, so a duplicate dispatch finds the
-      # existing PR instead of opening a second one.
-      - name: Check whether this PR is already open
+      # Deterministic branch name per image. `find` already skipped images with a
+      # PR; this repeats the check under the lock, for a run that raced it.
+      - name: Check whether this image already has a PR
         id: existing
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -204,19 +221,20 @@ jobs:
         run: |
           set -euo pipefail
           # Captured first: inside `if … | grep` a failed lookup would read as
-          # "no PR" and let the push below overwrite an open PR's branch.
-          OPEN="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$OPEN" ]; then
-            echo "open=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::A PR for $BRANCH is already open."
+          # "no PR" and let the push below overwrite a PR's branch.
+          # Not --app here: that goes through search, which can miss a PR opened
+          # seconds ago. Fork branches of the same name are filtered out instead.
+          PR="$(gh pr list --head "$BRANCH" --state all --limit 200 --json number,isCrossRepository \
+            --jq 'map(select(.isCrossRepository | not)) | .[0].number // empty')"
+          if [ -n "$PR" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$BRANCH already has PR #$PR."
           else
-            echo "open=false" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Open the PR
-        # A dry run stops here, after the key, the environment and the
-        # token's access have all been exercised with no writes.
-        if: steps.existing.outputs.open == 'false' && !inputs.dry_run
+        if: steps.existing.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
@@ -225,10 +243,6 @@ jobs:
           LISTED: ${{ needs.find.outputs.listed }}
           REF: ${{ needs.find.outputs.ref }}
           BRANCH: ${{ needs.find.outputs.branch }}
-          # Prose only — never a decision input. See the header.
-          PAYLOAD_CREATED: ${{ github.event.client_payload.created }}
-          PAYLOAD_UPSTREAM: ${{ github.event.client_payload.upstream_digest }}
-          PAYLOAD_LOCK: ${{ github.event.client_payload.lock_sha256 }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -251,9 +265,9 @@ jobs:
           git switch -c "$BRANCH"
           git add agent-images.json
           git commit -m "agent-images: ${RELEASE} -> ${TAG}"
-          # The branch name belongs to this workflow and no PR is open on it, so
-          # a re-run after a failed `gh pr create` replaces it. The lease only
-          # overwrites the head seen here.
+          # The branch name belongs to this workflow and no PR was ever opened
+          # from it, so a run after a failed `gh pr create` replaces it. The
+          # lease only overwrites the head seen here.
           SEEN="$(git ls-remote origin "refs/heads/${BRANCH}" | cut -f1)"
           git push --force-with-lease="refs/heads/${BRANCH}:${SEEN}" origin "HEAD:refs/heads/${BRANCH}"
 
@@ -268,21 +282,10 @@ jobs:
               echo "Replaces \`${LISTED}\`, an earlier build of the same release."
               echo
             fi
-            if [ -n "${PAYLOAD_CREATED:-}" ]; then
-              echo "Built \`${PAYLOAD_CREATED}\`."
-            fi
-            if [ -n "${PAYLOAD_UPSTREAM:-}" ]; then
-              echo "Upstream digest \`${PAYLOAD_UPSTREAM}\`."
-            fi
-            if [ -n "${PAYLOAD_LOCK:-}" ]; then
-              echo "Agent-runner lock label \`${PAYLOAD_LOCK}\`."
-            fi
-            echo
             echo "Promoted into \`nanoclaw/agent\` by the AWS refresh worker, which checked the"
             echo "image's release and commit labels and its lock label against \`${RELEASE}\`."
-            echo "Those figures come from the dispatch payload and are here to read, not to"
-            echo "trust — \`verify-agent-image\` re-derives all of them on this PR, including the"
-            echo "publisher signature, under a different role, and is a required check."
+            echo "\`verify-agent-image\` checks all of them again on this PR, plus the publisher"
+            echo "signature, under a different role, and is a required check."
             echo
             echo "Opened automatically by the \`${APP_SLUG}\` App. A person merges."
           } > /tmp/pr-body.md
