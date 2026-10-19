@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createStageProbe,
+  skippedWaitCopy,
   StageDisplay,
   stageFor,
   StageTracker,
@@ -190,6 +191,23 @@ describe('StageDisplay', () => {
     vi.useRealTimers();
   });
 
+  it('reports no seen stage until a read succeeds', async () => {
+    const ui = fakeUi();
+    let fail = true;
+    const signals: StageSignals = { session: true, sandboxRunning: false, agentActive: false };
+    const display = new StageDisplay(
+      { read: async () => (fail ? Promise.reject(new Error('locked')) : signals) },
+      { ...ui.deps, now: () => 0 },
+      0,
+    );
+    display.start();
+    await display.tick();
+    expect(display.seenStage).toBeUndefined();
+    fail = false;
+    await display.tick();
+    expect(display.seenStage).toBe('starting_sandbox');
+  });
+
   it('claims no stage when the probe never reads', async () => {
     let now = 0;
     const ui = fakeUi();
@@ -222,5 +240,21 @@ describe('StageDisplay', () => {
     display.resume();
     expect(ui.lines).toEqual(['Test message received (3s)']);
     expect(ui.spinners.at(-1)?.label).toMatch(/^Starting the sandbox…/);
+  });
+});
+
+describe('skippedWaitCopy', () => {
+  const flat = (text: string) => text.replace(/\s+/g, ' ');
+
+  it('names the last stage seen, points to chat later and the log, without the troubleshooting guide', () => {
+    const copy = skippedWaitCopy('waiting_for_reply');
+    expect(flat(copy.note)).toContain("was still waiting for the model's first reply when you stopped waiting");
+    expect(flat(copy.note)).toContain('`pnpm run chat hi`');
+    expect(flat(copy.note)).toContain('`logs/nanoclaw.log`');
+    expect(flat(copy.note)).not.toContain('troubleshooting');
+  });
+
+  it('claims no stage when none was seen', () => {
+    expect(flat(skippedWaitCopy(undefined).note)).toContain('had not replied when you stopped waiting');
   });
 });

@@ -9,10 +9,10 @@
  */
 import type { CliPing, PingOutcome } from './agent-ping.js';
 
-// Twice the 30-60s cold start most installs see, and the same 2 minutes
-// `pnpm run chat` already allows a person at the terminal.
+// Room for a cold sandbox start on a hosted model, and the same stop
+// `pnpm run chat` gives a person at the terminal.
 export const FIRST_WAIT_MS = 120_000;
-// A model still loading after 2 minutes rarely needs only seconds more.
+// A model still loading after the first window rarely needs only seconds more.
 export const EXTRA_WAIT_MS = 120_000;
 // Upper bound handed to the chat client, so a forgotten wait still ends.
 export const MAX_WAIT_MS = 60 * 60_000;

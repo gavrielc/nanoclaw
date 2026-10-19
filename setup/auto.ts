@@ -47,6 +47,7 @@ import {
 import { runInheritScript } from './lib/inherit-script.js';
 import { offerPortalReminder, portalEnabled, runImagePortal } from './portal.js';
 import {
+  firstChatEventProps,
   logFirstChat,
   pingFailureCopy,
   PING_AGENT_FOLDER,
@@ -55,7 +56,13 @@ import {
   type PingOutcome,
 } from './lib/agent-ping.js';
 import { EXTRA_WAIT_MS, MAX_WAIT_MS, waitForFirstReply, type WaitChoice } from './lib/first-chat-wait.js';
-import { createStageProbe, keepWaitingQuestion, StageDisplay, type FirstChatStage } from './lib/first-chat-progress.js';
+import {
+  createStageProbe,
+  keepWaitingQuestion,
+  skippedWaitCopy,
+  StageDisplay,
+  type FirstChatStage,
+} from './lib/first-chat-progress.js';
 import { inspectAgentSession } from './central-db-inspection.js';
 import { getSetupProvider, listSetupProviders } from './providers/registry.js';
 import { applyProviderSkill, loadHostContractModules } from './providers/install.js';
@@ -590,7 +597,7 @@ async function main(): Promise<void> {
       logFirstChat(outcome, waitedMs, wait);
       const ping = outcome.result;
       if (ping === 'ok') {
-        phEmit('first_chat_ready');
+        phEmit('first_chat_ready', firstChatEventProps(outcome, wait));
         const cleanupRawLog = setupLog.stepRawLog('cleanup-cli-agent');
         const cleanupStart = Date.now();
         const cleanup = await spawnQuiet(
@@ -654,8 +661,11 @@ async function main(): Promise<void> {
           }
           await runFirstChat();
         }
+      } else if (wait.skipped) {
+        phEmit('first_chat_failed', firstChatEventProps(outcome, wait));
+        note(skippedWaitCopy(wait.stage).note, 'Skipping the first chat');
       } else {
-        phEmit('first_chat_failed', { reason: ping });
+        phEmit('first_chat_failed', firstChatEventProps(outcome, wait));
         const copy = pingFailureCopy(outcome, waitedMs);
         note(copy.note, 'Skipping the first chat');
         await offerClaudeOnFailure({ stepName: 'cli-agent', msg: copy.assistMsg, hint: copy.assistHint });
@@ -895,8 +905,8 @@ async function confirmAssistantResponds(): Promise<{ outcome: PingOutcome; wait:
   clearInterval(tick);
   await display.idle();
   if (outcome.result === 'ok') display.succeed('Your assistant is ready.');
-  else display.fail(pingFailureCopy(outcome).spinner);
-  return { outcome, wait: { keptWaiting, skipped, stage: display.stage } };
+  else display.fail(skipped ? skippedWaitCopy(display.seenStage).spinner : pingFailureCopy(outcome).spinner);
+  return { outcome, wait: { keptWaiting, skipped, stage: display.seenStage } };
 }
 
 async function askKeepWaiting(

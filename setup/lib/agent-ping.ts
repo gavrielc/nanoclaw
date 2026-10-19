@@ -15,6 +15,7 @@ import { spawn } from 'child_process';
 
 import { getLaunchdLabel, getSystemdUnit } from '../../src/install-slug.js';
 import * as setupLog from '../logs.js';
+import type { FirstChatStage } from './first-chat-progress.js';
 import { fmtDuration, wrapForGutter } from './theme.js';
 
 export const PING_AGENT_FOLDER = 'ping_test';
@@ -48,8 +49,8 @@ export interface FirstChatWait {
   keptWaiting: number;
   /** The user stopped waiting before a reply came. */
   skipped: boolean;
-  /** The stage the wait ended on (first-chat-progress.ts). */
-  stage?: string;
+  /** The last stage seen before the wait ended, if any was. */
+  stage?: FirstChatStage;
 }
 
 // The only setup check that goes through the container, gateway and model.
@@ -213,6 +214,16 @@ export function startCliPing(deadlineMs: number): CliPing {
     child.on('error', () => settle({ result: 'socket_error' }));
   });
   return { outcome, stop: () => stop() };
+}
+
+/** Diagnostics fields for the first-chat events, so a skip is not counted as a failure. */
+export function firstChatEventProps(
+  { result }: PingOutcome,
+  wait: FirstChatWait,
+): Record<string, string | number | boolean | undefined> {
+  const kept_waiting = wait.keptWaiting || undefined;
+  if (result === 'ok') return { kept_waiting };
+  return { reason: result, skipped: wait.skipped || undefined, kept_waiting, stage: wait.stage };
 }
 
 export interface PingFailureCopy {

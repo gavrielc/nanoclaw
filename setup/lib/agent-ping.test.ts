@@ -8,6 +8,7 @@ import {
   pingOutcome,
   sanitizeDetail,
   GENERIC_FAILURE_NOTICE,
+  firstChatEventProps,
   logFirstChat,
   pingFailureCopy,
   PING_AGENT_FOLDER,
@@ -244,5 +245,30 @@ describe('wizard failure copy', () => {
     const copy = pingFailureCopy({ result: 'no_reply' }, 240_000);
     expect(flat(copy.note)).toContain('No reply from your assistant after 4m 0s.');
     expect(copy.assistMsg).toBe('No reply from the assistant after 4m 0s.');
+  });
+});
+
+describe('first-chat events', () => {
+  it('tells the funnel a skip apart from a failure', () => {
+    expect(
+      firstChatEventProps({ result: 'no_reply' }, { keptWaiting: 2, skipped: true, stage: 'waiting_for_reply' }),
+    ).toEqual({ reason: 'no_reply', skipped: true, kept_waiting: 2, stage: 'waiting_for_reply' });
+  });
+
+  it('keeps a plain failure event as before, plus where it stopped', () => {
+    expect(
+      firstChatEventProps({ result: 'agent_failure' }, { keptWaiting: 0, skipped: false, stage: 'starting_agent' }),
+    ).toEqual({
+      reason: 'agent_failure',
+      stage: 'starting_agent',
+    });
+  });
+
+  it('counts kept waits on a ready assistant', () => {
+    expect(
+      firstChatEventProps({ result: 'ok' }, { keptWaiting: 1, skipped: false, stage: 'waiting_for_reply' }),
+    ).toEqual({
+      kept_waiting: 1,
+    });
   });
 });

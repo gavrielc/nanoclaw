@@ -39,6 +39,18 @@ const IDLE_WAIT_MS = 3_000;
 const SLOW_MODEL_HINT_MS = 20_000;
 const SLOW_MODEL_HINT = 'A local model can take several minutes to load and read its first prompt.';
 
+/**
+ * Wizard text when the user stops waiting. Nothing has failed, so no
+ * troubleshooting guide; the stage is only the last one seen, never assumed.
+ */
+export function skippedWaitCopy(stage: FirstChatStage | undefined): { spinner: string; note: string } {
+  const seen = stage
+    ? `Your assistant was still ${COPY[stage].waitingOn} when you stopped waiting.`
+    : 'Your assistant had not replied when you stopped waiting.';
+  const note = `${seen} Setup carries on without the first chat; chat with it later using \`pnpm run chat hi\`. If it never answers, check \`logs/nanoclaw.log\`.`;
+  return { spinner: 'Stopped waiting for the first reply.', note: wrapForGutter(note, 6) };
+}
+
 /** The question setup asks when a wait window ends. */
 export function keepWaitingQuestion(stage: FirstChatStage, waitedMs: number): string {
   return `Still ${COPY[stage].waitingOn} after ${fmtDuration(waitedMs)}. Keep waiting?`;
@@ -184,6 +196,11 @@ export class StageDisplay {
 
   get stage(): FirstChatStage {
     return this.tracker.stage;
+  }
+
+  /** The current stage, once a probe read has shown one. */
+  get seenStage(): FirstChatStage | undefined {
+    return this.known ? this.tracker.stage : undefined;
   }
 
   start(): void {

@@ -102,7 +102,9 @@ type Option<T> = { value: T; label?: string; hint?: string };
 class AbortableSelect<T> extends SelectPrompt<Option<T>> {
   abort(): void {
     this.state = 'cancel';
-    (this as unknown as { render(): void }).render();
+    // render() is private in clack; if a release renames it, still close.
+    const render = (this as unknown as { render?: unknown }).render;
+    if (typeof render === 'function') render.call(this);
     this.close();
   }
 }
