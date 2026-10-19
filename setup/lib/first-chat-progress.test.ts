@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createStageProbe,
+  keepWaitingQuestion,
   skippedWaitCopy,
   StageDisplay,
   stageFor,
@@ -256,5 +257,27 @@ describe('skippedWaitCopy', () => {
 
   it('claims no stage when none was seen', () => {
     expect(flat(skippedWaitCopy(undefined).note)).toContain('had not replied when you stopped waiting');
+  });
+});
+
+describe('exact first-chat wording', () => {
+  // Pinned so a copy edit is a deliberate change to what users read.
+  it('renders the skip note and the keep-waiting hint as reviewed', () => {
+    expect(skippedWaitCopy('waiting_for_reply').note.replace(/\s+/g, ' ')).toBe(
+      "Your assistant was still waiting for the model's first reply when you stopped waiting. Setup carries on without the first chat. Chat with it later using `pnpm run chat hi`. If it never answers, check `logs/nanoclaw.log`.",
+    );
+    expect(skippedWaitCopy(undefined).spinner).toBe('Stopped waiting for the first reply.');
+  });
+});
+
+describe('keepWaitingQuestion', () => {
+  it('names the stage seen', () => {
+    expect(keepWaitingQuestion('starting_sandbox', 120_000)).toBe(
+      'Still starting the sandbox after 2m 0s. Keep waiting?',
+    );
+  });
+
+  it('claims no stage when none was seen', () => {
+    expect(keepWaitingQuestion(undefined, 120_000)).toBe('Still waiting for a reply after 2m 0s. Keep waiting?');
   });
 });

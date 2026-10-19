@@ -63,6 +63,7 @@ import {
   StageDisplay,
   type FirstChatStage,
 } from './lib/first-chat-progress.js';
+import { fill, FIRST_CHAT_COPY } from './lib/first-chat-copy.js';
 import { inspectAgentSession } from './central-db-inspection.js';
 import { getSetupProvider, listSetupProviders } from './providers/registry.js';
 import { applyProviderSkill, loadHostContractModules } from './providers/install.js';
@@ -583,14 +584,7 @@ async function main(): Promise<void> {
       );
     }
     if (!skip.has('first-chat')) {
-      p.log.message(
-        brandBody(
-          dimWrap(
-            "Your assistant runs in an isolated sandbox. I'm going to send it a quick test message (ping) and wait for a reply (pong) to confirm it's responding. First startup typically takes 30–60 seconds while the sandbox warms up.",
-            4,
-          ),
-        ),
-      );
+      p.log.message(brandBody(dimWrap(FIRST_CHAT_COPY.intro, 4)));
       const pingStart = Date.now();
       const { outcome, wait } = await confirmAssistantResponds();
       const waitedMs = Date.now() - pingStart;
@@ -663,11 +657,11 @@ async function main(): Promise<void> {
         }
       } else if (wait.skipped) {
         phEmit('first_chat_failed', firstChatEventProps(outcome, wait));
-        note(skippedWaitCopy(wait.stage).note, 'Skipping the first chat');
+        note(skippedWaitCopy(wait.stage).note, FIRST_CHAT_COPY.skippedTitle);
       } else {
         phEmit('first_chat_failed', firstChatEventProps(outcome, wait));
         const copy = pingFailureCopy(outcome, waitedMs);
-        note(copy.note, 'Skipping the first chat');
+        note(copy.note, FIRST_CHAT_COPY.skippedTitle);
         await offerClaudeOnFailure({ stepName: 'cli-agent', msg: copy.assistMsg, hint: copy.assistHint });
       }
     }
@@ -895,7 +889,7 @@ async function confirmAssistantResponds(): Promise<{ outcome: PingOutcome; wait:
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     ask: async (waitedMs, signal) => {
       display.pause();
-      const choice = await askKeepWaiting(display.stage, waitedMs, signal);
+      const choice = await askKeepWaiting(display.seenStage, waitedMs, signal);
       // Otherwise the wait is over; the closing lines print without a spinner.
       if (choice === 'wait') display.resume();
       return choice;
@@ -904,13 +898,13 @@ async function confirmAssistantResponds(): Promise<{ outcome: PingOutcome; wait:
 
   clearInterval(tick);
   await display.idle();
-  if (outcome.result === 'ok') display.succeed('Your assistant is ready.');
+  if (outcome.result === 'ok') display.succeed(FIRST_CHAT_COPY.ready);
   else display.fail(skipped ? skippedWaitCopy(display.seenStage).spinner : pingFailureCopy(outcome).spinner);
   return { outcome, wait: { keptWaiting, skipped, stage: display.seenStage } };
 }
 
 async function askKeepWaiting(
-  stage: FirstChatStage,
+  stage: FirstChatStage | undefined,
   waitedMs: number,
   signal: AbortSignal,
 ): Promise<WaitChoice | undefined> {
@@ -919,14 +913,14 @@ async function askKeepWaiting(
     options: [
       {
         value: 'wait',
-        label: 'Keep waiting',
-        hint: `${EXTRA_WAIT_MS / 60_000} more minutes; a local model can take several minutes to load and read its first prompt`,
+        label: FIRST_CHAT_COPY.keepWaiting,
+        hint: fill(FIRST_CHAT_COPY.keepWaitingHint, { minutes: EXTRA_WAIT_MS / 60_000 }),
       },
-      { value: 'skip', label: 'Skip the first chat and finish setup', hint: 'chat later with `pnpm run chat hi`' },
+      { value: 'skip', label: FIRST_CHAT_COPY.skip, hint: FIRST_CHAT_COPY.skipHint },
     ],
     signal,
     abortedLabel: (outcome) =>
-      (outcome as PingOutcome | undefined)?.result === 'ok' ? 'Your assistant replied.' : 'The wait ended.',
+      (outcome as PingOutcome | undefined)?.result === 'ok' ? FIRST_CHAT_COPY.replied : FIRST_CHAT_COPY.waitEnded,
   });
   if (signal.aborted) return undefined;
   const choice = ensureAnswer(answer) as WaitChoice;

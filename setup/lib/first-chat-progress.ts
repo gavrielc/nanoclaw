@@ -12,48 +12,33 @@ import fs from 'node:fs';
 import * as p from '@clack/prompts';
 import k from 'kleur';
 
+import { fill, FIRST_CHAT_COPY } from './first-chat-copy.js';
 import { fitToWidth, fmtDuration, wrapForGutter } from './theme.js';
 
 export type FirstChatStage = 'sending' | 'starting_sandbox' | 'starting_agent' | 'waiting_for_reply';
 
 const STAGES: FirstChatStage[] = ['sending', 'starting_sandbox', 'starting_agent', 'waiting_for_reply'];
 
-const COPY: Record<FirstChatStage, { running: string; done: string; waitingOn: string }> = {
-  sending: { running: 'Sending a test message…', done: 'Test message received', waitingOn: 'sending the test message' },
-  starting_sandbox: { running: 'Starting the sandbox…', done: 'Sandbox started', waitingOn: 'starting the sandbox' },
-  starting_agent: {
-    running: 'Starting the agent runtime…',
-    done: 'Agent runtime started',
-    waitingOn: 'starting the agent runtime',
-  },
-  waiting_for_reply: {
-    running: "Waiting for the model's first reply…",
-    done: 'Reply received',
-    waitingOn: "waiting for the model's first reply",
-  },
-};
-
 // How long setup waits for a probe read still in flight before moving on.
 const IDLE_WAIT_MS = 3_000;
 // Shown once the model has been quiet this long; a hosted model rarely is.
 const SLOW_MODEL_HINT_MS = 20_000;
-const SLOW_MODEL_HINT = 'A local model can take several minutes to load and read its first prompt.';
+const COPY = FIRST_CHAT_COPY.stages;
 
 /**
  * Wizard text when the user stops waiting. Nothing has failed, so no
  * troubleshooting guide; the stage is only the last one seen, never assumed.
  */
 export function skippedWaitCopy(stage: FirstChatStage | undefined): { spinner: string; note: string } {
-  const seen = stage
-    ? `Your assistant was still ${COPY[stage].waitingOn} when you stopped waiting.`
-    : 'Your assistant had not replied when you stopped waiting.';
-  const note = `${seen} Setup carries on without the first chat; chat with it later using \`pnpm run chat hi\`. If it never answers, check \`logs/nanoclaw.log\`.`;
-  return { spinner: 'Stopped waiting for the first reply.', note: wrapForGutter(note, 6) };
+  const seen = stage ? COPY[stage].skipped : FIRST_CHAT_COPY.skippedUnseen;
+  const note = `${seen} ${FIRST_CHAT_COPY.skippedNext}`;
+  return { spinner: FIRST_CHAT_COPY.stoppedWaiting, note: wrapForGutter(note, 6) };
 }
 
-/** The question setup asks when a wait window ends. */
-export function keepWaitingQuestion(stage: FirstChatStage, waitedMs: number): string {
-  return `Still ${COPY[stage].waitingOn} after ${fmtDuration(waitedMs)}. Keep waiting?`;
+/** The question setup asks when a wait window ends; it names a stage only once one was seen. */
+export function keepWaitingQuestion(stage: FirstChatStage | undefined, waitedMs: number): string {
+  const template = stage ? COPY[stage].stillWaiting : FIRST_CHAT_COPY.stillWaitingUnseen;
+  return fill(template, { time: fmtDuration(waitedMs) });
 }
 
 export interface StageSignals {
@@ -269,7 +254,7 @@ export class StageDisplay {
     } else if (this.slowModel()) {
       this.hinted = true;
       this.spinner.clear();
-      this.note(SLOW_MODEL_HINT);
+      this.note(FIRST_CHAT_COPY.slowModelHint);
       this.openSpinner();
     } else {
       this.spinner.message(this.label());
@@ -309,7 +294,7 @@ export class StageDisplay {
   }
 
   private label(): string {
-    const base = this.known ? COPY[this.tracker.stage].running : 'Waking your assistant…';
+    const base = this.known ? COPY[this.tracker.stage].running : FIRST_CHAT_COPY.waking;
     const since = this.known ? this.tracker.stageStart : this.startedAt;
     const suffix = ` (${fmtDuration(this.now() - since)})`;
     return `${fitToWidth(base, suffix)}${k.dim(suffix)}`;
