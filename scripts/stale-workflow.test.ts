@@ -119,6 +119,11 @@ describe('author activity', () => {
     expect(authorAnswered({ author: AUTHOR, askedAt, commits })).toBe(true);
   });
 
+  it('the author cherry-picking or rebasing their own older commit after the ask is an answer', () => {
+    const commits = [commit({ author: AUTHOR, committer: AUTHOR, authored: BEFORE, committed: AFTER })];
+    expect(authorAnswered({ author: AUTHOR, askedAt, commits })).toBe(true);
+  });
+
   it("a commit the author made in GitHub's web editor after the ask is an answer", () => {
     const commits = [commit({ author: AUTHOR, committer: 'web-flow', authored: AFTER })];
     expect(authorAnswered({ author: AUTHOR, askedAt, commits })).toBe(true);

@@ -8,8 +8,7 @@
 #
 #   answered  Live from merge. Removes the triage label (and `stale`) once the
 #             item's author answers, so an answered item never counts as
-#             waiting on its author. triage-author-reply.yml does the same as
-#             comments and pushes happen.
+#             waiting on its author.
 #   stale     DRY RUN (debug-only: true). Logs what it would mark and close and
 #             writes nothing. Arming is a separate PR with its own checklist.
 
@@ -22,12 +21,10 @@ on:
 
 jobs:
   # Before every stale run, remove the triage label (and `stale`) from any
-  # labelled item whose author answered after the label went on: an author
-  # comment, or for a PR a review or review-thread reply by its author. Review
-  # replies are only caught here, because on a fork PR the review events get a
-  # read-only token. Comments and pushes by the author (their own commits or a
-  # force-push) are checked here too, in case the event run in
-  # triage-author-reply.yml was missed.
+  # labelled item whose author answered after the label went on: a comment,
+  # and for a PR a review, a review-thread reply, their own commit or a
+  # force-push. It runs right before the only job that reads the labels, so
+  # an answer is never more than a day late.
   #
   # The stale job needs this one, so if it fails nothing is marked or closed
   # that day.
@@ -54,14 +51,16 @@ jobs:
                 comments.some((c) => byAuthor(c.user) && after(c.created_at)) ||
                 // A reply in a review thread is a review of its own.
                 reviews.some((r) => byAuthor(r.user) && after(r.submitted_at)) ||
-                // The author wrote and committed it (web-flow = GitHub's web
-                // editor), dated by author date: a maintainer's "Update
-                // branch" merge or rebase is never an answer.
+                // The author wrote it and committed it themselves (commit
+                // date) or in GitHub's web editor (author date, as web-flow
+                // also re-commits a rebase): a maintainer's "Update branch"
+                // merge or rebase is never an answer.
                 commits.some(
                   (c) =>
                     byAuthor(c.author) &&
-                    (byAuthor(c.committer) || c.committer?.login === 'web-flow') &&
-                    after(c.commit?.author?.date),
+                    (byAuthor(c.committer)
+                      ? after(c.commit?.committer?.date)
+                      : c.committer?.login === 'web-flow' && after(c.commit?.author?.date)),
                 ) ||
                 events.some((e) => e.event === 'head_ref_force_pushed' && byAuthor(e.actor) && after(e.created_at))
               );
