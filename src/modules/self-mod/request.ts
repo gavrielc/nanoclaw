@@ -72,7 +72,7 @@ export async function requestInstallPackagesHold(content: Record<string, unknown
     action: 'install_packages',
     payload: { apt, npm, reason },
     title: 'Install Packages Request',
-    question: `Agent ${quoteForCard(agentGroup.name)} is attempting to install a package + rebuild container:\n${packageList}${reason ? `\nReason: ${reason}` : ''}`,
+    question: `Agent ${quoteForCard(agentGroup.name)} is attempting to install a package + rebuild container:\n${packageList}${reason ? `\nReason: ${quoteForCard(reason)}` : ''}`,
   });
 }
 
