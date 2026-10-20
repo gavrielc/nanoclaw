@@ -135,14 +135,11 @@ export function createOpenCodeMessageId(): string {
 }
 
 export function openCodeError(error: unknown): Error {
-  return new Error(`OpenCode prompt failed: ${JSON.stringify(error)}`, { cause: error });
+  return new Error(`OpenCode prompt failed: ${JSON.stringify(error)}`);
 }
 
-/** OpenCode refused the request itself, before any model call or saved message. */
-export function isOpenCodeBadRequest(error: unknown): boolean {
-  const cause = error instanceof Error ? (error.cause as { _tag?: unknown } | undefined) : undefined;
-  return cause?._tag === 'BadRequest';
-}
+/** The prompt request itself got a bare BadRequest: no model ran and nothing was saved. */
+export class OpenCodePromptRefusedError extends Error {}
 
 export async function boundedOpenCodeCall<T>(
   call: (signal: AbortSignal) => Promise<T>,
@@ -270,7 +267,12 @@ export async function* executeOpenCodeTurn(options: {
       wake = undefined;
     }
     if (failure) throw failure;
-    if (response?.error) throw openCodeError(response.error);
+    if (response?.error) {
+      const refused = (response.error as { _tag?: unknown })._tag === 'BadRequest';
+      throw refused
+        ? new OpenCodePromptRefusedError(openCodeError(response.error).message)
+        : openCodeError(response.error);
+    }
     if (!response?.data) throw new Error('OpenCode prompt returned no completed assistant');
     const text = await reconcileOpenCodeTurn(
       client,

@@ -878,6 +878,26 @@ describe('file part the server cannot decode', () => {
     expect(sent).toEqual([['text']]);
   });
 
+  it('does not retry when the prompt succeeded and a later history read is refused', async () => {
+    const server = fakeServer(() => {});
+    installDeps([server]);
+    const sent: string[][] = [];
+    const accept = server.client.session.prompt;
+    server.client.session.prompt = (async (params) => {
+      sent.push((params.body.parts as Array<{ type: string }>).map((part) => part.type));
+      return accept(params);
+    }) as OpenCodeSessionClient['prompt'];
+    server.setPromptHandler((sid) => server.reply(sid, 'answered'));
+    const read = server.client.session.messages;
+    let reads = 0;
+    server.client.session.messages = (async (params) =>
+      ++reads === 1 ? read(params) : { error: { _tag: 'BadRequest' } }) as OpenCodeSessionClient['messages'];
+    const query = newProvider().query({ prompt: 'look', cwd: CWD, attachments: [file('m1', 'broken.png')] });
+    query.end();
+    await expect(collect(query.events)).rejects.toThrow('BadRequest');
+    expect(sent).toEqual([['text', 'file']]);
+  });
+
   it('does not retry other errors on a turn with file parts', async () => {
     const server = fakeServer(() => {});
     installDeps([server]);

@@ -26,8 +26,8 @@ import { prepareOpenCodeMemory, type OpenCodeMemorySessionHook } from './opencod
 import {
   boundedOpenCodeCall,
   executeOpenCodeTurn,
-  isOpenCodeBadRequest,
   OpenCodeEventPump,
+  OpenCodePromptRefusedError,
   type OpenCodeSessionClient,
   type OpenCodeTurnResult,
 } from './opencode-turn.js';
@@ -830,7 +830,8 @@ export class OpenCodeProvider implements AgentProvider {
             // OpenCode refuses the whole prompt when it cannot decode a file
             // part. Answer once from the text part, which already describes
             // every attachment, so the turn and the queue behind it survive.
-            if (parts.length === 1 || abort.signal.aborted || !isOpenCodeBadRequest(error)) throw error;
+            if (parts.length === 1 || abort.signal.aborted || !(error instanceof OpenCodePromptRefusedError))
+              throw error;
             log('OpenCode refused a file part; answering this turn from the prompt text');
             result = yield* runTurn(parts.slice(0, 1));
           }
