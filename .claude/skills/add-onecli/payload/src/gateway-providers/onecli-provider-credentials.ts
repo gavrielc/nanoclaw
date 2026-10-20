@@ -117,6 +117,7 @@ const SAVED: Record<string, (name: string) => boolean> = {
   claude: (name) => name === 'Anthropic',
   codex: (name) => /^(codex|openai)$/i.test(name),
   opencode: (name) => name.startsWith('OpenCode '),
+  cursor: (name) => name === 'Cursor' || name === 'Cursor models',
 };
 
 export function isSavedProviderCredential(provider: string, secret: { name?: unknown }): boolean {

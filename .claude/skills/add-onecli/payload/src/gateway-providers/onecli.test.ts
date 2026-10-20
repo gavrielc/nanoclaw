@@ -404,6 +404,22 @@ describe('OneCLI gateway package', () => {
     await expect(grant(gateway, 'codex')).resolves.toEqual([]);
   });
 
+  it('an unrecorded install adopts both Cursor entries once for a Cursor group, and nothing else', async () => {
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-model', name: 'Anthropic' },
+        { id: 'sec-cursor', name: 'Cursor' },
+        { id: 'sec-cursor-models', name: 'Cursor models' },
+        { id: 'sec-notes', name: 'Cursor notes' },
+      ],
+    });
+    await expect(grant(gateway, 'cursor')).resolves.toEqual(['sec-cursor', 'sec-cursor-models']);
+    expect(readRecord(data)).toEqual({
+      providers: { cursor: ['sec-cursor', 'sec-cursor-models'] },
+      matched: ['cursor'],
+    });
+  });
+
   it('matches by name only once: after this install’s credential is deleted, another same-named one is not adopted', async () => {
     writeRecord(data, { claude: ['sec-gone'] });
     const gateway = fakeGateway({ vault: [{ id: 'sec-other', name: 'Anthropic' }] });
