@@ -9,10 +9,18 @@ export ONECLI_API_HOST="$GW"
 stop() { echo "STOP: $1" >&2; exit 2; }
 notdone() { echo "NOT DONE: $1" >&2; exit 1; }
 
+C="${ONECLI_GATEWAY_CONTAINER:-onecli}"
+
+# A gateway still before 1.44 has no conversion to wait for.
+V=$(curl -fsS --max-time 10 "$GW/api/health" 2>/dev/null | jq -r '.version // empty' 2>/dev/null) || V=
+case "$V" in
+  0.* | 1.[0-9].* | 1.[1-3][0-9].* | 1.4[0-3].*) notdone "the gateway at $GW is $V: it has not been upgraded to the pin, so there is no conversion to check; follow step 2" ;;
+esac
+
 # Only this boot's line: an earlier boot's result says nothing about the gateway now running.
-started=$(docker inspect -f '{{.State.StartedAt}}' onecli 2>/dev/null) && [ -n "$started" ] \
-  || stop "no local onecli container: run this on the gateway host"
-line=$(docker logs --since "$started" onecli 2>&1 | grep '\[grant-conversion\]' | tail -1)
+started=$(docker inspect -f '{{.State.StartedAt}}' "$C" 2>/dev/null) && [ -n "$started" ] \
+  || stop "no local gateway container named $C: run this on the gateway host (set ONECLI_GATEWAY_CONTAINER if it has another name)"
+line=$(docker logs --since "$started" "$C" 2>&1 | grep '\[grant-conversion\]' | tail -1)
 [ -n "$line" ] || notdone "this boot has no grant-conversion result yet: wait a few seconds, then run this again"
 # A verify failure can deny every request while the line still says 0 failed.
 case "$line" in *", 0 failed,"*) ;; *) notdone "the conversion did not report 0 failed: $line" ;; esac
