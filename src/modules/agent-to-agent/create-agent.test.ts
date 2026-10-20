@@ -270,7 +270,7 @@ describe('create_agent — guard-based authorization (wrapped delivery action)',
   });
 });
 
-// Group scope is the case that matters most: the refusal comes before the hold, so no admin is carded.
+// What the name alone decides is refused before the hold, so no admin is carded for it.
 describe.each(['global', 'group'])(
   'create_agent — a name whose folder cannot be a group folder is refused (%s scope)',
   (scope) => {
@@ -301,15 +301,6 @@ describe.each(['global', 'group'])(
       expectRefusedWithNothingCreated(name, 'too long: 70 characters, at most 63');
     });
 
-    it('a name whose dedupe suffix takes the folder past the limit, saying the name is taken', async () => {
-      const name = 'b'.repeat(62);
-      fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
-
-      await runCreateAgent({ name });
-
-      expectRefusedWithNothingCreated(`${name}-2`, `too long: 64 characters, at most 63 ("${name}" is already taken)`);
-    });
-
     // A v1 migration copies groups/global onto disk; the refusal must not depend on it.
     it.each([
       ['a fresh install', false],
@@ -329,22 +320,84 @@ describe.each(['global', 'group'])(
 
       expectRefusedWithNothingCreated(name, 'too long: 70 characters, at most 63');
     });
-
-    // The template stamp adds -<8 hex> on a clash, so 54 characters is the most that still fits.
-    it('a template create whose clash suffix takes the folder past the limit', async () => {
-      const name = 'd'.repeat(55);
-      fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
-
-      await runCreateAgent({ name, template: 'sales/sdr' });
-
-      expect(mockRequestApproval).not.toHaveBeenCalled();
-      expect(mockCreateAgentFromTemplate).not.toHaveBeenCalled();
-      expect(notifyTexts().at(-1)).toMatch(
-        new RegExp(`too long: 64 characters, at most 63 \\("${name}" is already taken\\)\\. Nothing was created\\.$`),
-      );
-    });
   },
 );
+
+// Whether another group holds a folder is not a confined agent's to learn, so a clash whose suffix
+// overflows is found only after authorization: on the approved replay, or directly in global scope.
+describe('create_agent — a taken folder is found after authorization', () => {
+  afterEach(() => {
+    fs.rmSync(A2A_TEST_ROOT, { recursive: true, force: true });
+  });
+
+  async function approve(payload: Record<string, unknown>): Promise<void> {
+    await approvalHandlers.get('create_agent')!({
+      session: SESSION,
+      payload,
+      approval: liveGrant('appr-ca-taken', payload),
+      userId: 'telegram:admin',
+      notify: vi.fn(),
+    });
+  }
+
+  // At these lengths the suffix overflows: -2 on a plain create, -<8 hex> on a template one.
+  it.each([
+    ['plain', 62, {}],
+    ['template', 55, { template: 'sales/sdr' }],
+  ])('group scope (%s): a taken and a free name get the same card', async (_kind, length, extra) => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const name = 'b'.repeat(length);
+    await runCreateAgent({ name, ...extra });
+    fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+    await runCreateAgent({ name, ...extra });
+
+    expect(mockRequestApproval).toHaveBeenCalledTimes(2);
+    expect(notifyTexts()).toEqual([]);
+  });
+
+  it('group scope: the approved replay refuses the overflowing suffix, saying the name is taken', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const name = 'b'.repeat(62);
+    fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+
+    await runCreateAgent({ name });
+    await approve({ name, instructions: null });
+
+    expect(mockRequestApproval).toHaveBeenCalledTimes(1);
+    expect(mockCreateAgentGroup).not.toHaveBeenCalled();
+    expect(notifyTexts()).toEqual([
+      `Cannot create agent "${name}": Invalid group folder "${name}-2" — too long: 64 characters, at most 63 ("${name}" is already taken). Nothing was created.`,
+    ]);
+  });
+
+  // The template stamp adds -<8 hex> on a clash, so 54 characters is the most that still fits.
+  it('group scope: the approved replay refuses a template clash before the template is fetched', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const name = 'd'.repeat(55);
+    fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+
+    await runCreateAgent({ name, template: 'sales/sdr' });
+    await approve({ name, instructions: null, template: 'sales/sdr' });
+
+    expect(mockEnsureTemplateLocal).not.toHaveBeenCalled();
+    expect(mockCreateAgentFromTemplate).not.toHaveBeenCalled();
+    expect(notifyTexts().at(-1)).toMatch(
+      new RegExp(`too long: 64 characters, at most 63 \\("${name}" is already taken\\)\\. Nothing was created\\.$`),
+    );
+  });
+
+  it('global scope: refused at once, saying the name is taken', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+    const name = 'b'.repeat(62);
+    fs.mkdirSync(path.join(A2A_TEST_ROOT, 'groups', name), { recursive: true });
+
+    await runCreateAgent({ name });
+
+    expect(mockRequestApproval).not.toHaveBeenCalled();
+    expect(mockCreateAgentGroup).not.toHaveBeenCalled();
+    expect(notifyTexts().at(-1)).toContain(`("${name}" is already taken). Nothing was created.`);
+  });
+});
 
 // An install migrated from v1 can hold an agent "Global" under global-2; asking for it again must
 // reach the create (its collision answer, or a wrapper's resume), not the folder refusal.

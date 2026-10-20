@@ -70,7 +70,8 @@ export function markPluginServers(
 /**
  * The folder a stamp named `name` takes: its normalized name, or that plus
  * -<8 hex> when taken. Throws, saying why, when it can't be a group folder;
- * create_agent runs it before asking an admin.
+ * create_agent also runs it after approval, before the fetch. Never before
+ * approval: whether another group holds a folder is not a confined agent's to learn.
  */
 export async function templateFolder(name: string): Promise<string> {
   const base = normalizeName(name);

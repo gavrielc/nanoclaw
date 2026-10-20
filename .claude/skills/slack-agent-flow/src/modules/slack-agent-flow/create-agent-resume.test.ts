@@ -4,9 +4,11 @@
  * session I/O. A resume reuses its agent, so upstream's folder precheck must
  * not refuse it: on an install migrated from v1 an agent named "Global" lives
  * under global-2, and asking for it again finishes its parked app. A new name
- * that can't be a folder is still refused before any card. Upstream wording is
- * matched loosely: this file also runs in installs' later update validations.
- * rootDir is process.cwd(), so each test runs chdir'd into its own tmpdir.
+ * that can't be a folder is still refused before any card, and whether another
+ * group holds a folder never changes the answer before approval. Upstream
+ * wording is matched loosely: this file also runs in installs' later update
+ * validations. rootDir is process.cwd(), so each test runs chdir'd into its
+ * own tmpdir.
  */
 import fs from 'fs';
 import os from 'os';
@@ -162,5 +164,21 @@ describe('create_agent — parked Slack app resume', () => {
     expect(mockRequestApproval).not.toHaveBeenCalled();
     expect(mockRunSlackAgentFlow).not.toHaveBeenCalled();
     expect(notifyTexts()[0]).toContain('Invalid group folder');
+  });
+
+  it('gives a taken and a free name the same card', async () => {
+    const name = 'b'.repeat(62);
+    await request('group', name);
+    await createAgentGroup({
+      id: 'ag-other',
+      name: 'Other',
+      folder: name,
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+    await request('group', name);
+
+    expect(mockRequestApproval).toHaveBeenCalledTimes(2);
+    expect(notifyTexts()).toEqual([]);
   });
 });

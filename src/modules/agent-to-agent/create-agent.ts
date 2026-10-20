@@ -21,7 +21,7 @@ import { createAgentGroup, getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
 import { requestWake } from '../../request-wake.js';
-import { newGroupFolder } from '../../group-folder.js';
+import { assertValidGroupFolder, newGroupFolder } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
@@ -73,21 +73,29 @@ export async function validateCreateAgent(content: Record<string, unknown>, sess
     log.warn('create_agent failed: missing source group', { sessionAgentGroup: session.agent_group_id, name });
     return false;
   }
+  const base = normalizeName(name);
   // A name the requester already has makes no folder: createAgent answers it as a collision, or a
   // wrapper resumes that agent (slack-agent-flow's parked app), so only a new name's folder is checked.
-  if (await getDestinationByName(session.agent_group_id, normalizeName(name))) return true;
-  // So no admin is asked to approve a folder that would be refused. Approved replays re-run this.
-  return (await newAgentFolder(name, templateRef(content), (text) => notifyAgent(session, text))) !== null;
+  if (await getDestinationByName(session.agent_group_id, base)) return true;
+  // Only what the name alone decides, so no admin is carded for it. Whether another group holds the
+  // folder is not a confined agent's to learn before approval; the create refuses a taken one.
+  const notify = (text: string): Promise<void> => notifyAgent(session, text);
+  return (
+    (await folderFor(name, notify, () => {
+      assertValidGroupFolder(base);
+      return base;
+    })) !== null
+  );
 }
 
-/** The folder a create of `name` takes, or null once the requester is told why it can't be made. */
-async function newAgentFolder(
+/** The folder `pick` returns, or null once the requester is told why `name` can't have one. */
+async function folderFor(
   name: string,
-  template: string | undefined,
   notify: (text: string) => Promise<void>,
+  pick: () => string | Promise<string>,
 ): Promise<string | null> {
   try {
-    return await (template ? templateFolder(name) : newGroupFolder(normalizeName(name)));
+    return await pick();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await notify(`Cannot create agent "${name}": ${msg}. Nothing was created.`);
@@ -179,9 +187,9 @@ export async function createAgent(
 }
 
 /**
- * Template branch: fetch, then stamp. The fetch comes before any DB write, so
- * a failed download leaves nothing behind. Same authorization caveat as
- * performCreateAgent.
+ * Template branch: check the folder, fetch, then stamp. The fetch comes before
+ * any DB write, so a failed download leaves nothing behind. Same authorization
+ * caveat as performCreateAgent.
  */
 async function createFromTemplate(
   template: string,
@@ -193,6 +201,9 @@ async function createFromTemplate(
   notify: (text: string) => Promise<void>,
   options?: CreateAgentOptions,
 ): Promise<void> {
+  // Occupancy is checked here, after authorization, and before the fetch; the stamp checks again.
+  if (!(await folderFor(name, notify, () => templateFolder(name)))) return;
+
   let fetched: boolean;
   let commit: string | undefined;
   try {
@@ -251,8 +262,8 @@ async function performCreateAgent(
   notify: (text: string) => Promise<void>,
   options?: CreateAgentOptions,
 ): Promise<void> {
-  // Checked again at write time: the folder may have been taken since the precheck.
-  const folder = await newAgentFolder(name, undefined, notify);
+  // Occupancy is checked here, after authorization: the precheck only judged the name.
+  const folder = await folderFor(name, notify, () => newGroupFolder(localName));
   if (!folder) return;
 
   const agentGroupId = `ag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
