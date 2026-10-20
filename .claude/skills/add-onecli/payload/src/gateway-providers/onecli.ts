@@ -7,6 +7,7 @@ import { combinedCaBundle, stageOnecliFile } from './onecli-files.js';
 import { storedAccountId, stubNeedsAccountId, withAccountId } from './onecli-chatgpt-stub.js';
 import {
   adoptSavedProviderCredentials,
+  hasSavedProviderNames,
   providerCredentialFile,
   readProviderCredentials,
   RecordLockedError,
@@ -223,7 +224,7 @@ export async function grantProviderCredentials(
   let record = readProviderCredentials(dataDir);
   const vault = await list('/v1/secrets');
   const live = new Set(vault.map((secret) => secret.id).filter((id): id is string => typeof id === 'string'));
-  if (!record.matched.includes(provider)) {
+  if (!record.matched.includes(provider) && hasSavedProviderNames(provider)) {
     // Duplicate saved names throw here, after the record is read again.
     const adopt = (r: ProviderCredentialRecord) => adoptSavedProviderCredentials(r, provider, vault);
     try {

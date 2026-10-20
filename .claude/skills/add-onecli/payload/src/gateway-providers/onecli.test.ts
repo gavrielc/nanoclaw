@@ -420,6 +420,12 @@ describe('OneCLI gateway package', () => {
     });
   });
 
+  it('a provider with no saved names is never marked matched, so names added in a later release still adopt once', async () => {
+    const gateway = fakeGateway({ vault: [{ id: 'sec-model', name: 'Anthropic' }] });
+    await expect(grant(gateway, 'ollama')).resolves.toEqual([]);
+    expect(fs.existsSync(path.join(data, 'onecli', 'provider-credentials.json'))).toBe(false);
+  });
+
   it('matches by name only once: after this install’s credential is deleted, another same-named one is not adopted', async () => {
     writeRecord(data, { claude: ['sec-gone'] });
     const gateway = fakeGateway({ vault: [{ id: 'sec-other', name: 'Anthropic' }] });
