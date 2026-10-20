@@ -448,3 +448,130 @@ describe('OneCLI upgrade guide: skills that wrote standing instructions', () => 
     expect(guide.slice(0, restart)).not.toContain('/add-tavily-tool');
   });
 });
+
+// After the pull the guide must not call the upgrade done on a stale or partial
+// conversion result: a forced verify failure reported "0 failed, 1 verify-failed"
+// while the gateway denied every request.
+describe('OneCLI upgrade guide: post-upgrade check', () => {
+  const guide = fs.readFileSync(GUIDE, 'utf8');
+  const CHECK = 'GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh';
+  const SCRIPT = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts/post-upgrade-check.sh');
+  const OK_LINE =
+    '{"msg":"[grant-conversion] projects: 1 converted, 0 skipped, 0 failed, 0 preempted, 0 verify-failed; agents flipped: 3"}';
+  const VENDOR_404 = '{"type":"error","error":{"type":"not_found_error","message":"Not found"}}';
+
+  function post(opts: {
+    conversion?: string;
+    container?: boolean;
+    secrets?: Array<Record<string, unknown>>;
+    grants?: string[];
+    body?: string;
+    code?: string;
+    curlExit?: number;
+  }) {
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(home, 'boot.log'), opts.conversion ?? OK_LINE);
+    fs.writeFileSync(
+      path.join(home, 'secrets.json'),
+      JSON.stringify({ data: opts.secrets ?? [{ id: 's1', name: 'Anthropic', hostPattern: 'api.anthropic.com' }] }),
+    );
+    fs.writeFileSync(
+      path.join(home, 'grants.json'),
+      JSON.stringify({ data: { secrets: (opts.grants ?? ['s1']).map((secretId) => ({ secretId })) } }),
+    );
+    fs.writeFileSync(path.join(home, 'probe.txt'), `${opts.body ?? VENDOR_404}\n${opts.code ?? '404'}`);
+    fs.writeFileSync(
+      path.join(bin, 'docker'),
+      `#!/bin/sh
+printf '%s\\n' "docker $*" >> "${home}/calls.log"
+case "$1" in
+  inspect) [ "${opts.container === false ? 'no' : 'yes'}" = yes ] || exit 1; echo 2026-10-20T13:41:04.000000000Z ;;
+  logs) [ "$2 $3" = "--since 2026-10-20T13:41:04.000000000Z" ] || exit 9; cat "${home}/boot.log" ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(bin, 'onecli'),
+      `#!/bin/sh
+printf '%s\\n' "onecli $*" >> "${home}/calls.log"
+case "$1 $2" in
+  "secrets list") cat "${home}/secrets.json" ;;
+  "agents list") echo '{"data":[{"id":"oc-1","identifier":"ag-1"}]}' ;;
+  "agents grants") cat "${home}/grants.json" ;;
+  "run --agent") cat "${home}/probe.txt"; exit ${opts.curlExit ?? 0} ;;
+  *) exit 9 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    fs.rmSync(path.join(home, 'calls.log'), { force: true });
+    const r = spawnSync('sh', [SCRIPT], {
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://172.17.0.1:10254' },
+      encoding: 'utf8',
+    });
+    const calls = fs.existsSync(path.join(home, 'calls.log'))
+      ? fs.readFileSync(path.join(home, 'calls.log'), 'utf8').trim().split('\n')
+      : [];
+    return { ...r, calls };
+  }
+
+  it('runs after the pull, before Verify, and replaces the bare grep of the log', () => {
+    expect(guide.split('\n').filter((l) => l === CHECK)).toHaveLength(1);
+    expect(guide.indexOf(CHECK)).toBeGreaterThan(guide.indexOf('docker compose pull onecli'));
+    expect(guide.indexOf(CHECK)).toBeLessThan(guide.indexOf('## 3. Verify'));
+    expect(guide).not.toMatch(/grep grant-conversion`; it must report `0 failed`/);
+    expect(guide).toMatch(/0 verify-failed/);
+  });
+
+  it('passes on 0 failed and 0 verify-failed from this boot, when the vendor answers through the gateway', () => {
+    const r = post({});
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('OK:');
+    expect(r.calls).toContain('docker logs --since 2026-10-20T13:41:04.000000000Z onecli');
+    expect(
+      r.calls.some((c) => c.startsWith('onecli run --agent ag-1 -- curl') && c.includes('https://api.anthropic.com/')),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['1 verify-failed', OK_LINE.replace('0 verify-failed', '1 verify-failed')],
+    ['10 failed', OK_LINE.replace(', 0 failed,', ', 10 failed,')],
+    ['a missing result in this boot', ''],
+  ])('is not done with %s', (_name, conversion) => {
+    const r = post({ conversion });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('NOT DONE');
+    expect(r.calls.some((c) => c.startsWith('onecli run'))).toBe(false);
+  });
+
+  it('is not done when the gateway answers for itself instead of injecting the credential', () => {
+    const r = post({ body: '{"error":"credential_unavailable","message":"could not mint"}', code: '502' });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/NOT DONE: the gateway answered 502 credential_unavailable/);
+  });
+
+  it('is not done when the request through the gateway fails', () => {
+    expect(post({ curlExit: 7, body: '', code: '000' }).status).toBe(1);
+  });
+
+  it('probes an exact host and its exact path, skipping wildcard hosts', () => {
+    const r = post({
+      secrets: [
+        { id: 'w', hostPattern: '*.example.test' },
+        { id: 'c', hostPattern: 'api2.cursor.sh', pathPattern: '/auth/exchange_user_api_key' },
+      ],
+      grants: ['w', 'c'],
+    });
+    expect(r.status).toBe(0);
+    expect(r.calls.some((c) => c.includes('https://api2.cursor.sh/auth/exchange_user_api_key'))).toBe(true);
+    expect(r.calls.some((c) => c.includes('example.test'))).toBe(false);
+  });
+
+  it('stops without a local gateway container, which it must read the boot log from', () => {
+    const r = post({ container: false });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('gateway host');
+  });
+});
