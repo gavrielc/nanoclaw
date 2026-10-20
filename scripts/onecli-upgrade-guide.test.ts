@@ -653,6 +653,8 @@ describe('OneCLI upgrade guide: post-upgrade check', () => {
     code?: string;
     curlExit?: number;
     modes?: string[];
+    version?: string;
+    env?: Record<string, string>;
   }) {
     const bin = path.join(home, 'bin');
     fs.mkdirSync(bin, { recursive: true });
@@ -666,6 +668,11 @@ describe('OneCLI upgrade guide: post-upgrade check', () => {
       JSON.stringify({ data: { secrets: (opts.grants ?? ['s1']).map((secretId) => ({ secretId })) } }),
     );
     fs.writeFileSync(path.join(home, 'probe.txt'), `${opts.body ?? VENDOR_404}\n${opts.code ?? '404'}`);
+    fs.writeFileSync(
+      path.join(bin, 'curl'),
+      `#!/bin/sh\necho '{"status":"ok","version":"${opts.version ?? '1.45.0'}"}'\n`,
+      { mode: 0o755 },
+    );
     fs.writeFileSync(
       path.join(bin, 'docker'),
       `#!/bin/sh
@@ -693,7 +700,7 @@ esac
     );
     fs.rmSync(path.join(home, 'calls.log'), { force: true });
     const r = spawnSync('sh', [SCRIPT], {
-      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://172.17.0.1:10254' },
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, GW: 'http://172.17.0.1:10254', ...opts.env },
       encoding: 'utf8',
     });
     const calls = fs.existsSync(path.join(home, 'calls.log'))
@@ -750,6 +757,35 @@ esac
     const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
     expect(verify).toMatch(/needs a key held in OneCLI/);
     expect(verify).toMatch(/keyless endpoint proves nothing/);
+  });
+
+  it('names a gateway that was never upgraded instead of saying wait', () => {
+    const r = post({ version: '1.42.0', conversion: '' });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('1.42.0');
+    expect(r.stderr).toContain('has not been upgraded');
+    expect(r.stderr).not.toContain('wait a few seconds');
+  });
+
+  it('reads the container named in ONECLI_GATEWAY_CONTAINER', () => {
+    const r = post({ env: { ONECLI_GATEWAY_CONTAINER: 'gw-1' } });
+    expect(r.status).toBe(0);
+    expect(r.calls).toContain('docker inspect -f {{.State.StartedAt}} gw-1');
+    expect(r.calls).toContain('docker logs --since 2026-10-20T13:41:04.000000000Z gw-1');
+  });
+
+  it('says where to run it for a remote gateway, and how to name another container', () => {
+    const at = guide.indexOf(CHECK);
+    const around = guide.slice(at - 600, at + 900);
+    expect(around).toMatch(/remote gateway/i);
+    expect(around).toContain('ONECLI_GATEWAY_CONTAINER');
+  });
+
+  it('lists every exit of the reply check, including an unreachable host', () => {
+    const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
+    expect(verify).toMatch(/exit 2/);
+    expect(verify).toMatch(/exit 3/);
+    expect(verify).toMatch(/exit 4/);
   });
 
   it('stops without a local gateway container, which it must read the boot log from', () => {

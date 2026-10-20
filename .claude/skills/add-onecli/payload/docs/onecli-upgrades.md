@@ -89,7 +89,7 @@ Then pull and restart:
 cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECLI_VERSION docker compose up -d
 ```
 
-Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this on the gateway host, from the NanoClaw checkout:
+Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
 
 ```bash
 GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh
@@ -140,7 +140,7 @@ Then confirm that an agent still answers. A real reply is the check that the gat
 pnpm run chat "Reply with the single word ok"
 ```
 
-It must print the agent's reply (exit 0). No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check `docker logs onecli` and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
+It must print the agent's reply (exit 0). If it could not reach the NanoClaw host (exit 2), start the service and run it again. No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check `docker logs onecli` and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
 
 Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key.
 
