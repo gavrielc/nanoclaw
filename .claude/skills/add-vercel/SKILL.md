@@ -47,6 +47,16 @@ head -5 container/skills/vercel-cli/SKILL.md
 
 ## Phase 3: Configure Credentials
 
+### Check the OneCLI gateway first
+
+The Vercel secret reaches only the groups it is attached to, through OneCLI agent grants. On an older gateway a saved secret reaches every agent and the attach step fails, so check the gateway and CLI before asking for a token or saving one. It reads only:
+
+```bash
+sh .claude/skills/add-onecli/scripts/check-grants-gateway.sh /add-vercel
+```
+
+If it fails, show the user the message as it is and stop: do not ask for the token or save it, and do not attach it to agents by hand.
+
 ### Check if Vercel credential already exists
 
 ```bash

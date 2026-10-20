@@ -113,7 +113,17 @@ the Tavily namespace.
 
 The keyless allowance is shared by every group on the host, so it can run out.
 Install standing instructions so the agent offers the paid-key upgrade at that
-moment instead of dead-ending. For each selected group:
+moment instead of dead-ending. The upgrade has the user save a key that is then
+attached to the group through OneCLI agent grants; on an older gateway a saved
+key would reach every agent. So check the gateway and CLI first. It reads only:
+
+```bash
+sh .claude/skills/add-onecli/scripts/check-grants-gateway.sh /add-tavily-tool
+```
+
+If it fails, show the operator the message, skip this phase and keep the keyless
+setup; install the upgrade path once the gateway is upgraded. Otherwise, for each
+selected group:
 
 1. Resolve the OneCLI dashboard URL the user's browser can reach:
 
