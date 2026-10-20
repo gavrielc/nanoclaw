@@ -92,6 +92,8 @@ describe('tool skills check the gateway before asking for a key', () => {
       doc.indexOf('Resolve the OneCLI dashboard URL'),
     );
     expect(phase).toMatch(/remove[^.]*tavily-upgrade:start/i);
+    // Running agents keep the old block in their prompt until they restart.
+    expect(phase).toMatch(/restart each group you removed it from/i);
   });
 
   it('/add-tavily-tool runs the gate before installing the paid-key upgrade path', () => {

@@ -125,7 +125,9 @@ If it fails, show the operator the message, skip this phase and keep the keyless
 setup. Also remove an earlier `<!-- tavily-upgrade:start -->` to
 `<!-- tavily-upgrade:end -->` block from each selected group's
 `groups/<group-folder>/instructions.prepend.md`, so the agent does not ask anyone
-to save a key; install the upgrade path once the gateway is upgraded. Otherwise, for each
+to save a key, and restart each group you removed it from (`ncl groups restart --id
+<group-id>`): a running agent keeps the old block until it restarts. Install the
+upgrade path once the gateway is upgraded. Otherwise, for each
 selected group:
 
 1. Resolve the OneCLI dashboard URL the user's browser can reach:
