@@ -25,7 +25,7 @@
 //   - unknown ids, `all`/`none` mixing, and listing failures fail loudly instead
 //     of silently opening or closing anything.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -618,6 +618,25 @@ describe('add-dial-tool: removal', () => {
     writeStub('onecli', `echo '{"data":null}'`);
     expect(sh(REMOVE).status).not.toBe(0);
   });
+
+  const failures: Array<[string, string]> = [
+    ['a failed secret list', 'echo unauthorized >&2; exit 1'],
+    ['an empty secret list', "printf ' \\n'"],
+    [
+      'a failed delete',
+      `case "$1 $2" in "secrets list") echo '{"data":[{"id":"sec-dial","name":"Dial API","hostPattern":"api.getdial.ai"}]}' ;; "secrets delete") exit 1 ;; esac`,
+    ],
+  ];
+  const shells = ['sh', 'zsh'].filter((shell) => spawnSync(shell, ['-c', 'true']).status === 0);
+  it.each(shells.flatMap((shell) => failures.map(([name, body]) => [shell, name, body])))(
+    'under %s, %s stops the removal without closing the calling shell',
+    (shell, _name, body) => {
+      writeStub('onecli', body);
+      const r = sh(`${REMOVE}\necho shell-still-open`, '', {}, shell);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('shell-still-open');
+    },
+  );
 
   it('a secret list larger than a pipe buffer still works under pipefail', () => {
     fs.rmSync(root, { recursive: true, force: true });

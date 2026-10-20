@@ -27,10 +27,13 @@ rm -rf container/skills/dial-cli
 Deleting the Dial secret revokes it for every agent, because its grants go with
 it; no agent's other grants are touched. On a gateway shared with another
 install, that install loses Dial too. This deletes every Dial secret the skill
-wrote (a name containing "dial", scoped to `api.getdial.ai`):
+wrote (a name containing "dial", scoped to `api.getdial.ai`). It runs in a
+subshell, so a failure stops it without closing your shell:
 
 ```bash
+(
 L=$(onecli secrets list --max 0) && [ -n "$(printf '%s' "$L" | tr -d '[:space:]')" ] && ids=$(printf '%s' "$L" | jq -r '(if type == "array" then . elif (type == "object") and ((.data | type) == "array") then .data else error("not a secret list") end)[] | select(.hostPattern == "api.getdial.ai" and (.name | test("(?i)dial"))) | .id') || { echo "could not read the OneCLI secrets; nothing deleted" >&2; exit 1; }; for id in $(printf '%s' "$ids"); do onecli secrets delete --id "$id" || exit 1; done
+)
 ```
 
 An earlier version of this skill kept unchosen agents away with an OneCLI policy
