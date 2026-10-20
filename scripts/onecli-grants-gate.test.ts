@@ -61,7 +61,7 @@ describe('OneCLI grants gate', () => {
   });
 
   it.each([
-    ['a 1.42 gateway', { version: '1.42.0' }, 'older than the pinned 1.45'],
+    ['a 1.42 gateway', { version: '1.42.0' }, 'older than 1.44'],
     ['an agent still in all mode', { modes: ['selective', 'all'] }, 'still in all mode'],
     ['a CLI without agents grants', { grants: false }, "no 'agents grants' command"],
     ['an unreachable gateway', { health: false }, 'could not reach the OneCLI gateway'],
@@ -73,6 +73,25 @@ describe('OneCLI grants gate', () => {
     expect(r.stderr).toContain('Nothing was written to OneCLI');
     expect(r.stderr).toContain('/add-vercel');
     expect(r.calls.some((c) => /secrets (create|update)|grants attach/.test(c))).toBe(false);
+  });
+});
+
+describe('OneCLI grants gate messages', () => {
+  it('says a 1.44 gateway has grants but is not the pin', () => {
+    const r = gate({ version: '1.44.2' });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('has agent grants but is not the pinned 1.45');
+    expect(r.stderr).not.toContain('no agent grants');
+  });
+
+  it('says a gateway older than 1.44 has no agent grants', () => {
+    expect(gate({ version: '1.42.0' }).stderr).toContain('older than 1.44 and has no agent grants');
+  });
+
+  it('names the CLI, not the gateway, when only the CLI is too old', () => {
+    const r = gate({ grants: false });
+    expect(r.stderr).toContain('needs the pinned onecli CLI, 2.11.0');
+    expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
   });
 });
 
