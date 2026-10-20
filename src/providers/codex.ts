@@ -30,16 +30,35 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from '../config.js';
+import { readEnvFile } from '../env.js';
+import { log } from '../log.js';
 import { getAgentGroup } from '../db/agent-groups.js';
 import { materializeTemplateSkills } from '../group-skills.js';
 import { composeGroupAgentsMd } from './codex-agents-md.js';
 import { registerProviderContainerConfig } from './provider-container-registry.js';
 
+const COMPACT_KEY = 'CODEX_AUTO_COMPACT_TOKEN_LIMIT';
+
+/** The thread's compaction threshold (container/agent-runner/src/providers/codex-app-server.ts,
+ *  codexAutoCompactTokenLimit), passed through the way claude.ts passes its window. */
+function compactLimitEnv(hostEnv: NodeJS.ProcessEnv): Record<string, string> | undefined {
+  const value = hostEnv[COMPACT_KEY]?.trim() || readEnvFile([COMPACT_KEY])[COMPACT_KEY]?.trim();
+  if (!value) return undefined;
+  if (!/^[1-9]\d*$/.test(value)) {
+    log.warn(`Ignoring ${COMPACT_KEY}: expected a positive integer token count`, { value });
+    return undefined;
+  }
+  return { [COMPACT_KEY]: value };
+}
+
 registerProviderContainerConfig(
   'codex',
   async (ctx) => {
     const coreOwnsProviderSurfaces = (ctx as typeof ctx & { coreOwnsProviderSurfaces?: true }).coreOwnsProviderSurfaces;
-    if (coreOwnsProviderSurfaces) return {};
+    // The compaction threshold rides on both paths: core owns the surfaces for
+    // a contract provider, but env still comes from this adapter (realize.ts).
+    const env = compactLimitEnv(ctx.hostEnv);
+    if (coreOwnsProviderSurfaces) return env ? { env } : {};
 
     // Per-group codex state (config.toml, thread metadata).
     const codexDir = path.join(DATA_DIR, 'v2-sessions', ctx.agentGroupId, '.codex-shared');
@@ -89,7 +108,7 @@ registerProviderContainerConfig(
       mounts.push({ hostPath: agentsDir, containerPath: '/home/node/.agents', readonly: true });
     }
 
-    return { mounts };
+    return env ? { mounts, env } : { mounts };
   },
   { providesAgentSurfaces: true },
 );
