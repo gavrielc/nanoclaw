@@ -460,7 +460,7 @@ describe('OneCLI upgrade guide: skills that wrote standing instructions', () => 
 // while the gateway denied every request.
 describe('OneCLI upgrade guide: post-upgrade check', () => {
   const guide = fs.readFileSync(GUIDE, 'utf8');
-  const CHECK = 'sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh';
+  const CHECK = 'GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh';
   const SCRIPT = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts/post-upgrade-check.sh');
   const OK_LINE =
     '{"msg":"[grant-conversion] projects: 1 converted, 0 skipped, 0 failed, 0 preempted, 0 verify-failed; agents flipped: 3"}';
@@ -474,6 +474,7 @@ describe('OneCLI upgrade guide: post-upgrade check', () => {
     body?: string;
     code?: string;
     curlExit?: number;
+    modes?: string[];
   }) {
     const bin = path.join(home, 'bin');
     fs.mkdirSync(bin, { recursive: true });
@@ -504,7 +505,7 @@ esac
 printf '%s\\n' "onecli $*" >> "${home}/calls.log"
 case "$1 $2" in
   "secrets list") cat "${home}/secrets.json" ;;
-  "agents list") echo '{"data":[{"id":"oc-1","identifier":"ag-1"}]}' ;;
+  "agents list") echo '${JSON.stringify({ data: (opts.modes ?? ['selective']).map((m, i) => ({ id: `oc-${i}`, identifier: `ag-${i}`, secretMode: m })) })}' ;;
   "agents grants") cat "${home}/grants.json" ;;
   "run --agent") cat "${home}/probe.txt"; exit ${opts.curlExit ?? 0} ;;
   *) exit 9 ;;
@@ -537,7 +538,7 @@ esac
     expect(r.stdout).toContain('OK:');
     expect(r.calls).toContain('docker logs --since 2026-10-20T13:41:04.000000000Z onecli');
     // A probe request cannot show that injection works (NO_PROXY, path-scoped or header-replacing secrets).
-    expect(r.calls.some((c) => c.startsWith('onecli'))).toBe(false);
+    expect(r.calls.filter((c) => c.startsWith('onecli'))).toEqual(['onecli agents list --max 0']);
   });
 
   it('ends Verify with a real agent reply after the restart: the injection check', () => {
@@ -553,11 +554,24 @@ esac
     ['1 verify-failed', OK_LINE.replace('0 verify-failed', '1 verify-failed')],
     ['10 failed', OK_LINE.replace(', 0 failed,', ', 10 failed,')],
     ['a missing result in this boot', ''],
+    ['a preempted conversion', OK_LINE.replace('0 converted', '0 converted').replace('0 preempted', '1 preempted')],
   ])('is not done with %s', (_name, conversion) => {
     const r = post({ conversion });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('NOT DONE');
     expect(r.calls.some((c) => c.startsWith('onecli'))).toBe(false);
+  });
+
+  it('is not done while an agent is still in all mode', () => {
+    const r = post({ modes: ['selective', 'all'] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('all mode');
+  });
+
+  it('asks for the reply from an agent whose model needs a key in OneCLI, not a keyless one', () => {
+    const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
+    expect(verify).toMatch(/needs a key held in OneCLI/);
+    expect(verify).toMatch(/keyless endpoint proves nothing/);
   });
 
   it('stops without a local gateway container, which it must read the boot log from', () => {

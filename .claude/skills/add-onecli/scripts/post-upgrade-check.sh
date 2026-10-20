@@ -4,6 +4,8 @@
 # the gateway host. That credentials still reach the vendor is checked afterwards
 # by a real agent reply (the guide's Verify step): a probe request cannot show it.
 set -u
+: "${GW:?set GW to the gateway address, as in the Detect step}"
+export ONECLI_API_HOST="$GW"
 stop() { echo "STOP: $1" >&2; exit 2; }
 notdone() { echo "NOT DONE: $1" >&2; exit 1; }
 
@@ -15,5 +17,11 @@ line=$(docker logs --since "$started" onecli 2>&1 | grep '\[grant-conversion\]' 
 # A verify failure can deny every request while the line still says 0 failed.
 case "$line" in *", 0 failed,"*) ;; *) notdone "the conversion did not report 0 failed: $line" ;; esac
 case "$line" in *", 0 verify-failed"*) ;; *) notdone "the conversion did not report 0 verify-failed: $line" ;; esac
+# A preempted run was superseded before it finished and can leave agents in all mode.
+case "$line" in *", 0 preempted,"*) ;; *) notdone "the conversion was preempted: restart the gateway, wait, then run this again: $line" ;; esac
+AG=$(onecli agents list --max 0) || stop "could not list OneCLI agents at $GW"
+N=$(printf '%s' "$AG" | jq -er '[(if type == "array" then . else .data end)[] | select(.secretMode == "all")] | length') \
+  || stop "could not read the OneCLI agent list at $GW"
+[ "$N" = 0 ] || notdone "$N agent(s) are still in all mode, so the conversion has not finished: restart the gateway, wait, then run this again"
 echo "Conversion: $line"
-echo "OK: this boot converted with 0 failed and 0 verify-failed. Next: Verify, which ends with a real agent reply."
+echo "OK: this boot converted with 0 failed, 0 preempted and 0 verify-failed, and no agent is in all mode. Next: Verify, which ends with a real agent reply."
