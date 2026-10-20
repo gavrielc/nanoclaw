@@ -652,6 +652,7 @@ describe('OneCLI upgrade guide: post-upgrade check', () => {
     body?: string;
     code?: string;
     curlExit?: number;
+    modes?: string[];
   }) {
     const bin = path.join(home, 'bin');
     fs.mkdirSync(bin, { recursive: true });
@@ -682,7 +683,7 @@ esac
 printf '%s\\n' "onecli $*" >> "${home}/calls.log"
 case "$1 $2" in
   "secrets list") cat "${home}/secrets.json" ;;
-  "agents list") echo '{"data":[{"id":"oc-1","identifier":"ag-1"}]}' ;;
+  "agents list") echo '${JSON.stringify({ data: (opts.modes ?? ['selective']).map((m, i) => ({ id: `oc-${i}`, identifier: `ag-${i}`, secretMode: m })) })}' ;;
   "agents grants") cat "${home}/grants.json" ;;
   "run --agent") cat "${home}/probe.txt"; exit ${opts.curlExit ?? 0} ;;
   *) exit 9 ;;
@@ -709,48 +710,46 @@ esac
     expect(guide).toMatch(/0 verify-failed/);
   });
 
-  it('passes on 0 failed and 0 verify-failed from this boot, when the vendor answers through the gateway', () => {
+  it('passes on 0 failed and 0 verify-failed from this boot, and leaves the injection check to a real agent reply', () => {
     const r = post({});
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('OK:');
     expect(r.calls).toContain('docker logs --since 2026-10-20T13:41:04.000000000Z onecli');
-    expect(
-      r.calls.some((c) => c.startsWith('onecli run --agent ag-1 -- curl') && c.includes('https://api.anthropic.com/')),
-    ).toBe(true);
+    // A probe request cannot show that injection works (NO_PROXY, path-scoped or header-replacing secrets).
+    expect(r.calls.filter((c) => c.startsWith('onecli'))).toEqual(['onecli agents list --max 0']);
+  });
+
+  it('ends Verify with a real agent reply after the restart: the injection check', () => {
+    const restart = guide.indexOf('Finally, restart the NanoClaw service');
+    const chat = guide.indexOf('pnpm run chat', restart);
+    expect(restart).toBeGreaterThan(-1);
+    expect(chat).toBeGreaterThan(restart);
+    expect(chat).toBeLessThan(guide.indexOf('## 4. Rollback'));
+    expect(guide.slice(chat, guide.indexOf('## 4. Rollback'))).toMatch(/failure notice/);
   });
 
   it.each([
     ['1 verify-failed', OK_LINE.replace('0 verify-failed', '1 verify-failed')],
     ['10 failed', OK_LINE.replace(', 0 failed,', ', 10 failed,')],
     ['a missing result in this boot', ''],
+    ['a preempted conversion', OK_LINE.replace('0 converted', '0 converted').replace('0 preempted', '1 preempted')],
   ])('is not done with %s', (_name, conversion) => {
     const r = post({ conversion });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('NOT DONE');
-    expect(r.calls.some((c) => c.startsWith('onecli run'))).toBe(false);
+    expect(r.calls.some((c) => c.startsWith('onecli'))).toBe(false);
   });
 
-  it('is not done when the gateway answers for itself instead of injecting the credential', () => {
-    const r = post({ body: '{"error":"credential_unavailable","message":"could not mint"}', code: '502' });
+  it('is not done while an agent is still in all mode', () => {
+    const r = post({ modes: ['selective', 'all'] });
     expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/NOT DONE: the gateway answered 502 credential_unavailable/);
+    expect(r.stderr).toContain('all mode');
   });
 
-  it('is not done when the request through the gateway fails', () => {
-    expect(post({ curlExit: 7, body: '', code: '000' }).status).toBe(1);
-  });
-
-  it('probes an exact host and its exact path, skipping wildcard hosts', () => {
-    const r = post({
-      secrets: [
-        { id: 'w', hostPattern: '*.example.test' },
-        { id: 'c', hostPattern: 'api2.cursor.sh', pathPattern: '/auth/exchange_user_api_key' },
-      ],
-      grants: ['w', 'c'],
-    });
-    expect(r.status).toBe(0);
-    expect(r.calls.some((c) => c.includes('https://api2.cursor.sh/auth/exchange_user_api_key'))).toBe(true);
-    expect(r.calls.some((c) => c.includes('example.test'))).toBe(false);
+  it('asks for the reply from an agent whose model needs a key in OneCLI, not a keyless one', () => {
+    const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
+    expect(verify).toMatch(/needs a key held in OneCLI/);
+    expect(verify).toMatch(/keyless endpoint proves nothing/);
   });
 
   it('stops without a local gateway container, which it must read the boot log from', () => {

@@ -85,6 +85,17 @@ describe('tool skills check the gateway before asking for a key', () => {
     expect(at).toBeLessThan(doc.indexOf('onecli secrets create'));
   });
 
+  it('/add-tavily-tool removes an earlier upgrade block when the gate fails', () => {
+    const doc = fs.readFileSync(path.join(ROOT, '.claude/skills/add-tavily-tool/SKILL.md'), 'utf8');
+    const phase = doc.slice(
+      doc.indexOf('## Phase 5: Install the upgrade path'),
+      doc.indexOf('Resolve the OneCLI dashboard URL'),
+    );
+    expect(phase).toMatch(/remove[^.]*tavily-upgrade:start/i);
+    // Running agents keep the old block in their prompt until they restart.
+    expect(phase).toMatch(/restart each group you removed it from/i);
+  });
+
   it('/add-tavily-tool runs the gate before installing the paid-key upgrade path', () => {
     const doc = fs.readFileSync(path.join(ROOT, '.claude/skills/add-tavily-tool/SKILL.md'), 'utf8');
     const at = doc.indexOf(GATE_CMD('/add-tavily-tool'));
