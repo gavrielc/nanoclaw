@@ -289,13 +289,6 @@ export function buildAttachmentFileParts(
   return parts;
 }
 
-/**
- * The prompt body for one turn: the text the formatter produced, plus any
- * media that came with it. Both the opening prompt and every mid-turn push go
- * through here, so an attachment reaches the model the same way whichever path
- * carried it — OpenCode holds one query open per session, so in practice most
- * real messages arrive as pushes.
- */
 let inspectQueryAttachment = inspectNativeAttachment;
 
 /** Test seam: provider-level tests stage attachments without a /workspace inbox. */
@@ -303,6 +296,13 @@ export function setNativeAttachmentInspectForTesting(inspect = inspectNativeAtta
   inspectQueryAttachment = inspect;
 }
 
+/**
+ * The prompt body for one turn: the text the formatter produced, plus any
+ * media that came with it. Both the opening prompt and every mid-turn push go
+ * through here, so an attachment reaches the model the same way whichever path
+ * carried it — OpenCode holds one query open per session, so in practice most
+ * real messages arrive as pushes.
+ */
 export function buildPromptParts(
   text: string,
   attachments?: OpenCodePromptAttachment[],

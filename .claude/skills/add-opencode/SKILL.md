@@ -322,7 +322,8 @@ Put comments on separate lines. These settings affect only OpenCode containers.
   optional limits (default 8 files, 25 MiB per turn) for channel files the host
   staged to the inbox. JPEG, PNG, GIF, WebP and PDF files reach the model as file
   parts; anything over a limit, of another type, or with an unusual name stays a
-  line in the prompt text.
+  line in the prompt text. If OpenCode cannot decode a file it was sent, that turn
+  is answered from the prompt text instead.
 
 Custom model limits and modalities apply only to the main model. NanoClaw supplies
 MCP configuration and container policy. See [ARCHITECTURE.md](ARCHITECTURE.md) for
