@@ -31,6 +31,8 @@ The gateway runs as a Docker service in `~/.onecli`. Upgrade just that container
 
 **Local gateway (the common case).** Run these on the gateway's host; for a **remote gateway**, run them on that host (NanoClaw can't reach it over SSH).
 
+**Every NanoClaw install that shares this gateway** must run code that attaches credentials with grants (this version or later) before the gateway moves to 1.44 or later: older code expects agents in `all` mode, so its new groups would get no credentials at all.
+
 **First, if the gateway runs 1.43 or older and the pin is 1.44 or later, check what the move deletes.** Do this before anything below writes the pin. On its first start a 1.44+ gateway converts the project once:
 
 - Each `all`-mode agent gets an explicit grant for **every** secret in the vault at that moment. Agents already in `selective` mode keep their list.

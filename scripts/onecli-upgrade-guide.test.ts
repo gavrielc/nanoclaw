@@ -223,6 +223,12 @@ esac
     });
   }
 
+  it('warns, before the pin is written, that every NanoClaw sharing the gateway needs code that grants credentials', () => {
+    const at = guide.search(/every NanoClaw install that shares this gateway/i);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(guide.indexOf(saveLine(UPGRADE)));
+  });
+
   it('is one command and runs before the pin is written to ~/.onecli/.env', () => {
     expect(guide.split('\n').filter((l) => l === CHECK)).toHaveLength(1);
     expect(guide.indexOf(CHECK)).toBeLessThan(guide.indexOf(saveLine(UPGRADE)));
