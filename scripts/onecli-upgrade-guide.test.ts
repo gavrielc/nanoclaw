@@ -321,6 +321,31 @@ esac
     );
   });
 
+  it('a rule listing several agents or targets in another order is not an unpublished change', () => {
+    const agents = [
+      { type: 'agent', id: 'a1' },
+      { type: 'agent', id: 'a2' },
+      { type: 'agent', id: 'a3' },
+    ];
+    const targets = [
+      { kind: 'app', provider: 'github' },
+      { kind: 'app', provider: 'gitlab' },
+    ];
+    const draft = rule({ name: 'shared apps', identities: agents, targets });
+    const published = rule({
+      name: 'shared apps',
+      // Same set, other order, keys in another order: how a published copy can come back.
+      identities: [agents[2], { id: 'a1', type: 'agent' }, agents[1]],
+      targets: [{ provider: 'gitlab', kind: 'app' }, targets[0]],
+    });
+    const r = check({ rules: [draft], published: [published] });
+    expect(r.stdout).not.toContain('unpublished changes');
+    expect(r.status).toBe(0);
+    // A different set is still a change.
+    const other = rule({ name: 'shared apps', identities: [agents[0], agents[1]], targets });
+    expect(check({ rules: [draft], published: [other] }).status).toBe(1);
+  });
+
   it('stops on a block project default', () => {
     const r = check({ def: 'block' });
     expect(r.status).toBe(1);
