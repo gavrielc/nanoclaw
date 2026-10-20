@@ -44,7 +44,8 @@ it('saves a pasted service-account API key, and the API-key prompt accepts every
     expect.arrayContaining(['create', '--type', 'anthropic', '--value', 'sk-ant-svc01-fixture']),
     expect.anything(),
   );
-  const { validate } = vi.mocked(prompts.password).mock.calls[0][0];
+  const { message, validate } = vi.mocked(prompts.password).mock.calls[0][0];
+  expect(message).toMatch(/one workspace/);
   for (const key of ['sk-ant-api03-x', 'sk-ant-usr01-x', 'sk-ant-svc01-x']) expect(validate?.(key)).toBeUndefined();
   expect(validate?.('sk-ant-oat01-x')).toMatch(/OAuth token/);
   expect(validate?.('')).toBe('Required');

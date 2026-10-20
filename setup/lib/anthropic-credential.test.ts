@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { anthropicCredentialError, isAnthropicOAuthToken, pastedCredential } from './anthropic-credential.js';
+import {
+  anthropicCredentialError,
+  anthropicCredentialPrompt,
+  isAnthropicOAuthToken,
+  pastedCredential,
+} from './anthropic-credential.js';
 
 describe('anthropicCredentialError', () => {
   it.each(['sk-ant-api03-fixture', 'sk-ant-usr01-fixture', 'sk-ant-svc01-fixture'])(
@@ -68,5 +73,12 @@ describe('isAnthropicOAuthToken', () => {
     expect(isAnthropicOAuthToken('sk-ant-oat01-fixture')).toBe(true);
     expect(isAnthropicOAuthToken('sk-ant-svc01-fixture')).toBe(false);
     expect(isAnthropicOAuthToken('sk-ant-api03-fixture')).toBe(false);
+  });
+});
+
+describe('anthropicCredentialPrompt', () => {
+  it('asks for a single-workspace key, since NanoClaw sends no anthropic-workspace-id header', () => {
+    expect(anthropicCredentialPrompt('api')).toMatch(/one workspace/);
+    expect(anthropicCredentialPrompt('oauth')).toBe('Paste your OAuth token');
   });
 });

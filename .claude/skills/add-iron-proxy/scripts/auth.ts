@@ -14,6 +14,7 @@ import { configureCredential, statePaths } from './setup.js';
 import { assertCredentialIsolation, ironHeaderName } from './credential-isolation.js';
 import {
   anthropicCredentialError,
+  anthropicCredentialPrompt,
   isAnthropicOAuthToken,
   pastedCredential,
 } from '../../../../setup/lib/anthropic-credential.js';
@@ -179,7 +180,7 @@ export async function run(agentProvider = process.argv[2] || 'claude', root = pr
       : pastedCredential(
           answer<string>(
             await p.password({
-              message: method === 'oauth' ? 'Paste your OAuth token' : 'Paste your API key',
+              message: anthropicCredentialPrompt(method),
               clearOnError: true,
               validate: (raw) => anthropicCredentialError(method, raw),
             }),

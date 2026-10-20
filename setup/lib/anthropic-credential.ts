@@ -18,6 +18,17 @@ export function isAnthropicOAuthToken(value: string): boolean {
   return value.startsWith(OAUTH_PREFIX);
 }
 
+/**
+ * The paste prompt's message. Nothing sends an `anthropic-workspace-id`
+ * header, so a personal or service-account key that spans several workspaces
+ * gets HTTP 400 on every request; a single-workspace key needs no header.
+ */
+export function anthropicCredentialPrompt(kind: 'api' | 'oauth'): string {
+  return kind === 'oauth'
+    ? 'Paste your OAuth token'
+    : 'Paste your API key (a personal or service-account key must be scoped to one workspace)';
+}
+
 /** The prompt's error for a pasted value, or `undefined` when it has the right shape. */
 export function anthropicCredentialError(kind: 'api' | 'oauth', raw: string | undefined): string | undefined {
   const value = pastedCredential(raw);
