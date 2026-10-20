@@ -29,6 +29,12 @@ vi.mock('../config.js', async (importOriginal) => ({
   GROUPS_DIR: '/tmp/nanoclaw-codex-host-contribution-test/groups',
 }));
 
+// The install's own .env must not leak into these tests (CI has none).
+vi.mock('../env.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../env.js')>()),
+  readEnvFile: () => ({}),
+}));
+
 import { buildMounts } from '../container-runner.js';
 import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../db/index.js';
 import { ensureContainerConfig, updateContainerConfigJson } from '../db/container-configs.js';
@@ -81,6 +87,37 @@ describe('codex host contribution against real core', () => {
   afterEach(async () => {
     await closeDb();
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
+  });
+
+  it('passes CODEX_AUTO_COMPACT_TOKEN_LIMIT into the container, and ignores one that is not a token count', async () => {
+    const ag = group('ag-codex-compact', 'codex-compact');
+    await createAgentGroup(ag);
+    await ensureContainerConfig(ag.id);
+    const run = (value: string | undefined) =>
+      getProviderContainerConfig('codex')!({
+        sessionDir: path.join(DATA_DIR, 'v2-sessions', ag.id, 'session-1'),
+        agentGroupId: ag.id,
+        groupDir: path.join(GROUPS_DIR, ag.folder),
+        selectedSkills: [],
+        hostEnv: { ...process.env, CODEX_AUTO_COMPACT_TOKEN_LIMIT: value },
+      });
+    expect((await run('80000')).env).toEqual({ CODEX_AUTO_COMPACT_TOKEN_LIMIT: '80000' });
+    expect((await run('lots')).env?.CODEX_AUTO_COMPACT_TOKEN_LIMIT).toBeUndefined();
+  });
+
+  it('passes CODEX_AUTO_COMPACT_TOKEN_LIMIT on the contract path too, where core owns the surfaces', async () => {
+    const ag = group('ag-codex-compact-core', 'codex-compact-core');
+    await createAgentGroup(ag);
+    await ensureContainerConfig(ag.id);
+    const result = await getProviderContainerConfig('codex')!({
+      sessionDir: path.join(DATA_DIR, 'v2-sessions', ag.id, 'session-1'),
+      agentGroupId: ag.id,
+      groupDir: path.join(GROUPS_DIR, ag.folder),
+      selectedSkills: [],
+      hostEnv: { ...process.env, CODEX_AUTO_COMPACT_TOKEN_LIMIT: '80000' },
+      coreOwnsProviderSurfaces: true,
+    } as Parameters<NonNullable<ReturnType<typeof getProviderContainerConfig>>>[0]);
+    expect(result).toEqual({ env: { CODEX_AUTO_COMPACT_TOKEN_LIMIT: '80000' } });
   });
 
   it('creates the per-group state dir, composes AGENTS.md from the real config row, and mounts both', async () => {

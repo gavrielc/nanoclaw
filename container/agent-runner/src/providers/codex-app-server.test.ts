@@ -9,6 +9,7 @@ import {
   attachCodexAutoApproval,
   buildCodexConfigPlan,
   buildCodexProcessEnv,
+  codexAutoCompactTokenLimit,
   codexInferenceSection,
   renderCodexConfigToml,
   startOrResumeCodexThread,
@@ -540,3 +541,29 @@ function autoRespondingServer(errors: Record<string, string> = {}): {
   } as unknown as AppServer;
   return { server, requests };
 }
+
+describe('codex auto-compaction threshold', () => {
+  const KEY = 'CODEX_AUTO_COMPACT_TOKEN_LIMIT';
+  const saved = process.env[KEY];
+  afterEach(() => {
+    if (saved === undefined) delete process.env[KEY];
+    else process.env[KEY] = saved;
+  });
+
+  it('takes only a positive whole number of tokens', () => {
+    expect(codexAutoCompactTokenLimit('80000')).toBe(80000);
+    expect(codexAutoCompactTokenLimit(' 80000 ')).toBe(80000);
+    for (const bad of [undefined, '', '0', '-1', '8e4', '80000x', '1.5']) {
+      expect(codexAutoCompactTokenLimit(bad)).toBeUndefined();
+    }
+  });
+
+  it('writes model_auto_compact_token_limit from the env, and nothing without it', () => {
+    process.env[KEY] = '80000';
+    const withLimit = renderCodexConfigToml(buildCodexConfigPlan({}, codexInferenceSection({ model: 'gpt-5' })));
+    expect(withLimit).toContain('model_auto_compact_token_limit = 80000');
+    delete process.env[KEY];
+    const without = renderCodexConfigToml(buildCodexConfigPlan({}, codexInferenceSection({ model: 'gpt-5' })));
+    expect(without).not.toContain('model_auto_compact_token_limit');
+  });
+});
