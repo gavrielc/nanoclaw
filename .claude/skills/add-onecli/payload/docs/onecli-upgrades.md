@@ -90,10 +90,10 @@ cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECL
 Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this on the gateway host, from the NanoClaw checkout:
 
 ```bash
-GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh
+sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh
 ```
 
-It reads only this boot's `grant-conversion` line and requires both `0 failed` and `0 verify-failed`: a failed verification can make the gateway deny every request while the line still says `0 failed`. Then it sends one request through the gateway as an agent that holds a credential, and stops if the gateway answers for itself instead of the vendor. Continue only once it prints `OK`. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
+It reads only this boot's `grant-conversion` line and requires both `0 failed` and `0 verify-failed`: a failed verification can make the gateway deny every request while the line still says `0 failed`. Continue only once it prints `OK`; the upgrade is done only after the agent reply at the end of Verify. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
 
 **If a gateway newer than the pin has started, even briefly:** it can migrate its database, and going back to the pin does not undo that. Put the gateway back on the pin (step 2), then check `docker logs onecli 2>&1 | grep -iE 'migrat|error'`. Access rules and approvals were not checked in testing. If you see a database error, restore a backup taken before the newer version ran (the one from step 2, if you took it in time). There is no other tested repair, so otherwise [open an issue](https://github.com/nanocoai/nanoclaw/issues) with the log lines.
 
@@ -131,6 +131,14 @@ source setup/lib/install-slug.sh && launchctl kickstart -k gui/$(id -u)/$(launch
 # Linux
 source setup/lib/install-slug.sh && systemctl --user restart $(systemd_unit)
 ```
+
+Then confirm that an agent still answers. A real reply is the check that the gateway injects credentials: the model call works only when the gateway attaches the group's key and the vendor accepts it.
+
+```bash
+pnpm run chat "Reply with the single word ok"
+```
+
+It must print the agent's reply (exit 0). No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check `docker logs onecli` and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
 
 Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key.
 

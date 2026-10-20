@@ -460,7 +460,7 @@ describe('OneCLI upgrade guide: skills that wrote standing instructions', () => 
 // while the gateway denied every request.
 describe('OneCLI upgrade guide: post-upgrade check', () => {
   const guide = fs.readFileSync(GUIDE, 'utf8');
-  const CHECK = 'GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh';
+  const CHECK = 'sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh';
   const SCRIPT = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts/post-upgrade-check.sh');
   const OK_LINE =
     '{"msg":"[grant-conversion] projects: 1 converted, 0 skipped, 0 failed, 0 preempted, 0 verify-failed; agents flipped: 3"}';
@@ -531,14 +531,22 @@ esac
     expect(guide).toMatch(/0 verify-failed/);
   });
 
-  it('passes on 0 failed and 0 verify-failed from this boot, when the vendor answers through the gateway', () => {
+  it('passes on 0 failed and 0 verify-failed from this boot, and leaves the injection check to a real agent reply', () => {
     const r = post({});
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('OK:');
     expect(r.calls).toContain('docker logs --since 2026-10-20T13:41:04.000000000Z onecli');
-    expect(
-      r.calls.some((c) => c.startsWith('onecli run --agent ag-1 -- curl') && c.includes('https://api.anthropic.com/')),
-    ).toBe(true);
+    // A probe request cannot show that injection works (NO_PROXY, path-scoped or header-replacing secrets).
+    expect(r.calls.some((c) => c.startsWith('onecli'))).toBe(false);
+  });
+
+  it('ends Verify with a real agent reply after the restart: the injection check', () => {
+    const restart = guide.indexOf('Finally, restart the NanoClaw service');
+    const chat = guide.indexOf('pnpm run chat', restart);
+    expect(restart).toBeGreaterThan(-1);
+    expect(chat).toBeGreaterThan(restart);
+    expect(chat).toBeLessThan(guide.indexOf('## 4. Rollback'));
+    expect(guide.slice(chat, guide.indexOf('## 4. Rollback'))).toMatch(/failure notice/);
   });
 
   it.each([
@@ -549,30 +557,7 @@ esac
     const r = post({ conversion });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('NOT DONE');
-    expect(r.calls.some((c) => c.startsWith('onecli run'))).toBe(false);
-  });
-
-  it('is not done when the gateway answers for itself instead of injecting the credential', () => {
-    const r = post({ body: '{"error":"credential_unavailable","message":"could not mint"}', code: '502' });
-    expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/NOT DONE: the gateway answered 502 credential_unavailable/);
-  });
-
-  it('is not done when the request through the gateway fails', () => {
-    expect(post({ curlExit: 7, body: '', code: '000' }).status).toBe(1);
-  });
-
-  it('probes an exact host and its exact path, skipping wildcard hosts', () => {
-    const r = post({
-      secrets: [
-        { id: 'w', hostPattern: '*.example.test' },
-        { id: 'c', hostPattern: 'api2.cursor.sh', pathPattern: '/auth/exchange_user_api_key' },
-      ],
-      grants: ['w', 'c'],
-    });
-    expect(r.status).toBe(0);
-    expect(r.calls.some((c) => c.includes('https://api2.cursor.sh/auth/exchange_user_api_key'))).toBe(true);
-    expect(r.calls.some((c) => c.includes('example.test'))).toBe(false);
+    expect(r.calls.some((c) => c.startsWith('onecli'))).toBe(false);
   });
 
   it('stops without a local gateway container, which it must read the boot log from', () => {
