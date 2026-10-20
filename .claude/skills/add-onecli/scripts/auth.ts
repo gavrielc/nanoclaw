@@ -6,6 +6,8 @@ import path from 'node:path';
 
 import * as p from '@clack/prompts';
 
+import { anthropicCredentialError, pastedCredential } from '../../../../setup/lib/anthropic-credential.js';
+
 type Method = 'subscription' | 'oauth' | 'api' | 'skip';
 
 function childEnv(): NodeJS.ProcessEnv {
@@ -154,19 +156,15 @@ export async function run(): Promise<void> {
     return;
   }
 
-  const prefix = method === 'oauth' ? 'sk-ant-oat' : 'sk-ant-api';
-  const token = answer<string>(
-    await p.password({
-      message: method === 'oauth' ? 'Paste your OAuth token' : 'Paste your API key',
-      clearOnError: true,
-      validate: (raw) => {
-        const value = (raw ?? '').replace(/\s+/g, '');
-        if (!value) return 'Required';
-        if (!value.startsWith(prefix)) return `Must start with ${prefix}`;
-        return undefined;
-      },
-    }),
-  ).replace(/\s+/g, '');
+  const token = pastedCredential(
+    answer<string>(
+      await p.password({
+        message: method === 'oauth' ? 'Paste your OAuth token' : 'Paste your API key',
+        clearOnError: true,
+        validate: (raw) => anthropicCredentialError(method, raw),
+      }),
+    ),
+  );
   saveSecret(token);
   p.log.success('Claude account connected.');
 }
