@@ -112,7 +112,7 @@ describe('OpenCode setup installation and refresh', () => {
     expect(fixture.commands[1]).toBe('rm -f src/opencode-dockerfile.test.ts');
   });
 
-  it('keeps an installed Codex payload and pins without contacting its registry branch', async () => {
+  it('keeps an installed Codex payload and pins as they are', async () => {
     const directory = root();
     const codexSkill = '.claude/skills/add-codex';
     fs.cpSync(codexSkill, path.join(directory, codexSkill), { recursive: true });
@@ -136,7 +136,9 @@ describe('OpenCode setup installation and refresh', () => {
     const result = await applyProviderSkill(codexSkill, directory);
     expect(result.blockers).toEqual([]);
     expect(result.changed).toBe(false);
-    expect(fixture.commands).toEqual([]);
+    expect(fixture.commands).toEqual([
+      `grep -qsF ./exchange-archive.js container/agent-runner/src/providers/codex.ts || grep -qsF providers/exchange-archive.js container/agent-runner/src/provider-contracts/codex.ts || rm -f container/agent-runner/src/providers/exchange-archive.ts container/agent-runner/src/providers/exchange-archive.test.ts`,
+    ]);
     expect(tree(directory)).toEqual(before);
   });
 

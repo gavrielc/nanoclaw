@@ -55,6 +55,7 @@ vi.mock('../env.js', () => ({
 }));
 
 import { contributionFromConfig, withProviderEnv } from './onecli.js';
+import { log } from '../log.js';
 import { getGatewayProviderRegistration } from './gateway-provider-registry.js';
 
 const provider = getGatewayProviderRegistration('onecli')!;
@@ -240,6 +241,107 @@ describe('OneCLI gateway package', () => {
     });
     expect(withProviderEnv({}, '')).toEqual({});
     controller.abort();
+  });
+
+  describe('ChatGPT login stand-in', () => {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const stubContent = JSON.stringify({
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: `${encode({ alg: 'HS256' })}.${encode({
+          'https://api.openai.com/auth': { chatgpt_account_id: 'onecli-managed' },
+        })}.c2ln`,
+        access_token: 'onecli-managed',
+        refresh_token: 'onecli-managed',
+        account_id: 'onecli-managed',
+      },
+    });
+    const withStub = () =>
+      sdk.getContainerConfig.mockResolvedValueOnce({
+        env: { HTTPS_PROXY: 'http://host.docker.internal:15001' },
+        caCertificate: 'fixture-ca',
+        caCertificateContainerPath: '/tmp/onecli-ca.pem',
+        credentialStubs: [{ containerPath: '/home/node/.codex/auth.json', content: stubContent }],
+      } as never);
+    const stagedStub = (lease: Awaited<ReturnType<typeof provider.sessions.ensure>>) =>
+      JSON.parse(
+        fs.readFileSync(
+          lease.contribution.mounts!.find((m) => m.containerPath === '/home/node/.codex/auth.json')!.hostPath,
+          'utf8',
+        ),
+      );
+
+    it('stages the stored login workspace id from OneCLI secret metadata', async () => {
+      withStub();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        Response.json([
+          { type: 'anthropic', metadata: { authMode: 'oauth' } },
+          { type: 'openai', metadata: { authMode: 'oauth', accountId: 'ws-real-1' } },
+        ]),
+      );
+      const controller = new AbortController();
+      try {
+        const lease = await provider.sessions.ensure(input('s1'), controller.signal);
+        expect(fetchMock).toHaveBeenCalledWith('http://localhost:1/v1/secrets', {
+          headers: { Authorization: 'Bearer unused' },
+          signal: expect.any(AbortSignal),
+        });
+        const staged = stagedStub(lease);
+        expect(staged.tokens.account_id).toBe('ws-real-1');
+        expect(staged.tokens.access_token).toBe('onecli-managed');
+      } finally {
+        controller.abort();
+        fetchMock.mockRestore();
+      }
+    });
+
+    it('stops the spawn when OneCLI cannot serve the metadata, as for container config', async () => {
+      withStub();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 503 }));
+      try {
+        await expect(provider.sessions.ensure(input('s1'), new AbortController().signal)).rejects.toThrow(
+          'OneCLI secret metadata unavailable',
+        );
+      } finally {
+        fetchMock.mockRestore();
+      }
+    });
+
+    it('keeps the placeholder and warns when the metadata is refused or names no single login', async () => {
+      for (const response of [
+        new Response('', { status: 403 }),
+        Response.json([
+          { type: 'openai', metadata: { authMode: 'oauth', accountId: 'ws-1' } },
+          { type: 'openai', metadata: { authMode: 'oauth', accountId: 'ws-2' } },
+        ]),
+      ]) {
+        withStub();
+        vi.mocked(log.warn).mockClear();
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
+        const controller = new AbortController();
+        try {
+          const lease = await provider.sessions.ensure(input('s1'), controller.signal);
+          expect(stagedStub(lease).tokens.account_id).toBe('onecli-managed');
+          expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('placeholder account id'), expect.anything());
+        } finally {
+          controller.abort();
+          fetchMock.mockRestore();
+        }
+      }
+    });
+
+    it('does not ask OneCLI for metadata when no stand-in needs it', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch');
+      const controller = new AbortController();
+      try {
+        await provider.sessions.ensure(input('s1'), controller.signal);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        controller.abort();
+        fetchMock.mockRestore();
+      }
+    });
   });
 
   it('shares one health monitor across live leases and reports failure to each session', async () => {

@@ -131,10 +131,12 @@ registerResource({
         // session here in a conversation with another agent stays. Read before the
         // transaction: holding it across mailbox reads can deadlock.
         const peerUsed: Array<{ id: string; agent_group_id: string }> = [];
-        for (const session of await db.all<{ id: string; agent_group_id: string }>(
-          'SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ?',
+        const scanStart = new Date().toISOString();
+        const scanned = await db.all<{ id: string; agent_group_id: string; last_active: string | null }>(
+          'SELECT id, agent_group_id, last_active FROM sessions WHERE messaging_group_id = ?',
           id,
-        )) {
+        );
+        for (const session of scanned) {
           const self = session.agent_group_id;
           const withPeer = await withExistingMailboxSession(
             self,
@@ -161,6 +163,11 @@ registerResource({
             messaging_group_agents: 0,
             unregistered_senders: 0,
           };
+
+          // Lock this chat's session rows first. A last_active bump from a write landing now
+          // then waits for this transaction on every driver, not only on SQLite (which holds
+          // all other queries anyway); the keep check below relies on that.
+          await db.run('UPDATE sessions SET messaging_group_id = messaging_group_id WHERE messaging_group_id = ?', id);
 
           // Move a kept session off this chat before the session-scoped deletes, so it
           // and its rows stay. Its open question cards sit in this chat, though, and
@@ -208,6 +215,22 @@ registerResource({
           }
           // The rest keep no chat; resolveSession binds one when an agent-shared chat resumes them.
           for (const session of peerUsed) await keep(session.id, session.agent_group_id, null);
+          // Every inbox write bumps last_active once it lands, so a session whose last_active
+          // moved since the scan read it (or that appeared since) may hold a peer message the
+          // scan missed: keep it. A write still landing waits on the lock; agent-route.ts
+          // re-routes it. The value check is clock-free; >= scanStart also catches a bump in
+          // the same millisecond as the value read, and at worst keeps one more session.
+          const scannedActive = new Map(scanned.map((s) => [s.id, s.last_active]));
+          for (const session of await db.all<{ id: string; agent_group_id: string; last_active: string | null }>(
+            'SELECT id, agent_group_id, last_active FROM sessions WHERE messaging_group_id = ?',
+            id,
+          )) {
+            const moved =
+              !scannedActive.has(session.id) ||
+              scannedActive.get(session.id) !== session.last_active ||
+              (session.last_active !== null && session.last_active >= scanStart);
+            if (moved) await keep(session.id, session.agent_group_id, null);
+          }
           counts.pending_questions += (
             await db.run(`DELETE FROM pending_questions WHERE session_id IN (${sessionIds})`, id)
           ).changes;
