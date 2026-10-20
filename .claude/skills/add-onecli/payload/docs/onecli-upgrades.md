@@ -31,6 +31,8 @@ The gateway runs as a Docker service in `~/.onecli`. Upgrade just that container
 
 **Local gateway (the common case).** Run these on the gateway's host; for a **remote gateway**, run them on that host (NanoClaw can't reach it over SSH).
 
+**Every NanoClaw install that shares this gateway** must run code that attaches credentials with grants (this version or later) before the gateway moves to 1.44 or later: older code expects agents in `all` mode, so its new groups would get no credentials at all.
+
 **First, if the gateway runs 1.43 or older and the pin is 1.44 or later, check what the move deletes.** Do this before anything below writes the pin. On its first start a 1.44+ gateway converts the project once:
 
 - Each `all`-mode agent gets an explicit grant for **every** secret in the vault at that moment. Agents already in `selective` mode keep their list.
@@ -87,7 +89,13 @@ Then pull and restart:
 cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECLI_VERSION docker compose up -d
 ```
 
-Then check the conversion. Its log line appears a few seconds after `/v1/health` answers, so wait, then run `docker logs onecli 2>&1 | grep grant-conversion`; it must report `0 failed`. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
+Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this on the gateway host, from the NanoClaw checkout:
+
+```bash
+GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh
+```
+
+It reads only this boot's `grant-conversion` line and requires both `0 failed` and `0 verify-failed`: a failed verification can make the gateway deny every request while the line still says `0 failed`. Then it sends one request through the gateway as an agent that holds a credential, and stops if the gateway answers for itself instead of the vendor. Continue only once it prints `OK`. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
 
 **If a gateway newer than the pin has started, even briefly:** it can migrate its database, and going back to the pin does not undo that. Put the gateway back on the pin (step 2), then check `docker logs onecli 2>&1 | grep -iE 'migrat|error'`. Access rules and approvals were not checked in testing. If you see a database error, restore a backup taken before the newer version ran (the one from step 2, if you took it in time). There is no other tested repair, so otherwise [open an issue](https://github.com/nanocoai/nanoclaw/issues) with the log lines.
 
