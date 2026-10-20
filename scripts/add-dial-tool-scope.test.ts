@@ -638,6 +638,15 @@ describe('add-dial-tool: removal', () => {
     },
   );
 
+  it('a failed delete stops the removal before the next Dial key, and the block fails', () => {
+    writeStub(
+      'onecli',
+      `case "$1 $2" in "secrets list") echo '{"data":[{"id":"sec-dial","name":"Dial API","hostPattern":"api.getdial.ai"},{"id":"sec-dial-old","name":"Old Dial","hostPattern":"api.getdial.ai"}]}' ;; "secrets delete") exit 1 ;; esac`,
+    );
+    expect(sh(REMOVE).status).not.toBe(0);
+    expect(callLines().filter((l) => l.includes('secrets delete'))).toEqual(['onecli secrets delete --id sec-dial']);
+  });
+
   it('a secret list larger than a pipe buffer still works under pipefail', () => {
     fs.rmSync(root, { recursive: true, force: true });
     const others = Array.from({ length: 6000 }, (_, i) => ({
