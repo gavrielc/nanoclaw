@@ -22,6 +22,11 @@ describe('anthropicCredentialError', () => {
     expect(anthropicCredentialError('api', 'sk-ant-admin01-fixture')).toMatch(/Admin/);
   });
 
+  it('rejects an OAuth refresh token, which cannot call models', () => {
+    expect(anthropicCredentialError('api', 'sk-ant-ort01-fixture')).toMatch(/refresh token/);
+    expect(anthropicCredentialError('oauth', 'sk-ant-ort01-fixture')).toMatch(/sk-ant-oat/);
+  });
+
   it('accepts an OAuth token as an OAuth token', () => {
     expect(anthropicCredentialError('oauth', 'sk-ant-oat01-fixture')).toBeUndefined();
   });

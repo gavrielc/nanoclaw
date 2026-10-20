@@ -1,10 +1,11 @@
 /**
  * Shape checks for a pasted Anthropic credential. A subscription OAuth token
  * starts `sk-ant-oat`; any other `sk-ant-<type>` is an API key (the Console
- * issues api, usr and svc keys, and may add types), except an Admin API key,
- * which manages an organization and cannot call models.
+ * issues api, usr and svc keys, and may add types), except an OAuth refresh
+ * token or an Admin API key, neither of which can call models.
  */
 const OAUTH_PREFIX = 'sk-ant-oat';
+const REFRESH_PREFIX = 'sk-ant-ort';
 const ADMIN_PREFIX = 'sk-ant-admin';
 const KEY_PREFIX = /^sk-ant-[a-z]+/;
 
@@ -23,6 +24,7 @@ export function anthropicCredentialError(kind: 'api' | 'oauth', raw: string | un
   if (!value) return 'Required';
   if (kind === 'oauth') return isAnthropicOAuthToken(value) ? undefined : `Must start with ${OAUTH_PREFIX}`;
   if (isAnthropicOAuthToken(value)) return 'That is an OAuth token; choose "Paste an OAuth token" instead';
+  if (value.startsWith(REFRESH_PREFIX)) return 'OAuth refresh tokens cannot call Claude; paste an API key instead';
   if (value.startsWith(ADMIN_PREFIX)) return 'Admin API keys cannot call Claude; paste an API key instead';
   if (!KEY_PREFIX.test(value)) return 'Must be an Anthropic API key (sk-ant-api…, sk-ant-usr… or sk-ant-svc…)';
   return undefined;
