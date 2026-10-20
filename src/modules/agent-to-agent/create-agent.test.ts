@@ -36,6 +36,7 @@ const {
   mockNotifyWrite,
   mockEnsureTemplateLocal,
   mockCreateAgentFromTemplate,
+  existingDestinations,
   liveApprovals,
   approvalHandlers,
 } = vi.hoisted(() => ({
@@ -47,6 +48,7 @@ const {
   mockNotifyWrite: vi.fn(),
   mockEnsureTemplateLocal: vi.fn(),
   mockCreateAgentFromTemplate: vi.fn(),
+  existingDestinations: new Set<string>(),
   liveApprovals: new Map<string, import('../../types.js').PendingApproval>(),
   approvalHandlers: new Map<string, (ctx: Record<string, unknown>) => Promise<void>>(),
 }));
@@ -74,7 +76,8 @@ vi.mock('./write-destinations.js', () => ({
   writeDestinations: (...a: unknown[]) => mockWriteDestinations(...a),
 }));
 vi.mock('./db/agent-destinations.js', () => ({
-  getDestinationByName: () => undefined,
+  getDestinationByName: (group: string, name: string) =>
+    existingDestinations.has(`${group}/${name}`) ? { target_type: 'agent', target_id: 'ag-existing' } : undefined,
   createDestination: vi.fn(),
   hasDestination: () => true,
   normalizeName: (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
@@ -342,6 +345,35 @@ describe.each(['global', 'group'])(
     });
   },
 );
+
+// An install migrated from v1 can hold an agent "Global" under global-2; asking for it again must
+// reach the create (its collision answer, or a wrapper's resume), not the folder refusal.
+describe('create_agent — a name the requester already has', () => {
+  beforeEach(() => {
+    existingDestinations.add('ag-1/global');
+  });
+  afterEach(() => {
+    existingDestinations.clear();
+  });
+
+  it('gets the collision answer, not the folder reason (global scope)', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+
+    await runCreateAgent({ name: 'Global' });
+
+    expect(mockCreateAgentGroup).not.toHaveBeenCalled();
+    expect(notifyTexts()).toEqual(['Cannot create agent "Global": you already have a destination named "global".']);
+  });
+
+  it('is held for the admin as before (group scope)', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+
+    await runCreateAgent({ name: 'Global' });
+
+    expect(mockRequestApproval).toHaveBeenCalledTimes(1);
+    expect(notifyTexts()).toEqual([]);
+  });
+});
 
 describe('create_agent — the folder limit', () => {
   it('a name at the limit is created', async () => {

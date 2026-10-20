@@ -73,6 +73,9 @@ export async function validateCreateAgent(content: Record<string, unknown>, sess
     log.warn('create_agent failed: missing source group', { sessionAgentGroup: session.agent_group_id, name });
     return false;
   }
+  // A name the requester already has makes no folder: createAgent answers it as a collision, or a
+  // wrapper resumes that agent (slack-agent-flow's parked app), so only a new name's folder is checked.
+  if (await getDestinationByName(session.agent_group_id, normalizeName(name))) return true;
   // So no admin is asked to approve a folder that would be refused. Approved replays re-run this.
   return (await newAgentFolder(name, templateRef(content), (text) => notifyAgent(session, text))) !== null;
 }
@@ -248,7 +251,7 @@ async function performCreateAgent(
   notify: (text: string) => Promise<void>,
   options?: CreateAgentOptions,
 ): Promise<void> {
-  // Again, as the precheck did: the name may have been taken since.
+  // Checked again at write time: the folder may have been taken since the precheck.
   const folder = await newAgentFolder(name, undefined, notify);
   if (!folder) return;
 
