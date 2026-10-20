@@ -11,6 +11,7 @@ import {
   readProviderCredentials,
   RecordLockedError,
   recordProviderCredentials,
+  savedProviderCredentials,
   updateProviderCredentials,
 } from './onecli-provider-credentials.js';
 
@@ -131,6 +132,30 @@ describe('OneCLI provider credential record', () => {
     expect(is('opencode', { name: 'Vercel API Token' })).toBe(false);
     expect(is('ollama', { name: 'Anthropic' })).toBe(false);
     expect(is('claude', {})).toBe(false);
+  });
+
+  it('refuses saved names that differ only in case, as the Codex matcher ignores case', () => {
+    const codex = savedProviderCredentials('codex', [
+      { id: 'c1', name: 'Codex' },
+      { id: 'c2', name: 'codex' },
+      { id: 'o1', name: 'OpenAI' },
+    ]);
+    expect(codex.ids).toEqual([]);
+    expect(codex.duplicates).toEqual(['Codex c1', 'codex c2']);
+    const openai = savedProviderCredentials('codex', [
+      { id: 'o1', name: 'OpenAI' },
+      { id: 'o2', name: 'openai' },
+    ]);
+    expect(openai).toEqual({ ids: [], duplicates: ['OpenAI o1', 'openai o2'] });
+    expect(
+      savedProviderCredentials('codex', [
+        { id: 'c1', name: 'Codex' },
+        { id: 'o1', name: 'OpenAI' },
+      ]),
+    ).toEqual({
+      ids: ['c1', 'o1'],
+      duplicates: [],
+    });
   });
 
   it('reads the id from `onecli secrets create` output, with or without a hint', () => {
