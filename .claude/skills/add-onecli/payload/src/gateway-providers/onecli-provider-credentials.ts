@@ -132,15 +132,18 @@ export function savedProviderCredentials(
   provider: string,
   secrets: Array<{ id?: unknown; name?: unknown }>,
 ): { ids: string[]; duplicates: string[] } {
-  const byName = new Map<string, string[]>();
+  // Grouped ignoring case, as the Codex matcher is.
+  const byName = new Map<string, Array<{ name: string; id: string }>>();
   for (const secret of secrets) {
     if (typeof secret.id !== 'string' || !isSavedProviderCredential(provider, secret)) continue;
-    byName.set(secret.name as string, [...(byName.get(secret.name as string) ?? []), secret.id]);
+    const name = secret.name as string;
+    byName.set(name.toLowerCase(), [...(byName.get(name.toLowerCase()) ?? []), { name, id: secret.id }]);
   }
-  const duplicates = [...byName]
-    .filter(([, ids]) => ids.length > 1)
-    .flatMap(([name, ids]) => ids.map((id) => `${name} ${id}`));
-  return duplicates.length ? { ids: [], duplicates } : { ids: [...byName.values()].flat(), duplicates };
+  const groups = [...byName.values()];
+  const duplicates = groups
+    .filter((group) => group.length > 1)
+    .flatMap((group) => group.map((s) => `${s.name} ${s.id}`));
+  return duplicates.length ? { ids: [], duplicates } : { ids: groups.flat().map((s) => s.id), duplicates };
 }
 
 /** Several secrets under a provider's saved name and none recorded; the message lists them. */
