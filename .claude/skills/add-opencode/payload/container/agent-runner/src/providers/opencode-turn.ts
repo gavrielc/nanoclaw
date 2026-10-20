@@ -135,7 +135,13 @@ export function createOpenCodeMessageId(): string {
 }
 
 export function openCodeError(error: unknown): Error {
-  return new Error(`OpenCode prompt failed: ${JSON.stringify(error)}`);
+  return new Error(`OpenCode prompt failed: ${JSON.stringify(error)}`, { cause: error });
+}
+
+/** OpenCode refused the request itself, before any model call or saved message. */
+export function isOpenCodeBadRequest(error: unknown): boolean {
+  const cause = error instanceof Error ? (error.cause as { _tag?: unknown } | undefined) : undefined;
+  return cause?._tag === 'BadRequest';
 }
 
 export async function boundedOpenCodeCall<T>(

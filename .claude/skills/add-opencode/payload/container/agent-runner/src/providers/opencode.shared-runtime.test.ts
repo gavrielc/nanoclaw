@@ -10,6 +10,7 @@ import type { OpenCodeMemorySessionHook } from './opencode-memory.js';
 import {
   destroySharedRuntime,
   OpenCodeProvider,
+  setNativeAttachmentInspectForTesting,
   setSharedRuntimeDepsForTesting,
   type OpenCodeSharedRuntimeDeps,
   type QuestionClient,
@@ -788,5 +789,106 @@ describe('runtime contract consumption', () => {
     }
     expect(spawnServer).toHaveBeenCalledTimes(2);
     expect(first.proc.kill).toHaveBeenCalled();
+  });
+});
+
+describe('file part the server cannot decode', () => {
+  const HEADS = {
+    // A valid signature is all the payload checks; the content behind it is broken.
+    'broken.png': Buffer.from('\x89PNG\r\n\x1a\n\x00\x00\x00\x0d', 'latin1'),
+    'half.jpg': Buffer.from('\xff\xd8\xff\xe0\x00\x10JFIF\x00', 'latin1'),
+  };
+  beforeEach(() =>
+    setNativeAttachmentInspectForTesting((filePath) => ({
+      realPath: filePath,
+      size: 64,
+      head: HEADS[path.basename(filePath) as keyof typeof HEADS],
+    })),
+  );
+  afterEach(() => setNativeAttachmentInspectForTesting());
+
+  const file = (id: string, filename: keyof typeof HEADS) => ({
+    sourceMessageId: id,
+    filename,
+    path: `/workspace/inbox/${id}/${filename}`,
+  });
+
+  // Like OpenCode 1.18.25: a file part it cannot decode makes it refuse the
+  // whole prompt with a bare BadRequest, before anything is saved.
+  function refuseFileParts(
+    server: ReturnType<typeof fakeServer>,
+    refuse = (parts: Array<{ type: string }>) => parts.some((part) => part.type === 'file'),
+  ) {
+    const sent: string[][] = [];
+    const accept = server.client.session.prompt;
+    server.client.session.prompt = (async (params) => {
+      const parts = params.body.parts as Array<{ type: string }>;
+      sent.push(parts.map((part) => part.type));
+      if (refuse(parts)) return { error: { _tag: 'BadRequest' } };
+      return accept(params);
+    }) as OpenCodeSessionClient['prompt'];
+    server.setPromptHandler((sid, n) => server.reply(sid, `answer ${n}`));
+    return sent;
+  }
+
+  for (const filename of ['broken.png', 'half.jpg'] as const) {
+    it(`answers an opening ${filename} from the prompt text, once`, async () => {
+      const server = fakeServer(() => {});
+      installDeps([server]);
+      const sent = refuseFileParts(server);
+      const query = newProvider().query({ prompt: 'look', cwd: CWD, attachments: [file('m1', filename)] });
+      query.end();
+      const events = await collect(query.events);
+      expect(sent).toEqual([['text', 'file'], ['text']]);
+      expect(resultText(events)).toEqual(['answer 1']);
+      expect(events.some((event) => event.type === 'result' && event.isError)).toBe(false);
+    });
+
+    it(`answers a follow-up ${filename} and the message queued behind it`, async () => {
+      const server = fakeServer(() => {});
+      installDeps([server]);
+      const sent = refuseFileParts(server);
+      const query = newProvider().query({ prompt: 'first', cwd: CWD });
+      query.push('second', [file('m2', filename)]);
+      query.push('third');
+      query.end();
+      const events = await collect(query.events);
+      expect(sent).toEqual([['text'], ['text', 'file'], ['text'], ['text']]);
+      expect(resultText(events)).toEqual(['answer 1', 'answer 2', 'answer 3']);
+    });
+  }
+
+  it('retries only once: a text-only refusal still fails the turn', async () => {
+    const server = fakeServer(() => {});
+    installDeps([server]);
+    const sent = refuseFileParts(server, () => true);
+    const query = newProvider().query({ prompt: 'look', cwd: CWD, attachments: [file('m1', 'broken.png')] });
+    query.end();
+    await expect(collect(query.events)).rejects.toThrow('BadRequest');
+    expect(sent).toEqual([['text', 'file'], ['text']]);
+  });
+
+  it('does not retry a BadRequest on a turn without file parts', async () => {
+    const server = fakeServer(() => {});
+    installDeps([server]);
+    const sent = refuseFileParts(server, () => true);
+    const query = newProvider().query({ prompt: 'look', cwd: CWD });
+    query.end();
+    await expect(collect(query.events)).rejects.toThrow('BadRequest');
+    expect(sent).toEqual([['text']]);
+  });
+
+  it('does not retry other errors on a turn with file parts', async () => {
+    const server = fakeServer(() => {});
+    installDeps([server]);
+    const sent: string[][] = [];
+    server.client.session.prompt = (async (params) => {
+      sent.push((params.body.parts as Array<{ type: string }>).map((part) => part.type));
+      return { error: { name: 'UnknownError', data: { message: 'Unexpected server error' } } };
+    }) as OpenCodeSessionClient['prompt'];
+    const query = newProvider().query({ prompt: 'look', cwd: CWD, attachments: [file('m1', 'broken.png')] });
+    query.end();
+    await expect(collect(query.events)).rejects.toThrow('UnknownError');
+    expect(sent).toEqual([['text', 'file']]);
   });
 });

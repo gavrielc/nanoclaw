@@ -26,8 +26,10 @@ import { prepareOpenCodeMemory, type OpenCodeMemorySessionHook } from './opencod
 import {
   boundedOpenCodeCall,
   executeOpenCodeTurn,
+  isOpenCodeBadRequest,
   OpenCodeEventPump,
   type OpenCodeSessionClient,
+  type OpenCodeTurnResult,
 } from './opencode-turn.js';
 
 function log(msg: string): void {
@@ -294,6 +296,13 @@ export function buildAttachmentFileParts(
  * carried it — OpenCode holds one query open per session, so in practice most
  * real messages arrive as pushes.
  */
+let inspectQueryAttachment = inspectNativeAttachment;
+
+/** Test seam: provider-level tests stage attachments without a /workspace inbox. */
+export function setNativeAttachmentInspectForTesting(inspect = inspectNativeAttachment): void {
+  inspectQueryAttachment = inspect;
+}
+
 export function buildPromptParts(
   text: string,
   attachments?: OpenCodePromptAttachment[],
@@ -786,31 +795,45 @@ export class OpenCodeProvider implements AgentProvider {
             initialized = true;
             yield { type: 'init', continuation: sessionId };
           }
-          const result = yield* executeOpenCodeTurn({
-            runtime,
-            client: runtime.client.session,
-            pump,
-            sessionId,
-            parts: buildPromptParts(turn.text, turn.attachments),
-            model: promptModel,
-            prepare: async () => {
-              await prepareOpenCodeMemory(
-                self.memorySessionHook!,
-                input.systemContext?.instructions,
-                buildDeliverySentences(
-                  getAllDestinations().map((destination) => destination.name),
-                  getTaskSeriesId(),
-                ).join(' '),
-              );
-            },
-            signal: abort.signal,
-            silenceMs: positiveIntegerEnv('OPENCODE_STREAM_SILENCE_MS', DEFAULT_STREAM_SILENCE_MS),
-            idleMs: positiveIntegerEnv('OPENCODE_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS),
-            discard: () => {
-              discardDeadSharedRuntime(runtime);
-              runtime.streamRelease?.();
-            },
-          });
+          const turnSessionId = sessionId;
+          const runTurn = (parts: ReturnType<typeof buildPromptParts>) =>
+            executeOpenCodeTurn({
+              runtime,
+              client: runtime.client.session,
+              pump,
+              sessionId: turnSessionId,
+              parts,
+              model: promptModel,
+              prepare: async () => {
+                await prepareOpenCodeMemory(
+                  self.memorySessionHook!,
+                  input.systemContext?.instructions,
+                  buildDeliverySentences(
+                    getAllDestinations().map((destination) => destination.name),
+                    getTaskSeriesId(),
+                  ).join(' '),
+                );
+              },
+              signal: abort.signal,
+              silenceMs: positiveIntegerEnv('OPENCODE_STREAM_SILENCE_MS', DEFAULT_STREAM_SILENCE_MS),
+              idleMs: positiveIntegerEnv('OPENCODE_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS),
+              discard: () => {
+                discardDeadSharedRuntime(runtime);
+                runtime.streamRelease?.();
+              },
+            });
+          const parts = buildPromptParts(turn.text, turn.attachments, inspectQueryAttachment);
+          let result: OpenCodeTurnResult;
+          try {
+            result = yield* runTurn(parts);
+          } catch (error) {
+            // OpenCode refuses the whole prompt when it cannot decode a file
+            // part. Answer once from the text part, which already describes
+            // every attachment, so the turn and the queue behind it survive.
+            if (parts.length === 1 || abort.signal.aborted || !isOpenCodeBadRequest(error)) throw error;
+            log('OpenCode refused a file part; answering this turn from the prompt text');
+            result = yield* runTurn(parts.slice(0, 1));
+          }
           if (!abort.signal.aborted) yield { type: 'result', ...result };
         }
       } catch (error) {
