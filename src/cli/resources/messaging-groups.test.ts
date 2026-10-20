@@ -31,6 +31,7 @@ import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { bindUnboundSession, createSession, unbindSession } from '../../db/sessions.js';
 import { inboundDbPath, outboundDbPath } from '../../mailbox/sqlite/paths.js';
+import * as sessionManager from '../../session-manager.js';
 import { initSessionFolder, resolveSession, writeSessionRouting } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
 import { projectDestinationsToSessions } from './destinations.js';
@@ -306,6 +307,7 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await closeDb();
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   });
@@ -531,6 +533,39 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
       expect(
         await getDb().get('SELECT messaging_group_id, thread_id, status FROM sessions WHERE id = ?', SHARED),
       ).toEqual({ messaging_group_id: null, thread_id: null, status: 'active' });
+    });
+
+    it('keeps a session that receives a peer message after the peer scan read it', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      initSessionFolder(SHARED_AG, SHARED);
+      // Deliver the way agent routing does, right after the scan has read this session.
+      const original = sessionManager.withExistingMailboxSession;
+      let delivered = false;
+      vi.spyOn(sessionManager, 'withExistingMailboxSession').mockImplementation(
+        async (agentGroupId, sessionId, action) => {
+          const result = await original(agentGroupId, sessionId, action);
+          if (sessionId === SHARED && !delivered) {
+            delivered = true;
+            await sessionManager.writeSessionMessage(SHARED_AG, SHARED, {
+              id: 'a2a-late',
+              kind: 'chat',
+              timestamp: now(),
+              platformId: 'ag-peer',
+              channelType: 'agent',
+              content: '{}',
+              sourceSessionId: 'sess-on-peer',
+            });
+          }
+          return result;
+        },
+      );
+
+      const data = await deleteMg();
+
+      expect(delivered).toBe(true);
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
+      expect(await count('SELECT COUNT(*) AS c FROM sessions WHERE id = ?', SHARED)).toBe(1);
     });
 
     it('keeps a session holding a peer assignment it has not answered yet', async () => {

@@ -131,10 +131,12 @@ registerResource({
         // session here in a conversation with another agent stays. Read before the
         // transaction: holding it across mailbox reads can deadlock.
         const peerUsed: Array<{ id: string; agent_group_id: string }> = [];
-        for (const session of await db.all<{ id: string; agent_group_id: string }>(
+        const scanStart = new Date().toISOString();
+        const scanned = await db.all<{ id: string; agent_group_id: string }>(
           'SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ?',
           id,
-        )) {
+        );
+        for (const session of scanned) {
           const self = session.agent_group_id;
           const withPeer = await withExistingMailboxSession(
             self,
@@ -208,6 +210,18 @@ registerResource({
           }
           // The rest keep no chat; resolveSession binds one when an agent-shared chat resumes them.
           for (const session of peerUsed) await keep(session.id, session.agent_group_id, null);
+          // Every inbox write bumps last_active once it lands, so a session written to since
+          // the scan began (or created since) may hold a peer message the scan missed: keep it.
+          // A write still landing now waits on this transaction; agent-route.ts re-routes it.
+          const scannedIds = new Set(scanned.map((s) => s.id));
+          for (const session of await db.all<{ id: string; agent_group_id: string; last_active: string | null }>(
+            'SELECT id, agent_group_id, last_active FROM sessions WHERE messaging_group_id = ?',
+            id,
+          )) {
+            if (!scannedIds.has(session.id) || (session.last_active !== null && session.last_active >= scanStart)) {
+              await keep(session.id, session.agent_group_id, null);
+            }
+          }
           counts.pending_questions += (
             await db.run(`DELETE FROM pending_questions WHERE session_id IN (${sessionIds})`, id)
           ).changes;

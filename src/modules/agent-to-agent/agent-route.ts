@@ -296,35 +296,53 @@ async function performAgentRoute(
   session: Session,
   targetAgentGroupId: string,
 ): Promise<void> {
-  const targetSession = await resolveTargetSession(msg, session, targetAgentGroupId);
-  const a2aMsgId = `a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // A chat delete can remove the target session while the write is landing, which
+  // leaves the message in an inbox nothing reads; route it once more if so.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const targetSession = await resolveTargetSession(msg, session, targetAgentGroupId);
+    const a2aMsgId = `a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  // If the source message references files (via `send_file`), forward the
-  // bytes from the source's outbox into the target's inbox so the target
-  // agent can actually see and re-send them. Without this, agent-to-agent
-  // file attachments look like they arrive but the target has no way to
-  // read the bytes — they live in a session dir it doesn't mount.
-  const forwardedContent = forwardFileAttachments(msg, a2aMsgId, session, targetAgentGroupId, targetSession.id);
+    // If the source message references files (via `send_file`), forward the
+    // bytes from the source's outbox into the target's inbox so the target
+    // agent can actually see and re-send them. Without this, agent-to-agent
+    // file attachments look like they arrive but the target has no way to
+    // read the bytes — they live in a session dir it doesn't mount.
+    const forwardedContent = forwardFileAttachments(msg, a2aMsgId, session, targetAgentGroupId, targetSession.id);
 
-  await writeSessionMessage(targetAgentGroupId, targetSession.id, {
-    id: a2aMsgId,
-    kind: 'chat',
-    timestamp: new Date().toISOString(),
-    platformId: session.agent_group_id,
-    channelType: 'agent',
-    threadId: null,
-    content: forwardedContent,
-    sourceSessionId: session.id,
-  });
-  log.info('Agent message routed', {
-    from: session.agent_group_id,
-    to: targetAgentGroupId,
-    targetSession: targetSession.id,
-    a2aMsgId,
-    forwardedFileCount: countForwardedFiles(forwardedContent),
-  });
-  const fresh = await getSession(targetSession.id);
-  if (fresh) await requestWake(fresh, 'inbound-message');
+    await writeSessionMessage(targetAgentGroupId, targetSession.id, {
+      id: a2aMsgId,
+      kind: 'chat',
+      timestamp: new Date().toISOString(),
+      platformId: session.agent_group_id,
+      channelType: 'agent',
+      threadId: null,
+      content: forwardedContent,
+      sourceSessionId: session.id,
+    });
+    log.info('Agent message routed', {
+      from: session.agent_group_id,
+      to: targetAgentGroupId,
+      targetSession: targetSession.id,
+      a2aMsgId,
+      forwardedFileCount: countForwardedFiles(forwardedContent),
+    });
+    const fresh = await getSession(targetSession.id);
+    if (fresh) {
+      await requestWake(fresh, 'inbound-message');
+      return;
+    }
+    log.warn('Agent message target session was deleted while routing', {
+      to: targetAgentGroupId,
+      targetSession: targetSession.id,
+      a2aMsgId,
+      attempt,
+    });
+    // Its container may still poll that inbox until the sweep stops it; fail the copy so
+    // only the re-routed one runs.
+    await withExistingMailboxSession(targetAgentGroupId, targetSession.id, (m) => m.markMessageFailed(a2aMsgId));
+  }
+  // Throwing leaves the source message undelivered, so delivery retries it.
+  throw new Error(`agent-to-agent message ${msg.id}: target session deleted on every routing attempt`);
 }
 
 /**
