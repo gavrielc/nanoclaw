@@ -35,7 +35,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it('saves a pasted service-account API key, and the API-key prompt accepts every API key type but not an OAuth token', async () => {
+it('saves a pasted service-account API key, and the API-key prompt accepts every API key type', async () => {
   vi.mocked(prompts.select).mockResolvedValueOnce('api');
   vi.mocked(prompts.password).mockResolvedValueOnce(' sk-ant-svc01-\nfixture ');
   await run();
@@ -47,8 +47,31 @@ it('saves a pasted service-account API key, and the API-key prompt accepts every
   const { message, validate } = vi.mocked(prompts.password).mock.calls[0][0];
   expect(message).toMatch(/one workspace/);
   for (const key of ['sk-ant-api03-x', 'sk-ant-usr01-x', 'sk-ant-svc01-x']) expect(validate?.(key)).toBeUndefined();
-  expect(validate?.('sk-ant-oat01-x')).toMatch(/OAuth token/);
   expect(validate?.('')).toBe('Required');
+});
+
+it('saves an OAuth token pasted into the API-key prompt the same way as the OAuth path', async () => {
+  // OneCLI reads the auth mode from the value, so both paths make the same call.
+  vi.mocked(prompts.select).mockResolvedValueOnce('api');
+  vi.mocked(prompts.password).mockResolvedValueOnce(' sk-ant-oat01-\nfixture ');
+  await run();
+  expect(execFileSync).toHaveBeenCalledWith(
+    'onecli',
+    [
+      'secrets',
+      'create',
+      '--name',
+      'Anthropic',
+      '--type',
+      'anthropic',
+      '--value',
+      'sk-ant-oat01-fixture',
+      '--host-pattern',
+      'api.anthropic.com',
+    ],
+    expect.anything(),
+  );
+  expect(vi.mocked(prompts.password).mock.calls[0][0].validate?.('sk-ant-oat01-x')).toBeUndefined();
 });
 
 it('rejects an API key in the OAuth-token prompt', async () => {

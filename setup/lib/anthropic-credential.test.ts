@@ -19,8 +19,8 @@ describe('anthropicCredentialError', () => {
     expect(anthropicCredentialError('api', 'sk-ant-xyz01-fixture')).toBeUndefined();
   });
 
-  it('rejects an OAuth token pasted as an API key and points at the OAuth option', () => {
-    expect(anthropicCredentialError('api', 'sk-ant-oat01-fixture')).toMatch(/OAuth token/);
+  it('accepts an OAuth token pasted as an API key, so the menu choice is no dead end', () => {
+    expect(anthropicCredentialError('api', 'sk-ant-oat01-fixture')).toBeUndefined();
   });
 
   it('rejects an Admin API key, which cannot call models', () => {

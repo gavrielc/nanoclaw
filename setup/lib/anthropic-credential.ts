@@ -29,12 +29,16 @@ export function anthropicCredentialPrompt(kind: 'api' | 'oauth'): string {
     : 'Paste your API key (a personal or service-account key must be scoped to one workspace)';
 }
 
-/** The prompt's error for a pasted value, or `undefined` when it has the right shape. */
+/**
+ * The prompt's error for a pasted value, or `undefined` when it has the right
+ * shape. The API-key prompt also takes an OAuth token, since the prompt cannot
+ * go back to the menu; the caller stores the value by its prefix.
+ */
 export function anthropicCredentialError(kind: 'api' | 'oauth', raw: string | undefined): string | undefined {
   const value = pastedCredential(raw);
   if (!value) return 'Required';
   if (kind === 'oauth') return isAnthropicOAuthToken(value) ? undefined : `Must start with ${OAUTH_PREFIX}`;
-  if (isAnthropicOAuthToken(value)) return 'That is an OAuth token; choose "Paste an OAuth token" instead';
+  if (isAnthropicOAuthToken(value)) return undefined;
   if (value.startsWith(REFRESH_PREFIX)) return 'OAuth refresh tokens cannot call Claude; paste an API key instead';
   if (value.startsWith(ADMIN_PREFIX)) return 'Admin API keys cannot call Claude; paste an API key instead';
   if (!KEY_PREFIX.test(value)) return 'Must be an Anthropic API key (sk-ant-api…, sk-ant-usr… or sk-ant-svc…)';

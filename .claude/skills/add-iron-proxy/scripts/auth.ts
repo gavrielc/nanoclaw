@@ -189,7 +189,8 @@ export async function run(agentProvider = process.argv[2] || 'claude', root = pr
   await configureCredential(
     {
       secret,
-      authEnv: method === 'api' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN',
+      // The value decides, as in suppliedCredential: the API-key prompt also takes an OAuth token.
+      authEnv: isAnthropicOAuthToken(secret) ? 'CLAUDE_CODE_OAUTH_TOKEN' : 'ANTHROPIC_API_KEY',
       modelHost: new URL(getProviderModelEndpoint('claude', 'api')).hostname,
     },
     root,

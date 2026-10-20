@@ -136,7 +136,7 @@ it('reports a control outage instead of asking a connected user to sign in again
   expect(prompts.select).toHaveBeenCalledTimes(1);
 });
 
-it('stores a pasted service-account API key, and the API-key prompt accepts every API key type but not an OAuth token', async () => {
+it('stores a pasted service-account API key, and the API-key prompt accepts every API key type', async () => {
   const control = await fixture();
   vi.mocked(prompts.select).mockResolvedValueOnce('api');
   vi.mocked(prompts.password).mockResolvedValueOnce(' sk-ant-svc01-\nfixture ');
@@ -148,7 +148,17 @@ it('stores a pasted service-account API key, and the API-key prompt accepts ever
   const { message, validate } = vi.mocked(prompts.password).mock.calls[0][0];
   expect(message).toMatch(/one workspace/);
   for (const key of ['sk-ant-api03-x', 'sk-ant-usr01-x', 'sk-ant-svc01-x']) expect(validate?.(key)).toBeUndefined();
-  expect(validate?.('sk-ant-oat01-x')).toMatch(/OAuth token/);
+});
+
+it('stores an OAuth token pasted into the API-key prompt as an OAuth token', async () => {
+  const control = await fixture();
+  vi.mocked(prompts.select).mockResolvedValueOnce('api');
+  vi.mocked(prompts.password).mockResolvedValueOnce(' sk-ant-oat01-\nfixture ');
+  await run('claude', control.root);
+  expect(control.storedSecret()).toBe('sk-ant-oat01-fixture');
+  expect(fs.readFileSync(path.join(control.root, '.env'), 'utf8')).toContain(
+    'NANOCLAW_IRON_PROXY_AUTH_ENV=CLAUDE_CODE_OAUTH_TOKEN',
+  );
 });
 
 it('rejects an API key in the OAuth-token prompt', async () => {
