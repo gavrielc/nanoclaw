@@ -130,6 +130,10 @@ describe('OneCLI provider credential record', () => {
     expect(is('opencode', { name: 'OpenCode ChatGPT' })).toBe(true);
     expect(is('opencode', { name: 'OpenCode openrouter' })).toBe(true);
     expect(is('opencode', { name: 'Vercel API Token' })).toBe(false);
+    expect(is('cursor', { name: 'Cursor' })).toBe(true);
+    expect(is('cursor', { name: 'Cursor models' })).toBe(true);
+    expect(is('cursor', { name: 'Cursor notes' })).toBe(false);
+    expect(is('claude', { name: 'Cursor' })).toBe(false);
     expect(is('ollama', { name: 'Anthropic' })).toBe(false);
     expect(is('claude', {})).toBe(false);
   });

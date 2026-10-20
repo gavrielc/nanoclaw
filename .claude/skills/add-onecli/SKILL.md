@@ -55,13 +55,13 @@ pnpm exec tsx .claude/skills/add-onecli/scripts/setup.ts
 Provider skills such as `/add-opencode` store model credentials here through the
 gateway seam. An agent group's OneCLI agent holds only the secrets attached to it.
 NanoClaw records the id of each model credential its provider setup saves (setup's
-Claude key, `/add-codex`, `/add-opencode`) in `data/onecli/provider-credentials.json`,
+Claude key, `/add-codex`, `/add-opencode`, `/add-cursor`) in `data/onecli/provider-credentials.json`,
 by provider. On every spawn it attaches the recorded credentials for the provider
 the group runs, if the agent does not hold them yet; this also covers a new group,
 a group that switched provider, and a login saved after the group existed. For
 an install that saved credentials before ids were recorded, the first spawn per
 provider also adopts, once, the secrets NanoClaw's setup saves, by name
-(`Anthropic`, `Codex`, `OpenCode …`). After that only recorded ids count: a
+(`Anthropic`, `Codex`, `OpenCode …`, `Cursor`). After that only recorded ids count: a
 re-run of the provider's login records a credential it finds or saves.
 
 Every other secret and every app connection is opt-in: the skill that adds it
