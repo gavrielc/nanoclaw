@@ -184,7 +184,7 @@ The subscription is supervised: if the provider's bridge ends, holds are denied,
 
 ## Skills
 
-Four types of skills, plus gateway install skills, a payload variant of the first. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy.
+Four types of skills (see [CONTRIBUTING.md](CONTRIBUTING.md)). Gateway install skills are a kind of the first type: like provider skills, they ship a `payload/`.
 
 - **Channel/provider install skills** — copy the relevant module(s) in (channels from the `channels` branch, providers from the skill's own `payload/`), wire imports, install pinned deps (e.g. `/add-discord`, `/add-slack`, `/add-whatsapp`, `/add-opencode`).
 - **Utility skills** — ship code files alongside `SKILL.md` (e.g. a `scripts/` CLI or helper).

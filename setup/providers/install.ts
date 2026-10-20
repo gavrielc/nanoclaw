@@ -2,8 +2,8 @@
  * In-process provider install — the setup-side twin of the channel installs.
  *
  * A provider's `/add-<name>` SKILL.md is the single source of truth for what an
- * install does (copy the skill's `payload/` files, wire the three
- * provider barrels, merge the CLI manifest entry). This applies that SKILL.md
+ * install does (copy the skill's `payload/` files, wire the five
+ * provider and contract barrels, merge the CLI manifest entry). This applies that SKILL.md
  * directly through the directive engine (`scripts/skill-apply.ts`) instead of
  * shelling out to a hand-maintained `setup/add-<name>.sh` that has to be kept in
  * lockstep with it — the same move `setup/lib/skill-driver.ts` made for channels.
