@@ -38,6 +38,24 @@ function dockerOk(args: string[]): boolean {
   }
 }
 
+/** Whether the egress network is `--internal`; undefined when it does not exist. */
+function egressNetworkInternal(): boolean | undefined {
+  try {
+    const out = execFileSync(
+      CONTAINER_RUNTIME_BIN,
+      ['network', 'inspect', EGRESS_NETWORK, '--format', '{{.Internal}}'],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+        timeout: 15000,
+      },
+    );
+    return out.trim() === 'true';
+  } catch {
+    return undefined;
+  }
+}
+
 /** Is the selected gateway currently attached to the egress network? */
 function gatewayAttached(identity: string): boolean {
   try {
@@ -67,10 +85,13 @@ export function ensureEgressNetwork(access = selectedAccess): boolean {
     throw new EgressLockdownError(`the selected gateway target '${access.target.kind}' cannot join a locked network`);
   }
 
-  if (
-    !dockerOk(['network', 'inspect', EGRESS_NETWORK]) &&
-    !dockerOk(['network', 'create', '--internal', EGRESS_NETWORK])
-  ) {
+  // The name alone proves nothing: a network made by hand, or a setting naming
+  // an ordinary one, would put agents on an uplink.
+  const internal = egressNetworkInternal();
+  if (internal === false) {
+    throw new EgressLockdownError(`the "${EGRESS_NETWORK}" network is not internal`);
+  }
+  if (internal === undefined && !dockerOk(['network', 'create', '--internal', EGRESS_NETWORK])) {
     throw new EgressLockdownError(`the "${EGRESS_NETWORK}" internal network could not be created`);
   }
 
@@ -96,4 +117,9 @@ export function ensureEgressNetwork(access = selectedAccess): boolean {
 /** CLI args placing a container on the locked-down egress network. */
 export function egressNetworkArgs(): string[] {
   return ['--network', EGRESS_NETWORK];
+}
+
+/** Whether a container attached to these networks is on the egress network alone. */
+export function onEgressNetworkOnly(networks: readonly string[]): boolean {
+  return networks.length > 0 && networks.every((name) => name === EGRESS_NETWORK);
 }

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   attached: false,
+  internal: true,
   access: { endpoint: 'gateway.internal', target: { kind: 'runtime' as const, identity: 'fixture-gateway' } },
   execFileSync: vi.fn(),
 }));
@@ -28,9 +29,11 @@ import { ensureEgressNetwork } from './egress-lockdown.js';
 describe('gateway egress attachment', () => {
   beforeEach(() => {
     state.attached = false;
+    state.internal = true;
     state.access = { endpoint: 'gateway.internal', target: { kind: 'runtime', identity: 'fixture-gateway' } };
     state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
       if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
+      if (args.includes('{{.Internal}}')) return String(state.internal);
       if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
       return '';
     });
@@ -51,15 +54,28 @@ describe('gateway egress attachment', () => {
     );
     expect(state.execFileSync).not.toHaveBeenCalled();
   });
+
+  it('fails closed when the egress network exists but is not internal', () => {
+    state.internal = false;
+
+    expect(() => ensureEgressNetwork(state.access)).toThrow('"fixture-egress" network is not internal');
+    expect(state.execFileSync).not.toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['connect']),
+      expect.anything(),
+    );
+  });
 });
 
 it('heals a recreated gateway after restoring the adopted session network intent', () => {
   state.execFileSync.mockImplementation((_bin: string, args: string[]) => {
     if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
+    if (args.includes('{{.Internal}}')) return String(state.internal);
     if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
     return '';
   });
   state.attached = false;
+  state.internal = true;
   ensureEgressNetwork(state.access);
   state.attached = false;
   state.execFileSync.mockClear();
