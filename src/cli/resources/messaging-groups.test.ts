@@ -308,6 +308,7 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     await closeDb();
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   });
@@ -535,11 +536,8 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
       ).toEqual({ messaging_group_id: null, thread_id: null, status: 'active' });
     });
 
-    it('keeps a session that receives a peer message after the peer scan read it', async () => {
-      await wire(MG, 'shared');
-      await session(SHARED, null, now());
-      initSessionFolder(SHARED_AG, SHARED);
-      // Deliver the way agent routing does, right after the scan has read this session.
+    /** Run `deliver` right after the peer scan has read SHARED's mailbox. */
+    function afterScanOfShared(deliver: () => Promise<void>): { delivered: () => boolean } {
       const original = sessionManager.withExistingMailboxSession;
       let delivered = false;
       vi.spyOn(sessionManager, 'withExistingMailboxSession').mockImplementation(
@@ -547,25 +545,67 @@ describe('messaging-groups CLI delete cascades dependent rows', () => {
           const result = await original(agentGroupId, sessionId, action);
           if (sessionId === SHARED && !delivered) {
             delivered = true;
-            await sessionManager.writeSessionMessage(SHARED_AG, SHARED, {
-              id: 'a2a-late',
-              kind: 'chat',
-              timestamp: now(),
-              platformId: 'ag-peer',
-              channelType: 'agent',
-              content: '{}',
-              sourceSessionId: 'sess-on-peer',
-            });
+            await deliver();
           }
           return result;
         },
       );
+      return { delivered: () => delivered };
+    }
+
+    /** What routeAgentMessage writes, through the real inbox write and its last_active bump. */
+    const deliverPeerMessage = () =>
+      sessionManager.writeSessionMessage(SHARED_AG, SHARED, {
+        id: 'a2a-late',
+        kind: 'chat',
+        timestamp: now(),
+        platformId: 'ag-peer',
+        channelType: 'agent',
+        content: '{}',
+        sourceSessionId: 'sess-on-peer',
+      });
+
+    it('keeps a session that receives a peer message after the peer scan read it', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      initSessionFolder(SHARED_AG, SHARED);
+      const probe = afterScanOfShared(deliverPeerMessage);
 
       const data = await deleteMg();
 
-      expect(delivered).toBe(true);
+      expect(probe.delivered()).toBe(true);
       expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
       expect(await count('SELECT COUNT(*) AS c FROM sessions WHERE id = ?', SHARED)).toBe(1);
+    });
+
+    it('keeps it when that write is stamped by a host whose clock runs behind', async () => {
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      initSessionFolder(SHARED_AG, SHARED);
+      const probe = afterScanOfShared(async () => {
+        receiveFromPeer(SHARED);
+        await getDb().run("UPDATE sessions SET last_active = '2000-01-01T00:00:00.000Z' WHERE id = ?", SHARED);
+      });
+
+      const data = await deleteMg();
+
+      expect(probe.delivered()).toBe(true);
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
+    });
+
+    it('keeps it when that write lands in the same millisecond as the value the scan read', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z'));
+      await wire(MG, 'shared');
+      await session(SHARED, null, now());
+      initSessionFolder(SHARED_AG, SHARED);
+      await getDb().run('UPDATE sessions SET last_active = ? WHERE id = ?', now(), SHARED);
+      const probe = afterScanOfShared(deliverPeerMessage);
+
+      const data = await deleteMg();
+
+      expect(probe.delivered()).toBe(true);
+      expect(data.kept_sessions).toEqual([{ id: SHARED, messaging_group_id: null }]);
     });
 
     it('keeps a session holding a peer assignment it has not answered yet', async () => {
