@@ -120,8 +120,13 @@ const SAVED: Record<string, (name: string) => boolean> = {
   cursor: (name) => name === 'Cursor' || name === 'Cursor models',
 };
 
+/** Whether NanoClaw's setup saves this provider's credentials under known names. */
+export function hasSavedProviderNames(provider: string): boolean {
+  return Object.hasOwn(SAVED, provider);
+}
+
 export function isSavedProviderCredential(provider: string, secret: { name?: unknown }): boolean {
-  return typeof secret.name === 'string' && (SAVED[provider]?.(secret.name) ?? false);
+  return typeof secret.name === 'string' && hasSavedProviderNames(provider) && SAVED[provider](secret.name);
 }
 
 /**
@@ -161,7 +166,8 @@ export function adoptSavedProviderCredentials(
   provider: string,
   secrets: Array<{ id?: unknown; name?: unknown }>,
 ): void {
-  if (record.matched.includes(provider)) return;
+  // Never marked without names, so names a later release adds still adopt once.
+  if (record.matched.includes(provider) || !hasSavedProviderNames(provider)) return;
   if (!record.providers[provider]?.length) {
     const saved = savedProviderCredentials(provider, secrets);
     if (saved.duplicates.length) {
