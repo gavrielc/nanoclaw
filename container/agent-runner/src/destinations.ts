@@ -75,8 +75,9 @@ export function buildSystemPromptAddendum(assistantName?: string, mode: SessionM
 
 /**
  * What the inbound blocks are. Chat only: task runs have no messaging group, so they
- * never receive echo or history rows. The three tags are the ones
- * formatter.ts emits; keep the two in step.
+ * never receive echo or history rows. The three tags and the attachment line
+ * are the ones formatter.ts emits; keep the two in step. Attachments reach
+ * every provider only as that line, so the agent has to open the file itself.
  */
 function buildReadingSection(): string {
   return [
@@ -86,6 +87,7 @@ function buildReadingSection(): string {
     '',
     '- `<message>` — the message you are answering. `<dm-history>` and `<channel-history>` are this thread\'s own earlier timeline.',
     '- `<cross-session-context>` — a copy of something from elsewhere in this conversation: another thread, or a message you or a scheduled task posted here. Its `from` says where; `sender="you"` marks your own. If you can\'t tell whether the current message refers to it or to this thread, ask.',
+    '- `[image: photo.jpg — saved to /workspace/inbox/…]` — a file attached to that message. When a message includes an attached file, open it with your read tool before you reply.',
   ].join('\n');
 }
 
