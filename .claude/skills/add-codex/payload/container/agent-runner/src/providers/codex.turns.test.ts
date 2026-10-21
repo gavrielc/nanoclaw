@@ -266,6 +266,58 @@ describe('CodexProvider active turns', () => {
     expect(fake.interruptCalls).toEqual([{ threadId: 'thread-1', turnId: 'turn-1' }]);
   });
 
+  it('keeps the turn open through an error Codex says it will retry', async () => {
+    const fake = createFakeCodexRuntime();
+    const provider = createCodexProvider({}, fake.runtime);
+    const query = provider.query({ prompt: 'prompt', cwd: '/workspace/agent' });
+    const events: ProviderEvent[] = [];
+
+    const collect = collectEvents(query.events, events);
+    await waitFor(() => fake.startCalls.length === 1);
+
+    // A transient stream error: Codex retries it itself and the turn goes on.
+    fake.notify('error', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      willRetry: true,
+      error: { message: 'Reconnecting... 1/5', additionalDetails: 'stream disconnected' },
+    });
+    await waitFor(() => events.some((event) => event.type === 'progress'));
+
+    // The turn is still the active one: a follow-up steers into it.
+    query.push('follow-up');
+    await waitFor(() => fake.steerCalls.length === 1);
+    query.end();
+    fake.completeTurn('final answer');
+    await collect;
+
+    expect(fake.steerCalls).toEqual([{ threadId: 'thread-1', turnId: 'turn-1', inputText: 'follow-up' }]);
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(0);
+    expect(events.filter((event) => event.type === 'progress')).toEqual([
+      { type: 'progress', message: 'Codex retrying: Reconnecting... 1/5: stream disconnected' },
+    ]);
+    expect(events.filter((event) => event.type === 'result')).toEqual([{ type: 'result', text: 'final answer' }]);
+  });
+
+  for (const willRetry of [false, undefined]) {
+    it(`ends the turn on an error Codex will not retry (willRetry: ${willRetry})`, async () => {
+      const fake = createFakeCodexRuntime();
+      const provider = createCodexProvider({}, fake.runtime);
+      const query = provider.query({ prompt: 'prompt', cwd: '/workspace/agent' });
+      const events: ProviderEvent[] = [];
+
+      const collect = collectEvents(query.events, events);
+      await waitFor(() => fake.startCalls.length === 1);
+      fake.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry, error: { message: 'quota exceeded' } });
+      await collect.catch(() => {});
+
+      expect(events.filter((event) => event.type === 'error')).toEqual([
+        { type: 'error', message: 'quota exceeded', retryable: false, classification: 'quota' },
+      ]);
+      expect(events.some((event) => event.type === 'result')).toBe(false);
+    });
+  }
+
   it('ends the turn immediately with the real cause when the app-server dies mid-turn', async () => {
     const fake = createFakeCodexRuntime();
     const provider = createCodexProvider({}, fake.runtime);

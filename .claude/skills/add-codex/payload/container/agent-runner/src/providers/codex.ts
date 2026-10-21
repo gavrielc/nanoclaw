@@ -332,6 +332,12 @@ async function* runOneTurn(
       case 'error': {
         const err = params.error as { message?: string; additionalDetails?: string | null } | undefined;
         const msg = [err?.message, err?.additionalDetails].filter(Boolean).join(': ') || 'Codex turn failed';
+        // willRetry: Codex retries a transient stream error itself and the
+        // turn goes on, so it must not end the turn.
+        if (params.willRetry === true) {
+          buffer.push({ type: 'progress', message: `Codex retrying: ${msg}` });
+          break;
+        }
         state.error = new Error(msg);
         finishTurn();
         break;
