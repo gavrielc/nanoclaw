@@ -444,11 +444,14 @@ describe('add-dial-tool: OneCLI gateway guard', () => {
     expect(r.stderr).toContain('/add-dial-tool needs the pinned OneCLI gateway, 1.45');
   });
 
-  it.each(['unknown', 'dev', '1.45', '1.45.0-x', '1.45.10-rc1', '1.450.0'])('stops on an unreadable version %s', (v) => {
-    const r = guard(health(v));
-    expect(r.status).not.toBe(0);
-    expect(r.stdout).toBe('');
-  });
+  it.each(['unknown', 'dev', '1.45', '1.45.0-x', '1.45.10-rc1', '1.450.0'])(
+    'stops on an unreadable version %s',
+    (v) => {
+      const r = guard(health(v));
+      expect(r.status).not.toBe(0);
+      expect(r.stdout).toBe('');
+    },
+  );
 
   it('stops while any agent is still in all mode (unfinished conversion), or when agents cannot be listed', () => {
     fs.rmSync(root, { recursive: true, force: true });
