@@ -36,6 +36,7 @@ import { applySkill } from './skill-apply.js';
 import { parseDirectives, type Directive } from './skill-directives.js';
 
 const SKILL_MD = path.resolve(__dirname, '../.claude/skills/add-dial-tool/SKILL.md');
+const GATE = '.claude/skills/add-onecli/scripts/check-grants-gateway.sh';
 const directives = parseDirectives(fs.readFileSync(SKILL_MD, 'utf8'));
 const one = (pred: (d: Directive) => boolean): string => {
   const hits = directives.filter(pred);
@@ -101,6 +102,9 @@ function setup(
   calls = path.join(root, 'calls.log');
   fs.mkdirSync(bin);
   fs.mkdirSync(state);
+  // The gateway guard runs the shared grants gate from the project root.
+  fs.mkdirSync(path.join(root, path.dirname(GATE)), { recursive: true });
+  fs.copyFileSync(path.resolve(__dirname, '..', GATE), path.join(root, GATE));
   fs.writeFileSync(calls, '');
   const xdg = path.join(root, 'xdg');
   fs.mkdirSync(path.join(xdg, 'dial'), { recursive: true });
@@ -408,6 +412,10 @@ describe('add-dial-tool: OneCLI gateway guard', () => {
   }
   const health = (version?: string) => JSON.stringify({ status: 'ok', ...(version ? { version } : {}) });
 
+  it('runs the shared grants gate, as /add-vercel and /add-tavily-tool do', () => {
+    expect(CMD.versionGuard).toBe(`sh ${GATE} /add-dial-tool`);
+  });
+
   it.each(['1.45.0', '1.45.3', '1.45.10'])('passes on gateway %s and captures the version', (v) => {
     const r = guard(health(v));
     expect(r.status).toBe(0);
@@ -421,9 +429,9 @@ describe('add-dial-tool: OneCLI gateway guard', () => {
       const r = guard(health(v));
       expect(r.status).not.toBe(0);
       expect(r.stdout).toBe('');
-      expect(r.stderr).toContain(`'${v}'`);
-      expect(r.stderr).toContain('older than the pinned 1.45');
-      expect(r.stderr).toContain('1.45.0');
+      expect(r.stderr).toContain(`is ${v}`);
+      expect(r.stderr).toContain(v === '1.44.0' ? 'is not the pinned 1.45' : 'older than 1.44 and has no agent grants');
+      expect(r.stderr).toContain('/add-dial-tool needs the pinned OneCLI gateway, 1.45');
       expect(r.stderr).toContain('Nothing was written');
     },
   );
@@ -433,10 +441,10 @@ describe('add-dial-tool: OneCLI gateway guard', () => {
     expect(r.status).not.toBe(0);
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('newer than the pinned 1.45');
-    expect(r.stderr).toContain('1.45.0');
+    expect(r.stderr).toContain('/add-dial-tool needs the pinned OneCLI gateway, 1.45');
   });
 
-  it.each(['unknown', 'dev', '1.45', '1.45.0-x', '1.450.0'])('stops on an unreadable version %s', (v) => {
+  it.each(['unknown', 'dev', '1.45', '1.45.0-x', '1.45.10-rc1', '1.450.0'])('stops on an unreadable version %s', (v) => {
     const r = guard(health(v));
     expect(r.status).not.toBe(0);
     expect(r.stdout).toBe('');
@@ -534,18 +542,18 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
 
   it('never writes the Dial key or attaches it when the gateway guard fails', async () => {
     const { ran, res } = await apply((c) => {
-      if (c.includes('/api/health')) throw new Error('gateway 1.42.0 is older than the pinned 1.45');
+      if (c.includes('check-grants-gateway.sh')) throw new Error('the OneCLI gateway is 1.42.0, older than 1.44');
       if (c.includes('unknown agent group')) return 'all';
       return undefined;
     });
-    expect(ran.some((c) => c.includes('/api/health'))).toBe(true);
+    expect(ran.some((c) => c.includes('check-grants-gateway.sh'))).toBe(true);
     expect(writes(ran)).toEqual([]);
     expect(res.agentTasks.length).toBeGreaterThan(0);
   });
 
   it('never installs, signs in, or writes when the selection check fails', async () => {
     const { ran, res } = await apply((c) => {
-      if (c.includes('/api/health')) return '1.45.0';
+      if (c.includes('check-grants-gateway.sh')) return '1.45.0';
       if (c.includes('unknown agent group')) throw new Error("unknown agent group 'ag-typo'");
       return undefined;
     });
@@ -556,7 +564,7 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
 
   it('attaches the new key even when the image build failed, so a replaced key is never left on nobody', async () => {
     const { ran } = await apply((c) => {
-      if (c.includes('/api/health')) return '1.45.0';
+      if (c.includes('check-grants-gateway.sh')) return '1.45.0';
       if (c.includes('unknown agent group')) return 'all';
       if (c.includes('container/build.sh')) throw new Error('docker build failed');
       return undefined;
@@ -570,7 +578,7 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
 
   it('never attaches when storing the key fails, so no other key is attached', async () => {
     const { ran, res } = await apply((c) => {
-      if (c.includes('/api/health')) return '1.45.0';
+      if (c.includes('check-grants-gateway.sh')) return '1.45.0';
       if (c.includes('unknown agent group')) return 'all';
       if (c.includes('dial-secret.ts')) throw new Error('Multiple Dial API credentials exist');
       return undefined;
@@ -582,7 +590,7 @@ describe('add-dial-tool: the skill engine gates every write on the guards', () =
 
   it('runs every step, in order, when the guards pass: the key is written before it is attached', async () => {
     const { ran } = await apply((c) => {
-      if (c.includes('/api/health')) return '1.45.0';
+      if (c.includes('check-grants-gateway.sh')) return '1.45.0';
       if (c.includes('unknown agent group')) return 'all';
       return undefined;
     });
