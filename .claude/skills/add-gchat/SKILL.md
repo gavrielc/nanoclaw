@@ -72,14 +72,15 @@ until they're done.
 > 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 > 2. Create or select a project
 > 3. Enable the **Google Chat API**
-> 4. Go to **Google Chat API** > **Configuration**:
->    - App name and description
+> 4. Go to **Google Chat API** > **Configuration** (one page, then **Save**):
 >    - Make sure **Build this Chat app as a Google Workspace add-on** is checked
+>    - **App name** and **Description** (max 40 characters) are required; **Avatar URL** is optional
+>    - Turn on **Enable interactive features**; to use the app in spaces, also check **Join spaces and group conversations** (DMs work without it)
 >    - Connection settings: select **HTTP endpoint URL**, then under **Triggers** select **Use a common HTTP endpoint URL for all triggers** and set it to `https://your-domain/webhook/gchat`
+>    - **Visibility**: check **Make this chat app available to specific people and groups** and add the accounts that will chat with it. Only accounts in the project's own Workspace can find the app
 > 5. Create a **Service Account**:
->    - Go to **IAM & Admin** > **Service Accounts** > **Create Service Account**
->    - Grant the Chat Bot role
->    - Create a JSON key and download it
+>    - Go to **IAM & Admin** > **Service Accounts** > **Create service account**. It needs no roles, so skip the permissions and principals steps
+>    - Open it, then **Keys** > **Add key** > **Create new key** > **JSON**. The key file downloads
 
 ### Store the credentials
 
@@ -142,7 +143,7 @@ to you, so on a first install answer `later` and add it then.
 Tell the user:
 
 ```nc:operator
-To find the bot user id: DM the app and let it reply. Open https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages/list, use "Try this method" with parent set to the DM space (spaces/<id>, the last part of the chat URL) and orderBy set to createTime desc, and copy sender.name from a message whose sender type is BOT. It looks like users/123456789.
+To find the bot user id: DM the app and let it reply. Open https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages/list, use "Try this method" with parent set to the DM space (spaces/<id>, the last part of the chat URL) and orderBy set to createTime DESC, and copy sender.name from a message whose sender type is BOT. It looks like users/123456789.
 Without it, DMs still work; add GOOGLE_CHAT_BOT_USER_ID to .env later and restart.
 ```
 
