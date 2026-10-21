@@ -103,7 +103,8 @@ function importOwners(root: string, barrel: string): Map<string, string> {
   const skillsDir = path.join(root, '.claude/skills');
   if (!fs.existsSync(skillsDir)) return owners;
 
-  for (const skillName of fs.readdirSync(skillsDir)) {
+  // Sorted, so a contested import resolves the same way on every filesystem.
+  for (const skillName of fs.readdirSync(skillsDir).sort()) {
     const skillFile = path.join(skillsDir, skillName, 'SKILL.md');
     if (!fs.existsSync(skillFile)) continue;
     let directives;
@@ -115,10 +116,12 @@ function importOwners(root: string, barrel: string): Map<string, string> {
       continue;
     }
     for (const directive of directives) {
-      if (directive.kind !== 'append' || directive.attrs.to !== barrel) continue;
+      if (directive.kind !== 'append' || path.posix.normalize(String(directive.attrs.to)) !== barrel) continue;
       for (const line of directive.body) {
         const match = /^\s*import\s+['"]\.\/([a-z0-9-]+)\.js['"];?\s*$/.exec(line);
-        if (match && !owners.has(match[1])) owners.set(match[1], skillName);
+        if (!match) continue;
+        // add-<name> always owns <name>, whichever other skill also declares it.
+        if (!owners.has(match[1]) || skillName === `add-${match[1]}`) owners.set(match[1], skillName);
       }
     }
   }
@@ -128,17 +131,17 @@ function importOwners(root: string, barrel: string): Map<string, string> {
 export function detectInstalledSkills(root: string): InstalledSkill[] {
   const channelBarrel = 'src/channels/index.ts';
   const owners = importOwners(root, channelBarrel);
-  const seen = new Set<string>();
-  const channels = readImports(path.join(root, channelBarrel))
-    .filter((name) => name !== 'cli')
-    .map((name) => ({ name, skillName: owners.get(name) ?? `add-${name}` }))
-    // A skill that owns several imports is refreshed once, under its own name.
-    .filter(({ skillName }) => !seen.has(skillName) && seen.add(skillName))
-    .map(({ name, skillName }) => ({
-      name: skillName.startsWith('add-') ? skillName.slice('add-'.length) : name,
-      skillName,
-      kind: 'channel' as const,
-    }));
+  // A skill that owns several imports is refreshed once, under its own name.
+  const channelSkills = new Set(
+    readImports(path.join(root, channelBarrel))
+      .filter((name) => name !== 'cli')
+      .map((name) => owners.get(name) ?? `add-${name}`),
+  );
+  const channels = [...channelSkills].map((skillName) => ({
+    name: skillName.startsWith('add-') ? skillName.slice('add-'.length) : skillName,
+    skillName,
+    kind: 'channel' as const,
+  }));
   const providers = new Set([
     ...readImports(path.join(root, 'src/providers/index.ts')),
     ...readImports(path.join(root, 'container/agent-runner/src/providers/index.ts')),
