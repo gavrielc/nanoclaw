@@ -52,6 +52,15 @@ const GCHAT_DEFAULTS: ChannelDefaults = {
   mentions: 'platform',
 };
 
+// The file name comes from the sender. JSON-quote it and show invisible
+// characters, line separators and brackets as \uXXXX so it cannot end the note.
+function quoteFileName(name: string): string {
+  return JSON.stringify(name).replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\u2028\u2029[\]]/gu, (c) => {
+    const cp = c.codePointAt(0) ?? 0;
+    return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, '0')}`;
+  });
+}
+
 /**
  * Chat sends a file shared from Google Drive as a Drive id only. Chat's media
  * download refuses Drive files and the app cannot open the sender's Drive, so
@@ -65,11 +74,13 @@ export function gchatDriveFileNote(raw: Record<string, unknown>): string | null 
   if (!Array.isArray(attachments)) return null;
   const notes = attachments
     .filter((att) => att?.source === 'DRIVE_FILE' && !att.attachmentDataRef?.resourceName)
-    .map(
-      (att) =>
-        `[Google Drive file "${att.contentName || 'file'}" was not downloaded: this app can't open files shared ` +
-        `from Google Drive. Ask the sender to upload the file into the chat instead (paste or drag it in).]`,
-    );
+    .map((att) => {
+      const name = typeof att.contentName === 'string' && att.contentName ? att.contentName : 'file';
+      return (
+        `[Google Drive file ${quoteFileName(name)} was not downloaded: this app can't open files shared ` +
+        `from Google Drive. Ask the sender to upload the file into the chat instead (paste or drag it in).]`
+      );
+    });
   return notes.length > 0 ? notes.join('\n') : null;
 }
 
