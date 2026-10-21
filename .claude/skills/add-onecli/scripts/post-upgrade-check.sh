@@ -27,7 +27,7 @@ case "$line" in *", 0 failed,"*) ;; *) notdone "the conversion did not report 0 
 case "$line" in *", 0 verify-failed"*) ;; *) notdone "the conversion did not report 0 verify-failed: $line" ;; esac
 # A preempted run was superseded before it finished and can leave agents in all mode.
 case "$line" in *", 0 preempted,"*) ;; *) notdone "the conversion was preempted: restart the gateway, wait, then run this again: $line" ;; esac
-AG=$(onecli agents list --max 0) || stop "could not list OneCLI agents at $GW (a gateway with an API token needs \`onecli auth login --api-key <token>\` on this host first)"
+AG=$(onecli agents list --max 0) || stop "could not list OneCLI agents at $GW (a gateway with an API token needs \`onecli auth login --api-key <ONECLI_API_KEY from NanoClaw's .env>\` on this host first)"
 N=$(printf '%s' "$AG" | jq -er '[(if type == "array" then . else .data end)[] | select(.secretMode == "all")] | length') \
   || stop "could not read the OneCLI agent list at $GW"
 [ "$N" = 0 ] || notdone "$N agent(s) are still in all mode, so the conversion has not finished: restart the gateway, wait, then run this again"

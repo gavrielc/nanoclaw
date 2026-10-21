@@ -623,6 +623,20 @@ esac
     expect(detect).toMatch(/not named `onecli`, use its name in every `docker inspect` and `docker logs`/);
   });
 
+  it('says only an old gateway may report version unknown in Detect, since Verify refuses it', () => {
+    const detect = guide.slice(guide.indexOf('## 1. Detect'), guide.indexOf('## 2. Upgrade'));
+    expect(detect).toContain('an old gateway may say "unknown"');
+    expect(detect).not.toContain('its `version` field may say "unknown"');
+  });
+
+  it('names the key in NanoClaw\'s .env in every sign-in hint, not a bare token', () => {
+    const SCRIPTS = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts');
+    for (const text of [guide, fs.readFileSync(path.join(SCRIPTS, 'post-upgrade-check.sh'), 'utf8')]) {
+      expect(text).toContain("onecli auth login --api-key <ONECLI_API_KEY from NanoClaw's .env>");
+      expect(text).not.toContain('<token>');
+    }
+  });
+
   it('refuses a gateway that reports version unknown in Verify, as the grants gate does', () => {
     const verify = guide.slice(guide.indexOf('## 3. Verify'), guide.indexOf('Verify the bind interface'));
     expect(verify).not.toMatch(/or "unknown"/);
