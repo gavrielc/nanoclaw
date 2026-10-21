@@ -74,10 +74,10 @@ until they're done.
 > 3. Enable the **Google Chat API**
 > 4. Go to **Google Chat API** > **Configuration** (one page, then **Save**):
 >    - Make sure **Build this Chat app as a Google Workspace add-on** is checked
->    - **App name** and **Description** (max 40 characters) are required; **Avatar URL** is optional
->    - Turn on **Enable interactive features**; to use the app in spaces, also check **Join spaces and group conversations** (DMs work without it)
+>    - Fill in **App name** (up to 25 alphanumeric characters), **Avatar URL** (an HTTPS link to a square PNG or JPEG) and **Description** (max 40 characters)
+>    - Turn on **Enable interactive features**; to use the app in spaces, also check **Join spaces and group conversations**
 >    - Connection settings: select **HTTP endpoint URL**, then under **Triggers** select **Use a common HTTP endpoint URL for all triggers** and set it to `https://your-domain/webhook/gchat`
->    - **Visibility**: check **Make this chat app available to specific people and groups** and add the accounts that will chat with it. Only accounts in the project's own Workspace can find the app
+>    - **Visibility**: check **Make this chat app available to specific people and groups in** *your domain* and add up to five people, or Google Groups, who will chat with it. Only accounts in the project's own Workspace can find the app
 > 5. Create a **Service Account**:
 >    - Go to **IAM & Admin** > **Service Accounts** > **Create service account**. It needs no roles, so skip the permissions and principals steps
 >    - Open it, then **Keys** > **Add key** > **Create new key** > **JSON**. The key file downloads
@@ -173,9 +173,11 @@ If you're in the middle of `/setup`, return to the setup flow now. Otherwise run
 
 ## Troubleshooting
 
-**The adapter starts, then errors about credentials.** `GCHAT_CREDENTIALS` must be the *entire* service account JSON collapsed to one line — inspect `.env` and confirm it still contains `"type":"service_account"`, `"private_key"`, and `"client_email"`. A truncated paste (shells often mangle the multi-line private key) is the usual cause; download a fresh JSON key under **IAM & Admin → Service Accounts → Keys** and re-paste it as a single line.
+**Google Chat won't start: "GCHAT_CREDENTIALS in .env must be the service account JSON key on one line".** `GCHAT_CREDENTIALS` must be the *entire* service account JSON collapsed to one line, with its `client_email` and RSA `private_key`. A truncated paste (shells often mangle the multi-line private key) is the usual cause; download a fresh JSON key under **IAM & Admin → Service Accounts → Keys** and re-paste it as a single line.
 
-**Google Chat won't start: "needs GOOGLE_CHAT_ENDPOINT_URL and GOOGLE_CHAT_PROJECT_NUMBER".** One of them is missing from `.env`, or the number has something other than digits. Add both as described under **Webhook verification** and restart.
+**Google Cloud won't create the JSON key.** Organizations created on or after May 3, 2024 enforce `constraints/iam.managed.disableServiceAccountKeyCreation` by default. An organization policy admin can turn off the constraint the error names (that one, or the older `constraints/iam.disableServiceAccountKeyCreation`) for this project only, under **IAM & Admin → Organization Policies**.
+
+**Google Chat won't start: "needs GOOGLE_CHAT_ENDPOINT_URL and GOOGLE_CHAT_PROJECT_NUMBER".** One of them is missing from `.env`, or the number has something other than digits. Add both as described under **Webhook verification** and restart. "must be an https URL" means `GOOGLE_CHAT_ENDPOINT_URL` isn't a valid `https://` address.
 
 **Every webhook is rejected (401), with a JWT warning in the log.** `GOOGLE_CHAT_ENDPOINT_URL` must match the trigger URL in **Google Chat API → Configuration** exactly, and `GOOGLE_CHAT_PROJECT_NUMBER` must be the number of the project the Chat app belongs to. After a URL change, edit `.env` by hand: re-running the skill keeps the old value.
 
