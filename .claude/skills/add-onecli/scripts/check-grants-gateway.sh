@@ -8,11 +8,12 @@
 set -u
 skill="${1:-this skill}"
 # $2 names what needs fixing: cli (install or upgrade the CLI), config (point it
-# at the gateway), jq; otherwise the gateway.
+# at the gateway), reach (start the gateway), jq; otherwise the gateway version.
 no() {
   case "${2:-}" in
     cli) need="the pinned onecli CLI, 2.11.0: see \"The CLI binary\" in docs/onecli-upgrades.md" ;;
-    config) need="the onecli CLI pointed at and signed in to the OneCLI gateway: \`onecli config get api-host\` prints the address (set it with \`onecli config set api-host <ONECLI_URL from .env>\`), and a gateway with an API token needs \`onecli auth login --api-key <token>\`" ;;
+    config) need="the onecli CLI pointed at and signed in to the OneCLI gateway: \`onecli config get api-host\` prints the address (set it with \`onecli config set api-host <ONECLI_URL from .env>\`), and a gateway with an API token needs \`onecli auth login --api-key <ONECLI_API_KEY from .env>\`" ;;
+    reach) need="a running OneCLI gateway at that address: start the OneCLI gateway, or fix the address with \`onecli config set api-host <ONECLI_URL from .env>\`" ;;
     jq) need="jq" ;;
     *) need="the pinned OneCLI gateway, 1.45: see docs/onecli-upgrades.md" ;;
   esac
@@ -24,10 +25,12 @@ C=$(onecli config get api-host 2>/dev/null) || no "\`onecli config get api-host\
 U=$(printf '%s' "$C" | jq -r '.value // empty' 2>/dev/null) \
   || no "could not read the api-host from \`onecli config get api-host\`, so the OneCLI gateway cannot be checked" config
 [ -n "$U" ] || no "the onecli CLI has no api-host set, so the OneCLI gateway cannot be checked" config
-H=$(curl -fsS --max-time 10 "$U/api/health" 2>/dev/null) || no "could not reach the OneCLI gateway at $U"
+H=$(curl -fsS --max-time 10 "$U/api/health" 2>/dev/null) || no "could not reach the OneCLI gateway at $U" reach
 V=$(printf '%s' "$H" | jq -er '.version' 2>/dev/null) || V=
+# Only a plain 1.45.N release passes: a pre-release or build suffix is refused.
 case "$V" in
-  1.45.[0-9] | 1.45.[0-9][0-9]*) ;;
+  1.45.*[!0-9]* | 1.45.) no "the OneCLI gateway at $U is $V, not a 1.45 release" ;;
+  1.45.*) ;;
   1.44.*) no "the OneCLI gateway at $U is $V: it has agent grants but is not the pinned 1.45" ;;
   0.* | 1.[0-9].* | 1.[1-3][0-9].* | 1.4[0-3].*) no "the OneCLI gateway at $U is $V, older than 1.44 and has no agent grants" ;;
   1.4[6-9].* | 1.[5-9][0-9].* | 1.[1-9][0-9][0-9]*.* | [2-9].* | [1-9][0-9]*.*) no "the OneCLI gateway at $U is $V, newer than the pinned 1.45" ;;

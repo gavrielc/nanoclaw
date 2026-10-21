@@ -17,7 +17,7 @@ GWP=$(env_get NANOCLAW_GATEWAY_PROVIDER | tr 'A-Z' 'a-z'); echo "provider: ${GWP
 GW=$(env_get ONECLI_URL); echo "ONECLI_URL: ${GW:-none}"   # the address NanoClaw uses
 cat .claude/skills/add-onecli/versions.json         # the sanctioned pin (onecli-gateway)
 docker inspect -f '{{.Config.Image}} {{.Image}}' onecli   # running tag + image ID (local gateway)
-curl -s "$GW/api/health"                            # liveness check; its `version` field may say "unknown"
+curl -s "$GW/api/health"                            # liveness check; an old gateway may say "unknown" for `version`
 curl -s -o /dev/null -w '%{http_code}' "$GW/v1/health"
 ```
 
@@ -89,7 +89,7 @@ Then pull and restart:
 cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECLI_VERSION docker compose up -d
 ```
 
-Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI; when the gateway uses an API token, sign that CLI in first with `onecli auth login --api-key <token>`). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
+Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI; when the gateway uses an API token, sign that CLI in first with `onecli auth login --api-key <ONECLI_API_KEY from NanoClaw's .env>`). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
 
 ```bash
 GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh

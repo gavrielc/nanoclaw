@@ -120,6 +120,32 @@ describe('OneCLI grants gate messages', () => {
     expect(r.stderr).not.toContain('no api-host set');
   });
 
+  it('says to start the gateway or fix the api-host, not to upgrade it, when the gateway is unreachable', () => {
+    const r = gate({ health: false });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('start the OneCLI gateway');
+    expect(r.stderr).toContain('onecli config set api-host');
+    expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
+  });
+
+  it.each(['1.45.0-rc1', '1.45.10-rc1', '1.45.0+build'])('refuses the pre-release or build %s like any other', (v) => {
+    const r = gate({ version: v });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`is ${v}, not a 1.45 release`);
+  });
+
+  it.each(['1.45.0', '1.45.3', '1.45.10', '1.45.123'])('passes the 1.45 release %s', (v) => {
+    const r = gate({ version: v });
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(v);
+  });
+
+  it('names the key from .env in the sign-in hint, as the api-host hint does', () => {
+    const r = gate({ listFails: true });
+    expect(r.stderr).toContain('onecli auth login --api-key <ONECLI_API_KEY from .env>');
+    expect(r.stderr).not.toContain('<token>');
+  });
+
   it('says to sign the CLI in, not to upgrade the gateway, when listing agents fails', () => {
     const r = gate({ listFails: true });
     expect(r.status).toBe(1);
