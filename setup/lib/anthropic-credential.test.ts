@@ -44,9 +44,11 @@ describe('anthropicCredentialError', () => {
   );
 
   it.each(['hello', 'sk-ant-', 'sk-ant-01-fixture', 'sk-proj-fixture', 'SK-ANT-API03-fixture', '"sk-ant-api03-x"'])(
-    'rejects %s as an API key',
+    'rejects %s as an API key, naming everything the prompt takes',
     (value) => {
-      expect(anthropicCredentialError('api', value)).toMatch(/sk-ant-api…, sk-ant-usr… or sk-ant-svc…/);
+      const error = anthropicCredentialError('api', value);
+      expect(error).toMatch(/sk-ant-api…, sk-ant-usr… or sk-ant-svc…/);
+      expect(error).toMatch(/OAuth token \(sk-ant-oat…\)/);
     },
   );
 

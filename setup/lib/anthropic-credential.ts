@@ -41,6 +41,7 @@ export function anthropicCredentialError(kind: 'api' | 'oauth', raw: string | un
   if (isAnthropicOAuthToken(value)) return undefined;
   if (value.startsWith(REFRESH_PREFIX)) return 'OAuth refresh tokens cannot call Claude; paste an API key instead';
   if (value.startsWith(ADMIN_PREFIX)) return 'Admin API keys cannot call Claude; paste an API key instead';
-  if (!KEY_PREFIX.test(value)) return 'Must be an Anthropic API key (sk-ant-api…, sk-ant-usr… or sk-ant-svc…)';
+  if (!KEY_PREFIX.test(value))
+    return 'Must be an Anthropic API key (sk-ant-api…, sk-ant-usr… or sk-ant-svc…) or an OAuth token (sk-ant-oat…)';
   return undefined;
 }
