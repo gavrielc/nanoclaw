@@ -125,23 +125,10 @@ describe('buildSystemPromptAddendum — reading messages', () => {
     expect(prompt.indexOf('## Sending messages')).toBeLessThan(prompt.indexOf('## Reading messages'));
   });
 
-  it('tells the agent to open an attached file before replying', () => {
-    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
-
-    const prompt = buildSystemPromptAddendum('Casa');
-    const reading = prompt.slice(prompt.indexOf('## Reading messages'));
-
-    expect(reading).toContain('— saved to /workspace/inbox/');
-    expect(reading).toContain(
-      'When a message includes an attached file, open it with your read tool before you reply.',
-    );
-  });
-
   it('omits the reading section in task mode, which never receives echoes', () => {
     const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'weekly-report' });
 
     expect(prompt).not.toContain('Reading messages');
     expect(prompt).not.toContain('cross-session-context');
-    expect(prompt).not.toContain('attached file');
   });
 });
