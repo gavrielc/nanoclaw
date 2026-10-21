@@ -64,8 +64,9 @@ async function fireAction(
     onInbound: async () => {},
     onInboundEvent: async () => {},
     onMetadata: () => {},
-    onAction: (questionId: string, selectedOption: string, userId: string) => {
+    onAction: async (questionId: string, selectedOption: string, userId: string) => {
       actions.push(`${questionId}:${selectedOption}:${userId}`);
+      return 'accepted' as const;
     },
   } as ChannelSetup);
 
