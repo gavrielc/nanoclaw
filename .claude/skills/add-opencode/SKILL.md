@@ -24,7 +24,8 @@ the container image alone. Backend defaults are installation-wide; model and
 reasoning effort can be overridden per group through the existing container
 configuration. Per-group backend/auth selection is separate work. Channel
 attachments reach the agent as a prompt line naming the staged file; the agent
-opens it with OpenCode's read tool, which hands images and PDFs to the model.
+opens it with OpenCode's read tool, which hands images and PDFs to models that
+accept them (a custom model declares that with `OPENCODE_MODEL_INPUT_MODALITIES`).
 
 Authentication checks the installed files, registration lines, and exact pins
 against this skill's declarations without launching a subprocess or container.
