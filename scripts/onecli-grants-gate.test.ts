@@ -83,7 +83,7 @@ describe('OneCLI grants gate', () => {
     ['a three-digit minor', { version: '1.100.0' }, 'newer than the pinned 1.45'],
     ['a two-digit major', { version: '10.0.0' }, 'newer than the pinned 1.45'],
     ['a gateway that reports version unknown', { version: 'unknown' }, "reports version 'unknown'"],
-    ['a CLI without an api-host', { apiHost: '' }, "no api-host"],
+    ['a CLI without an api-host', { apiHost: '' }, 'no api-host'],
     ['no onecli CLI', { cli: false }, 'is not installed'],
   ])('refuses %s and writes nothing', (_name, opts, message) => {
     const r = gate(opts);
@@ -128,11 +128,14 @@ describe('OneCLI grants gate messages', () => {
     expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
   });
 
-  it.each(['1.45.0-rc1', '1.45.10-rc1', '1.45.0+build'])('refuses the pre-release or build %s like any other', (v) => {
-    const r = gate({ version: v });
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain(`is ${v}, not a 1.45 release`);
-  });
+  it.each(['1.45.0-rc1', '1.45.10-rc1', '1.45.0+build', '1.45.', '1.45.0.1'])(
+    'refuses the pre-release or build %s like any other',
+    (v) => {
+      const r = gate({ version: v });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(`is ${v}, not a 1.45 release`);
+    },
+  );
 
   it.each(['1.45.0', '1.45.3', '1.45.10', '1.45.123'])('passes the 1.45 release %s', (v) => {
     const r = gate({ version: v });

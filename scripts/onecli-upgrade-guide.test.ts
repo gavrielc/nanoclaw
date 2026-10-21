@@ -629,7 +629,7 @@ esac
     expect(detect).not.toContain('its `version` field may say "unknown"');
   });
 
-  it('names the key in NanoClaw\'s .env in every sign-in hint, not a bare token', () => {
+  it("names the key in NanoClaw's .env in every sign-in hint, not a bare token", () => {
     const SCRIPTS = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts');
     for (const text of [guide, fs.readFileSync(path.join(SCRIPTS, 'post-upgrade-check.sh'), 'utf8')]) {
       expect(text).toContain("onecli auth login --api-key <ONECLI_API_KEY from NanoClaw's .env>");
@@ -642,7 +642,9 @@ esac
     expect(verify).not.toMatch(/or "unknown"/);
     expect(verify).toMatch(/including `unknown`/);
     // The gate accepts any 1.45.x, so the guide may only claim it refuses an unreadable version.
-    expect(verify).toMatch(/before they save a key \(`check-grants-gateway\.sh`\) also refuses a gateway that reports `unknown`/);
+    expect(verify).toMatch(
+      /before they save a key \(`check-grants-gateway\.sh`\) also refuses a gateway that reports `unknown`/,
+    );
     expect(verify).not.toMatch(/does not report the pin/);
   });
 
