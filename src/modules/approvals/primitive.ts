@@ -21,11 +21,16 @@
  * exposing just user-roles/user-dms) is more churn than it's worth. Revisit
  * if either module becomes genuinely optional (see REFACTOR_PLAN open q #3).
  */
-import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
+import {
+  CardTooLongError,
+  cardQuestionTooLong,
+  normalizeOptions,
+  type RawOption,
+} from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { createPendingApproval, deletePendingApproval, getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
-import { wakeContainer } from '../../container-runner.js';
+import { requestWake } from '../../request-wake.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { MessagingGroup, PendingApproval, Session } from '../../types.js';
@@ -42,8 +47,8 @@ export const REJECT_WITH_REASON_VALUE = 'reject_with_reason';
 /**
  * Three-button approval UI. Plain Reject is the instant fast path; "Reject with
  * reason…" opts into the reason-capture flow. Shared by every module approval
- * (create_agent, install_packages, add_mcp_server); OneCLI credential cards
- * keep their own two-button set in onecli-approvals.ts.
+ * (create_agent, install_packages, add_mcp_server). Gateway approvals use the
+ * core gateway coordinator's two-button decision flow.
  */
 const APPROVAL_OPTIONS: RawOption[] = [
   { label: 'Approve', selectedLabel: '✅ Approved', value: 'approve', style: 'primary' },
@@ -160,21 +165,23 @@ export async function pickApprover(agentGroupId: string | null): Promise<string[
  * pair we can actually deliver to. Returns null if nobody is reachable.
  *
  * Tie-break: prefer approvers reachable on the same channel kind as the
- * origin; else first in list. Resolution uses ensureUserDm, which may
- * trigger a platform openDM call on cache miss.
+ * origin; else first in list. A same-channel origin resolves through its
+ * exact adapter instance.
  */
 export async function pickApprovalDelivery(
   approvers: string[],
   originChannelType: string,
+  originInstance?: string,
 ): Promise<{ userId: string; messagingGroup: MessagingGroup } | null> {
   if (originChannelType) {
     for (const userId of approvers) {
       if (channelTypeOf(userId) !== originChannelType) continue;
-      const mg = await ensureUserDm(userId);
+      const mg = await ensureUserDm(userId, originInstance === undefined ? undefined : { instance: originInstance });
       if (mg) return { userId, messagingGroup: mg };
     }
   }
   for (const userId of approvers) {
+    if (originChannelType && channelTypeOf(userId) === originChannelType) continue;
     const mg = await ensureUserDm(userId);
     if (mg) return { userId, messagingGroup: mg };
   }
@@ -184,6 +191,14 @@ export async function pickApprovalDelivery(
 function channelTypeOf(userId: string): string {
   const idx = userId.indexOf(':');
   return idx < 0 ? '' : userId.slice(0, idx);
+}
+
+/**
+ * A card joins the requester's thread only when it lands in the requester's own
+ * chat; a thread id from any other chat means nothing in the approver's DM.
+ */
+export function approvalCardThread(session: Session, target: MessagingGroup): string | null {
+  return session.messaging_group_id === target.id ? session.thread_id : null;
 }
 
 // ── Request API ──
@@ -200,7 +215,7 @@ export async function notifyAgent(session: Session, text: string): Promise<void>
     content: JSON.stringify({ text, sender: 'system', senderId: 'system' }),
   });
   const fresh = await getSession(session.id);
-  if (fresh) await wakeContainer(fresh);
+  if (fresh) await requestWake(fresh, 'inbound-message');
 }
 
 export interface RequestApprovalOptions {
@@ -227,17 +242,23 @@ export interface RequestApprovalOptions {
 export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
   const { session, action, payload, title, question, agentName, approverUserId } = opts;
 
+  // The approver must see the whole request: refuse what a card can't show in full.
+  const tooLong = cardQuestionTooLong(title, question);
+  if (tooLong) {
+    await notifyAgent(session, `${action} failed: ${tooLong}. Shorten the request and try again.`);
+    return;
+  }
+
   const approvers = approverUserId ? [approverUserId] : await pickApprover(session.agent_group_id);
   if (approvers.length === 0) {
     await notifyAgent(session, `${action} failed: no owner or admin configured to approve.`);
     return;
   }
 
-  const originChannelType = session.messaging_group_id
-    ? ((await getMessagingGroup(session.messaging_group_id))?.channel_type ?? '')
-    : '';
+  const origin = session.messaging_group_id ? await getMessagingGroup(session.messaging_group_id) : undefined;
+  const originChannelType = origin?.channel_type ?? '';
 
-  const target = await pickApprovalDelivery(approvers, originChannelType);
+  const target = await pickApprovalDelivery(approvers, originChannelType, origin?.instance);
   if (!target) {
     await notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
     return;
@@ -252,14 +273,15 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     action,
     payload: JSON.stringify(payload),
     created_at: new Date().toISOString(),
-    // The bot identity this card goes out as. This flow persists no delivery
-    // address (it has no card-edit path today), but the instance is the one
-    // piece that cannot be re-derived later, so record it while we hold it.
+    channel_type: target.messagingGroup.channel_type,
+    platform_id: target.messagingGroup.platform_id,
     instance: target.messagingGroup.instance ?? null,
     title,
     question,
     options_json: JSON.stringify(normalizedOptions),
-    approver_user_id: approverUserId ?? null,
+    // The DM'd approver is the identity this card was routed to; recording it
+    // makes resolution exact — only that user may decide the row.
+    approver_user_id: approverUserId ?? target.userId ?? null,
   });
 
   const adapter = getDeliveryAdapter();
@@ -268,7 +290,7 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
       await adapter.deliver(
         target.messagingGroup.channel_type,
         target.messagingGroup.platform_id,
-        null,
+        approvalCardThread(session, target.messagingGroup),
         'chat-sdk',
         JSON.stringify({
           type: 'ask_question',
@@ -277,13 +299,20 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
           question,
           options: APPROVAL_OPTIONS,
         }),
+        undefined,
+        target.messagingGroup.instance,
       );
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });
       // The single delivery target never saw the card — remove the row so it
       // can't linger as a pending approval nobody can act on.
       await deletePendingApproval(approvalId);
-      await notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
+      // A card the channel refused as too long says why, so the agent can shorten it.
+      const reason =
+        err instanceof CardTooLongError
+          ? `${err.message}. Shorten the request and try again.`
+          : `could not deliver approval request to ${target.userId}.`;
+      await notifyAgent(session, `${action} failed: ${reason}`);
       return;
     }
   }

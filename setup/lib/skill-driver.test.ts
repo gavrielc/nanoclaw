@@ -14,8 +14,11 @@ import {
   clackResolveInput,
   applyOutcome,
   plainDuration,
+  parseDriverArgv,
+  unknownInputKeys,
   type RunSkillOptions,
 } from './skill-driver.js';
+import * as setupLog from '../logs.js';
 import { fullyApplied, type ApplyEvent, type ApplyResult } from '../../scripts/skill-apply.js';
 
 // Shared test state for the clack + claude-handoff mocks (hoisted so the vi.mock
@@ -82,6 +85,22 @@ function scratch(): { root: string; skill: string } {
 }
 
 describe('thin skill driver', () => {
+  it('forwards refresh mode so materialized payload updates replace installed files', async () => {
+    const { root, skill } = scratch();
+    mkdirSync(join(skill, 'payload'));
+    writeFileSync(join(skill, 'payload', 'provider.ts'), 'new provider\n');
+    writeFileSync(join(root, 'provider.ts'), 'old provider\n');
+    writeFileSync(
+      join(skill, 'SKILL.md'),
+      '# refresh demo\n\n```nc:copy\npayload/provider.ts -> provider.ts\n```\n',
+    );
+
+    const res = await runSkill(skill, { projectRoot: root, mode: 'refresh', exec: () => '' });
+
+    expect(fullyApplied(res)).toBe(true);
+    expect(readFileSync(join(root, 'provider.ts'), 'utf8')).toBe('new provider\n');
+  });
+
   it('resolves prompts via resolveInput, emits operator events, and execs wiring', async () => {
     const { root, skill } = scratch();
     const asked: Array<{ name: string; secret: boolean }> = [];
@@ -167,6 +186,38 @@ describe('thin skill driver', () => {
     expect(log).toContain('warn-line'); // stderr captured, not echoed to the wizard
     expect(log).toContain('$ echo dying-gasp >&2; exit 3');
     expect(log).toContain('dying-gasp'); // the failing command's output survives too
+  });
+
+  it.each([0, 7])('redacts resolved secrets through the default executor (exit %s)', async (exit) => {
+    const { root, skill } = scratch();
+    const secret = 'test-credential-never-log-this';
+    writeFileSync(
+      join(skill, 'SKILL.md'),
+      `
+\`\`\`nc:prompt token secret
+Token
+\`\`\`
+\`\`\`nc:run capture:echoed
+printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
+\`\`\`
+`,
+    );
+    const events: ApplyEvent[] = [];
+    const rawLog = join(root, 'raw.log');
+    const logPath = vi.spyOn(setupLog, 'stepRawLog').mockReturnValue(rawLog);
+    const result = await runSkill(skill, {
+      projectRoot: root,
+      inputs: { token: secret },
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+    logPath.mockRestore();
+    expect(fullyApplied(result)).toBe(exit === 0);
+    expect(JSON.stringify({ result, events })).not.toContain(secret);
+    const log = readFileSync(rawLog, 'utf8');
+    expect(log).not.toContain(secret);
+    expect(log).toContain('[REDACTED]');
   });
 
   it('hostExecStream runs a step and captures the terminal status block fields (for effect:step)', async () => {
@@ -579,5 +630,46 @@ describe('non-TTY step lines (CI logs, a nested apply under the parent driver)',
     expect(success).toHaveBeenCalledTimes(1);
     expect(success.mock.calls[0][0]).toMatch(/^Build the image \(\d+s\)$/);
     success.mockRestore();
+  });
+});
+
+describe('parseDriverArgv (the CLI argv contract behind nested `--input` handoffs)', () => {
+  it('parses the skill dir and repeated --input pairs, keeping later `=` in the value', () => {
+    expect(parseDriverArgv(['skills/x', '--input', 'a=1', '--input', 'b=k=v'])).toEqual({
+      skillDir: 'skills/x',
+      inputs: { a: '1', b: 'k=v' },
+    });
+    expect(parseDriverArgv(['skills/x'])).toEqual({ skillDir: 'skills/x', inputs: {} });
+  });
+
+  it('refuses a bare argument — the orphaned half of an unquoted, word-split --input', () => {
+    expect(parseDriverArgv(['skills/x', 'ag-b'])).toEqual({ error: 'unexpected argument: ag-b' });
+    expect(parseDriverArgv(['skills/x', '--input', 'dial_agents=ag-a', 'ag-b'])).toEqual({
+      error: 'unexpected argument: ag-b',
+    });
+  });
+
+  it('refuses --input with a missing or malformed pair', () => {
+    expect(parseDriverArgv(['skills/x', '--input'])).toEqual({ error: '--input expects key=value, got nothing' });
+    expect(parseDriverArgv(['skills/x', '--input', 'novalue'])).toEqual({
+      error: '--input expects key=value, got: novalue',
+    });
+    expect(parseDriverArgv(['skills/x', '--input', '=v'])).toEqual({ error: '--input expects key=value, got: =v' });
+    expect(parseDriverArgv([])).toEqual({ error: 'missing <skill-dir>' });
+  });
+});
+
+describe('unknownInputKeys (a typoed --input key must refuse, not fall through to a piped prompt)', () => {
+  it('flags keys naming no nc:prompt var and accepts ones that do', () => {
+    const skill = mkdtempSync(join(tmpdir(), 'driver-keys-'));
+    writeFileSync(
+      join(skill, 'SKILL.md'),
+      ['# Keys', '', '## Ask', '', '```nc:prompt dial_agents validate:^(all|none)$', 'Which agents?', '```', ''].join(
+        '\n',
+      ),
+    );
+    expect(unknownInputKeys(skill, { dial_agents: 'all' })).toEqual([]);
+    expect(unknownInputKeys(skill, { dail_agents: 'all' })).toEqual(['dail_agents']);
+    expect(unknownInputKeys(skill, { dial_agents: 'all', extra: 'x' })).toEqual(['extra']);
   });
 });

@@ -22,12 +22,13 @@
  *     --channel discord \
  *     --user-id discord:1470183333427675709 \
  *     --platform-id discord:@me:1491573333382523708 \
- *     --display-name "Gavriel" \
+ *     --display-name "Alex" \
  *     [--agent-name "Andy"] \
  *     [--agent-group-id <id>] \       # wire an agent setup already created
  *     [--welcome "System instruction: ..."] \
  *     [--role owner|admin|member] \  # default: owner
- *     [--engage-pattern "."]         # explicit DM engage regex override
+ *     [--engage-pattern "."] \       # explicit DM engage regex override
+ *     [--instance telegram-mega]     # adapter instance registry key; default = the channel's default instance
  *
  * For direct-addressable channels (telegram, whatsapp, etc.), --platform-id
  * is typically the same as the handle in --user-id, with the channel prefix.
@@ -42,7 +43,7 @@ import path from 'path';
 // declared channel defaults resolve here without live adapters.
 import '../src/channels/index.js';
 import { resolveUnknownSenderPolicy, resolveWiringDefaults } from '../src/channels/channel-defaults.js';
-import { hasDeclaredChannelDefaults } from '../src/channels/channel-registry.js';
+import { hasDeclaredChannelDefaults, INSTANCE_KEY_RE } from '../src/channels/channel-registry.js';
 import { CENTRAL_DB_PATH, DATA_DIR, GROUPS_DIR } from '../src/config.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../src/db/agent-groups.js';
 import { initDb } from '../src/db/connection.js';
@@ -53,6 +54,7 @@ import {
   getMessagingGroupByPlatform,
 } from '../src/db/messaging-groups.js';
 import { runMigrations } from '../src/db/migrations/index.js';
+import { assertValidGroupFolder } from '../src/group-folder.js';
 import { stageGroupPersona } from '../src/group-persona.js';
 import { normalizeName } from '../src/modules/agent-to-agent/db/agent-destinations.js';
 import { addMember } from '../src/modules/permissions/db/agent-group-members.js';
@@ -75,6 +77,8 @@ interface Args {
   role: Role;
   /** Explicit engage regex for the DM wiring; omitted = channel declaration / '.'. */
   engagePattern?: string;
+  /** Adapter instance registry key (e.g. telegram-mega); omitted = the channel's default instance. */
+  instance?: string;
 }
 
 const DEFAULT_WELCOME = 'System instruction: run /welcome to introduce yourself to the user on this new channel.';
@@ -136,6 +140,18 @@ function parseArgs(argv: string[]): Args {
         out.engagePattern = val;
         i++;
         break;
+      case '--instance':
+        // An unsafe key would store a row nobody serves, and cli.ts parseAddress
+        // would drop it, sending the welcome through the default bot.
+        if (!val || !INSTANCE_KEY_RE.test(val)) {
+          console.error(
+            `--instance must be a URL-safe adapter registry key (e.g. telegram-mega), got: ${JSON.stringify(val)}`,
+          );
+          process.exit(2);
+        }
+        out.instance = val;
+        i++;
+        break;
       case '--role': {
         const raw = (val ?? '').toLowerCase();
         if (raw !== 'owner' && raw !== 'admin' && raw !== 'member') {
@@ -169,6 +185,7 @@ function parseArgs(argv: string[]): Args {
     welcome: out.welcome?.trim() || defaultWelcome(out.channel!),
     role: out.role ?? DEFAULT_ROLE,
     engagePattern: out.engagePattern?.trim() || undefined,
+    instance: out.instance,
   };
 }
 
@@ -242,20 +259,9 @@ async function main(): Promise<void> {
 
   const now = new Date().toISOString();
 
-  // 1. User + (conditional) owner grant.
-  const userId = namespacedUserId(args.channel, args.userId);
-  await upsertUser({
-    id: userId,
-    kind: args.channel,
-    display_name: args.displayName,
-    created_at: now,
-  });
-
-  // Owner grant is deferred until after the agent group is resolved, since
-  // an admin grant is scoped to that group. See step 2b.
-
-  // 2. Agent group + filesystem. Setup-created template groups arrive by id;
-  // this script owns only role, membership, channel wiring, and welcome.
+  // 1. Agent group + filesystem, first, so a refused folder leaves nothing
+  // behind. Setup-created template groups arrive by id; this script owns
+  // only role, membership, channel wiring, and welcome.
   const pickedProvider = process.env.NANOCLAW_PICKED_PROVIDER?.trim().toLowerCase();
   let ag: AgentGroup;
   let folder: string;
@@ -272,6 +278,7 @@ async function main(): Promise<void> {
       ag = existing;
       console.log(`Reusing agent group: ${ag.id} (${folder})`);
     } else {
+      assertValidGroupFolder(folder);
       const agId = generateId('ag');
       await createAgentGroup({
         id: agId,
@@ -292,6 +299,15 @@ async function main(): Promise<void> {
         'When the user first reaches out (or you receive a system welcome prompt), introduce yourself briefly and invite them to chat. Keep replies concise.',
     );
   }
+
+  // 2. User.
+  const userId = namespacedUserId(args.channel, args.userId);
+  await upsertUser({
+    id: userId,
+    kind: args.channel,
+    display_name: args.displayName,
+    created_at: now,
+  });
 
   // 2b. Assign the user a role for this agent group. The caller picks via
   // --role; the channel drivers default to 'owner' for the self-host case.
@@ -340,24 +356,26 @@ async function main(): Promise<void> {
 
   // 3. DM messaging group.
   const platformId = namespacedPlatformId(args.channel, args.platformId);
-  let dmMg = await getMessagingGroupByPlatform(args.channel, platformId);
+  let dmMg = await getMessagingGroupByPlatform(args.channel, platformId, args.instance);
   if (!dmMg) {
     const mgId = generateId('mg');
     // Policy from the channel declaration (DM context); legacy 'strict' for
     // stale (undeclared) adapters so a trunk update alone changes nothing.
-    const unknownSenderPolicy = hasDeclaredChannelDefaults(args.channel)
-      ? resolveUnknownSenderPolicy(args.channel, false)
+    const channelKey = args.instance ?? args.channel;
+    const unknownSenderPolicy = hasDeclaredChannelDefaults(channelKey, args.channel)
+      ? resolveUnknownSenderPolicy(channelKey, false, args.channel)
       : 'strict';
     await createMessagingGroup({
       id: mgId,
       channel_type: args.channel,
       platform_id: platformId,
+      instance: args.instance,
       name: args.displayName,
       is_group: 0,
       unknown_sender_policy: unknownSenderPolicy,
       created_at: now,
     });
-    dmMg = (await getMessagingGroupByPlatform(args.channel, platformId))!;
+    dmMg = (await getMessagingGroupByPlatform(args.channel, platformId, args.instance))!;
     console.log(`Created messaging group: ${dmMg.id} (${platformId})`);
   } else {
     console.log(`Reusing messaging group: ${dmMg.id} (${platformId})`);
@@ -433,6 +451,9 @@ async function sendWelcomeViaCliSocket(
             channelType: dmMg.channel_type,
             platformId: dmMg.platform_id,
             threadId: dmMg.platform_id,
+            // The row's own instance, so the welcome leaves through the bot
+            // that owns this DM (a named instance, never its default sibling).
+            instance: dmMg.instance,
           },
         }) + '\n';
       socket.write(payload, (err) => {

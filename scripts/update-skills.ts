@@ -5,8 +5,9 @@ import { pathToFileURL } from 'node:url';
 
 import { applySkill, fullyApplied, type DependencyCommandRequest } from './skill-apply.js';
 import { parseDirectives } from './skill-directives.js';
+import { pinnedBunVersion } from './provider-contract-verifier.js';
 
-export type InstalledSkillKind = 'channel' | 'provider';
+export type InstalledSkillKind = 'channel' | 'provider' | 'gateway';
 
 export interface InstalledSkill {
   name: string;
@@ -36,6 +37,8 @@ export interface SkillsRefreshReport {
 interface RefreshOptions {
   commandAvailable?: (command: string, cwd: string) => boolean;
   exec?: (command: string, cwd: string) => string | void | Promise<string | void>;
+  /** Skills detection cannot see, such as a gateway whose barrel import is not there yet. */
+  include?: InstalledSkill[];
 }
 
 function commandAvailable(command: string, cwd: string): boolean {
@@ -49,13 +52,6 @@ function commandAvailable(command: string, cwd: string): boolean {
   } catch {
     return false;
   }
-}
-
-function pinnedBunVersion(root: string): string {
-  const dockerfile = fs.readFileSync(path.join(root, 'container/Dockerfile'), 'utf8');
-  const match = dockerfile.match(/^ARG BUN_VERSION=([^\s#]+)$/m);
-  if (!match) throw new Error('container/Dockerfile does not declare an exact BUN_VERSION');
-  return match[1];
 }
 
 export function portableDependencyCommand(root: string, bunOnHost: boolean, request: DependencyCommandRequest): string {
@@ -186,7 +182,7 @@ export async function refreshInstalledSkills(
   requested: 'all' | string[] = 'all',
   options: RefreshOptions = {},
 ): Promise<SkillsRefreshReport> {
-  const installed = detectInstalledSkills(root);
+  const installed = [...detectInstalledSkills(root), ...(options.include ?? [])];
   const selected =
     requested === 'all'
       ? installed

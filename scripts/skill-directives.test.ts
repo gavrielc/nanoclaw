@@ -70,6 +70,8 @@ describe('skill-directives parser, on the converted add-slack', () => {
       'src/channels/slack-lib.test.ts',
       'src/channels/slack-a2a-guard.ts',
       'src/channels/slack-a2a-guard.test.ts',
+      'src/channels/slack-raw-text.ts',
+      'src/channels/slack-raw-text.test.ts',
       'src/channels/slack-registration.test.ts',
       'src/channels/slack-instances-registration.test.ts',
       'src/provisioning/slack-app.ts',
@@ -96,7 +98,7 @@ describe('skill-directives parser, on the converted add-slack', () => {
 
   it('reads the dependency pinned exactly', () => {
     const dep = directives.find((d) => d.kind === 'dep')!;
-    expect(dep.body).toEqual(['@chat-adapter/slack@4.29.0']);
+    expect(dep.body).toEqual(['@chat-adapter/slack@4.41.1']);
   });
 
   it('tags the runs with their effects', () => {

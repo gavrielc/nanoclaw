@@ -1,8 +1,7 @@
 import fs from 'fs';
 
-import { GROUPS_DIR, TIMEZONE } from '../../config.js';
+import { TIMEZONE } from '../../config.js';
 import { resolveGroupTimezone } from '../../container-config.js';
-import { getAgentGroup } from '../../db/agent-groups.js';
 import {
   deleteSession,
   findTaskSessions,
@@ -26,7 +25,7 @@ import {
 } from '../../modules/scheduling/create.js';
 import { destroySessionMailbox, sessionDir, withExistingMailboxSession } from '../../session-manager.js';
 import { registerResource } from '../crud.js';
-import { appendRunLog, deleteRunLog } from '../../modules/scheduling/run-log.js';
+import { appendRunLog, deleteRunLog, readRunLogTail } from '../../modules/scheduling/run-log.js';
 import { formatTasksTable } from '../format-tasks.js';
 import type { CallerContext } from '../frame.js';
 import type { InboundMailbox } from '../../mailbox/index.js';
@@ -205,15 +204,6 @@ function seriesStats(
   return mailbox.getTaskStats(seriesKey);
 }
 
-/** Last ~10 lines of a series' run log (`tasks/<series>.md`), newest last. */
-async function tailRunLog(agentGroupId: string, seriesKey: string, lines = 10): Promise<string[]> {
-  const ag = await getAgentGroup(agentGroupId);
-  if (!ag) return [];
-  const file = `${GROUPS_DIR}/${ag.folder}/tasks/${seriesKey}.md`;
-  if (!fs.existsSync(file)) return [];
-  return fs.readFileSync(file, 'utf8').trimEnd().split('\n').filter(Boolean).slice(-lines);
-}
-
 /**
  * A task series is CronJob-like: the live (pending/paused) row is the next run,
  * and the `completed` rows are its run history. Enrich each listed series with
@@ -268,7 +258,7 @@ async function getTask(args: Record<string, unknown>, ctx: CallerContext) {
     });
     if (found) {
       const { series_key, ...output } = found;
-      return { ...output, recent_log: await tailRunLog(session.agent_group_id, series_key) };
+      return { ...output, recent_log: await readRunLogTail(session.agent_group_id, series_key) };
     }
   }
   throw new Error(`task not found: ${id}`);
@@ -322,7 +312,13 @@ async function deleteTaskCommand(args: Record<string, unknown>, ctx: CallerConte
 async function updateTaskCommand(args: Record<string, unknown>, ctx: CallerContext) {
   const id = taskId(args);
   const update: TaskUpdate = {};
-  if (typeof args.prompt === 'string') update.prompt = args.prompt;
+  if (typeof args.prompt === 'string') {
+    // `create` refuses an empty prompt; `update` must too, or a shell
+    // substitution over a missing file (`--prompt "$(cat gone.txt)"`) silently
+    // blanks a live task and the next run wakes the agent with no instruction.
+    if (!args.prompt.trim()) throw new Error('--prompt must not be empty; omit it to keep the current prompt');
+    update.prompt = args.prompt;
+  }
   const recurrence = normalizeNullableString(args.recurrence);
   const script = normalizeNullableString(args.script);
 

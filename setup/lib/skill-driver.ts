@@ -25,6 +25,7 @@ import {
   stepLabel,
   type ApplyEvent,
   type ApplyResult,
+  type ExecContext,
   type InputMeta,
   type StepOutcome,
 } from '../../scripts/skill-apply.js';
@@ -36,6 +37,7 @@ import { emitStatus } from '../status.js';
 import { openUrl } from './browser.js';
 import { isHelpEscape, offerClaudeHandoff, validateWithHelpEscape } from './claude-handoff.js';
 import { startSpinner } from './runner.js';
+import { warnSetupCommit, withSetupCommit } from './setup-commit.js';
 
 /**
  * Build the clack `validate` callback an `nc:prompt` carries — the interactive
@@ -267,13 +269,16 @@ async function reuseFromEnv(
  * appended there (level 3, like runner.ts's per-step raw logs) so the silenced
  * noise stays inspectable.
  */
-export function hostExec(projectRoot: string, rawLog?: string): (cmd: string) => Promise<string> {
+export function hostExec(
+  projectRoot: string,
+  rawLog?: string,
+): (cmd: string, context?: ExecContext) => Promise<string> {
   const tee = (cmd: string, stdout: string, stderr: string): void => {
     if (!rawLog) return;
     const body = [stdout, stderr].filter(Boolean).join('');
     appendFileSync(rawLog, `$ ${cmd}\n${body}${body && !body.endsWith('\n') ? '\n' : ''}\n`);
   };
-  return (cmd) =>
+  return (cmd, context) =>
     new Promise((resolve, reject) => {
       const child = spawn('bash', ['-c', cmd], {
         cwd: projectRoot,
@@ -290,9 +295,10 @@ export function hostExec(projectRoot: string, rawLog?: string): (cmd: string) =>
       });
       child.on('error', reject);
       child.on('close', (code) => {
-        tee(cmd, out, err);
+        const redact = context?.redact ?? ((text: string) => text);
+        tee(redact(cmd), redact(out), redact(err));
         if (code === 0) return resolve(out);
-        const stderr = err.trim();
+        const stderr = redact(err).trim();
         const head =
           stderr
             .split('\n')
@@ -311,8 +317,8 @@ export function hostExec(projectRoot: string, rawLog?: string): (cmd: string) =>
  * fields so the engine can `capture:<var>=<FIELD>` them. The block protocol mirrors
  * setup/lib/runner.ts's StatusStream — a step is just a command that emits blocks.
  */
-export function hostExecStream(projectRoot: string): (cmd: string) => Promise<StepOutcome> {
-  return (cmd) =>
+export function hostExecStream(projectRoot: string): (cmd: string, context?: ExecContext) => Promise<StepOutcome> {
+  return (cmd, context) =>
     new Promise((resolve) => {
       const child = spawn('bash', ['-c', cmd], {
         cwd: projectRoot,
@@ -355,7 +361,7 @@ export function hostExecStream(projectRoot: string): (cmd: string) => Promise<St
             if (c > 0) current.fields[line.slice(0, c).trim()] = line.slice(c + 1).trim();
             continue;
           }
-          process.stdout.write(line + '\n'); // operator-facing line (a QR, a code) — show it live
+          process.stdout.write((context?.redact(line) ?? line) + '\n'); // redact after assembling complete lines
         }
       };
       child.stdout.on('data', onChunk);
@@ -482,6 +488,8 @@ export function channelsRemote(projectRoot: string): () => string {
 
 export interface RunSkillOptions {
   projectRoot?: string;
+  /** Refresh reapplies code/dependency directives before the normal install/validation pass. */
+  mode?: 'install' | 'refresh';
   /** Pre-supplied prompt answers — pass them all for a fully programmatic run. */
   inputs?: Record<string, string>;
   /**
@@ -491,9 +499,9 @@ export interface RunSkillOptions {
    */
   resolveInput?: (name: string, meta: InputMeta) => Promise<string | undefined>;
   /** Defaults to `hostExec`. */
-  exec?: (cmd: string) => string | void | Promise<string | void>;
+  exec?: (cmd: string, context?: ExecContext) => string | void | Promise<string | void>;
   /** Defaults to `hostExecStream`. Streaming exec for `nc:run effect:step`. */
-  execStream?: (cmd: string) => Promise<StepOutcome>;
+  execStream?: (cmd: string, context?: ExecContext) => Promise<StepOutcome>;
   /** Defaults to the fork-aware channels-branch resolver. */
   resolveRemote?: (branch: string) => string;
   /** Run effects the caller owns (e.g. `['restart']` when it restarts once). */
@@ -562,15 +570,22 @@ export async function runSkill(skillDir: string, opts: RunSkillOptions = {}): Pr
     rawLog = setupLog.stepRawLog(`skill-${basename(skillDir)}`);
     writeFileSync(rawLog, `# skill ${basename(skillDir)} — ${new Date().toISOString()}\n\n`);
   }
-  return applySkill(skillDir, projectRoot, {
-    inputs,
-    resolveInput: opts.resolveInput ?? clackResolveInput({ channel: opts.channel, step: opts.step }),
-    onEvent: opts.onEvent ?? defaultOnEvent(md, confirm, open),
-    exec: opts.exec ?? hostExec(projectRoot, rawLog),
-    execStream: opts.execStream ?? hostExecStream(projectRoot),
-    resolveRemote: opts.resolveRemote ?? channelsRemote(projectRoot),
-    skipEffects: opts.skipEffects,
-  });
+  return withSetupCommit(
+    projectRoot,
+    basename(skillDir),
+    () =>
+      applySkill(skillDir, projectRoot, {
+        mode: opts.mode,
+        inputs,
+        resolveInput: opts.resolveInput ?? clackResolveInput({ channel: opts.channel, step: opts.step }),
+        onEvent: opts.onEvent ?? defaultOnEvent(md, confirm, open),
+        exec: opts.exec ?? hostExec(projectRoot, rawLog),
+        execStream: opts.execStream ?? hostExecStream(projectRoot),
+        resolveRemote: opts.resolveRemote ?? channelsRemote(projectRoot),
+        skipEffects: opts.skipEffects,
+      }),
+    warnSetupCommit,
+  );
 }
 
 /**
@@ -585,16 +600,67 @@ export function applyOutcome(res: ApplyResult): { status: 'success' | 'failed'; 
   return fullyApplied(res) ? { status: 'success', exitCode: 0 } : { status: 'failed', exitCode: 1 };
 }
 
+/**
+ * Parse the driver CLI's argv (everything after node + script path):
+ * `<skillDir> [--input key=value]...`.
+ *
+ * `--input` pre-binds a prompt the caller already collected. A nested step's
+ * stdout is a pipe, so clack cannot echo what the operator types there; a
+ * parent that owns the terminal asks first and passes the answer down.
+ * Every argument after the skill dir must be a recognised flag. Skipping an
+ * unexpected one would swallow exactly the failure this flag can cause: an
+ * unquoted `--input k={{var}}` in a caller's document word-splits, and the
+ * orphaned half arrives here as a bare argv entry. Silently dropping it
+ * leaves the child validating a truncated value; refusing names it.
+ */
+export function parseDriverArgv(
+  argv: string[],
+): { skillDir: string; inputs: Record<string, string> } | { error: string } {
+  const skillDir = argv[0];
+  if (!skillDir) return { error: 'missing <skill-dir>' };
+  const inputs: Record<string, string> = {};
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i] ?? '';
+    if (arg !== '--input') return { error: `unexpected argument: ${arg}` };
+    if (i + 1 >= argv.length) return { error: '--input expects key=value, got nothing' };
+    const pair = argv[++i] ?? '';
+    const eq = pair.indexOf('=');
+    if (eq <= 0) return { error: `--input expects key=value, got: ${pair}` };
+    inputs[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return { skillDir, inputs };
+}
+
+/**
+ * The `--input` keys that name no `nc:prompt` var in the skill document. The
+ * engine ignores keys it has no prompt for, so a typo here would leave the
+ * child asking that prompt itself — through the pipe, unechoed, the exact
+ * failure `--input` exists to avoid. The CLI refuses them instead.
+ */
+export function unknownInputKeys(skillDir: string, inputs: Record<string, string>): string[] {
+  const known = new Set(
+    parseDirectives(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'))
+      .filter((d) => d.kind === 'prompt')
+      .map((d) => promptVar(d))
+      .filter((v): v is string => typeof v === 'string'),
+  );
+  return Object.keys(inputs).filter((k) => !known.has(k));
+}
+
 // CLI: pnpm exec tsx setup/lib/skill-driver.ts <skillDir>   — apply a skill interactively.
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   void (async () => {
-    const skillDir = process.argv[2];
-    if (!skillDir) {
-      console.error('usage: pnpm exec tsx setup/lib/skill-driver.ts <skillDir>');
+    const usage = (msg: string): never => {
+      console.error(`${msg}\nusage: skill-driver <skill-dir> [--input key=value]...`);
       process.exit(2);
-    }
+    };
+    const parsed = parseDriverArgv(process.argv.slice(2));
+    if ('error' in parsed) usage(parsed.error);
+    const { skillDir, inputs } = parsed;
+    const unknown = unknownInputKeys(skillDir, inputs);
+    if (unknown.length) usage(`--input names no prompt in ${skillDir}/SKILL.md: ${unknown.join(', ')}`);
     p.intro(`Applying ${skillDir}`);
-    const res = await runSkill(skillDir);
+    const res = await runSkill(skillDir, Object.keys(inputs).length ? { inputs } : {});
     if (fullyApplied(res)) {
       p.outro('Done — fully applied.');
     } else {

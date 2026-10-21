@@ -7,9 +7,9 @@
  * the registered config fn, and merges the returned mounts/env into the spawn
  * args.
  *
- * Providers without host-side needs (e.g. `claude`) don't appear in
- * this registry at all — the lookup returns `undefined` and the spawn path
- * proceeds with only the default mounts and env.
+ * Providers without host-side needs don't appear in this registry at all —
+ * the lookup returns `undefined` and the spawn path proceeds with only the
+ * default mounts and env.
  *
  * Skills add a new provider's host config by creating `src/providers/<name>.ts`
  * with a top-level `registerProviderContainerConfig(...)` call, then appending
@@ -50,6 +50,13 @@ export interface ProviderContainerContext {
   selectedSkills: string[];
   /** `process.env` at spawn time — pull passthrough values from here. */
   hostEnv: NodeJS.ProcessEnv;
+  /**
+   * Mixed-version handshake. Present only when this host loaded a declaration
+   * and will realize its surfaces. Updated legacy callbacks keep returning env
+   * but suppress their old filesystem/mount work when this is true. Old hosts
+   * omit the field, so refreshed payloads retain their old behavior.
+   */
+  coreOwnsProviderSurfaces?: true;
 }
 
 export interface ProviderContainerContribution {
@@ -68,9 +75,9 @@ export interface ProviderHostCapabilities {
   /**
    * Optional. When true, this provider owns its agent-facing surfaces — the
    * composed project doc, skill-discovery links, and provider state dir —
-   * and the host must NOT compose or mount the default ones (composed
-   * CLAUDE.md, `.claude-fragments`, `/app/CLAUDE.md`, `/home/node/.claude`,
-   * project document). The provider's config fn does its own composing and
+   * and the host must NOT compose or mount the default ones (the composed
+   * project document at `/workspace/agent/CLAUDE.md`, skill-discovery links,
+   * `/home/node/.claude`). The provider's config fn does its own composing and
    * returns its own mounts. Default off — providers that omit
    * this get the default surfaces, which is today's behavior.
    */

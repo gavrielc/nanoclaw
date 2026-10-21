@@ -66,6 +66,7 @@ interface PendingNameInput {
   channelMgId: string;
   dmChannelType: string;
   dmPlatformId: string;
+  dmInstance: string;
 }
 const awaitingNameInput = new Map<string, PendingNameInput>();
 
@@ -257,7 +258,7 @@ setSenderScopeGate(
  * Response handler for the unknown-sender approval card.
  *
  * Claim rule: questionId matches a row in pending_sender_approvals. If no
- * such row, return false so the next handler (approvals module, OneCLI,
+ * such row, return false so the next handler (approvals module, gateway,
  * interactive) gets a shot.
  *
  * Approve: add the sender to agent_group_members + re-invoke routeInbound
@@ -490,7 +491,10 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   // ── Choose existing agent — send agent-selection follow-up card ──
   if (payload.value === CHOOSE_EXISTING_VALUE) {
-    const approverDm = await ensureUserDm(row.approver_user_id);
+    const origin = await getMessagingGroup(row.messaging_group_id);
+    const approverDm = await ensureUserDm(row.approver_user_id, {
+      instance: payload.channelType === origin?.channel_type ? origin.instance : undefined,
+    });
     if (!approverDm) {
       log.error('Channel registration: no DM channel for approver', {
         messagingGroupId: row.messaging_group_id,
@@ -521,6 +525,8 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
           question,
           options,
         }),
+        undefined,
+        approverDm.instance,
       );
     } catch (err) {
       log.error('Channel registration: agent-selection card delivery failed', {
@@ -533,7 +539,10 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   // ── Create new agent — prompt for free-text name ──
   if (payload.value === NEW_AGENT_VALUE) {
-    const approverDm = await ensureUserDm(row.approver_user_id);
+    const origin = await getMessagingGroup(row.messaging_group_id);
+    const approverDm = await ensureUserDm(row.approver_user_id, {
+      instance: payload.channelType === origin?.channel_type ? origin.instance : undefined,
+    });
     if (!approverDm) {
       log.error('Channel registration: no DM channel for approver', {
         messagingGroupId: row.messaging_group_id,
@@ -549,12 +558,13 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
       });
       return true;
     }
-
-    awaitingNameInput.set(row.approver_user_id, {
+    const prompt = {
       channelMgId: row.messaging_group_id,
       dmChannelType: approverDm.channel_type,
       dmPlatformId: approverDm.platform_id,
-    });
+      dmInstance: approverDm.instance ?? approverDm.channel_type,
+    };
+    awaitingNameInput.set(row.approver_user_id, prompt);
 
     try {
       await adapter.deliver(
@@ -563,13 +573,16 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
         null,
         'chat-sdk',
         JSON.stringify({ text: 'Reply with the name for your new agent:' }),
+        undefined,
+        approverDm.instance,
       );
     } catch (err) {
       log.error('Channel registration: name prompt delivery failed', {
         messagingGroupId: row.messaging_group_id,
         err,
       });
-      awaitingNameInput.delete(row.approver_user_id);
+      // A newer prompt (a refused name's re-arm, or another channel's) may have replaced this one.
+      if (awaitingNameInput.get(row.approver_user_id) === prompt) awaitingNameInput.delete(row.approver_user_id);
     }
     return true;
   }
@@ -622,6 +635,7 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   const pending = awaitingNameInput.get(userId);
   if (!pending) return false;
   if (event.channelType !== pending.dmChannelType || event.platformId !== pending.dmPlatformId) return false;
+  if ((event.instance ?? event.channelType) !== pending.dmInstance) return false;
 
   awaitingNameInput.delete(userId);
 
@@ -641,7 +655,37 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   const row = await getPendingChannelApproval(pending.channelMgId);
   if (!row) return true;
 
-  const ag = await createNewAgentGroup(text);
+  const created = await createNewAgentGroup(text);
+  if (typeof created === 'string') {
+    const adapter = getDeliveryAdapter();
+    if (!adapter) return true;
+    // Nothing was written; re-arm so the approver's next reply is the name, unless they opened
+    // another channel's prompt meanwhile. A fresh object, so only this re-arm's failure can drop it.
+    const rearmed = awaitingNameInput.has(userId) ? undefined : { ...pending };
+    if (rearmed) awaitingNameInput.set(userId, rearmed);
+    try {
+      await adapter.deliver(
+        event.channelType,
+        event.platformId,
+        null,
+        'chat-sdk',
+        JSON.stringify({
+          text: `⚠️ Cannot create agent "${text}": ${created}. Nothing was created.${rearmed ? ' Reply with another name:' : ''}`,
+        }),
+        undefined,
+        event.instance,
+      );
+    } catch (err) {
+      log.error('Channel registration: name re-prompt delivery failed', {
+        messagingGroupId: row.messaging_group_id,
+        err,
+      });
+      // A newer prompt may have replaced ours while this was in flight.
+      if (awaitingNameInput.get(userId) === rearmed) awaitingNameInput.delete(userId);
+    }
+    return true;
+  }
+  const ag = created;
   log.info('Channel registration: new agent group created', {
     messagingGroupId: row.messaging_group_id,
     agentGroupId: ag.id,
@@ -653,22 +697,21 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
 
   const adapter = getDeliveryAdapter();
   if (adapter) {
-    const dm = await ensureUserDm(row.approver_user_id);
-    if (dm) {
-      adapter
-        .deliver(
-          dm.channel_type,
-          dm.platform_id,
-          null,
-          'chat-sdk',
-          JSON.stringify({
-            text: wired
-              ? `✅ Agent "${ag.name}" created and connected.`
-              : `⚠️ Agent "${ag.name}" was created but the channel couldn't be connected — check the host logs.`,
-          }),
-        )
-        .catch(() => {});
-    }
+    adapter
+      .deliver(
+        event.channelType,
+        event.platformId,
+        null,
+        'chat-sdk',
+        JSON.stringify({
+          text: wired
+            ? `✅ Agent "${ag.name}" created and connected.`
+            : `⚠️ Agent "${ag.name}" was created but the channel couldn't be connected — check the host logs.`,
+        }),
+        undefined,
+        event.instance,
+      )
+      .catch(() => {});
   }
   return true;
 });
