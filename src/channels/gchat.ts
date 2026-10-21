@@ -52,6 +52,27 @@ const GCHAT_DEFAULTS: ChannelDefaults = {
   mentions: 'platform',
 };
 
+/**
+ * Chat sends a file shared from Google Drive as a Drive id only. Chat's media
+ * download refuses Drive files and the app cannot open the sender's Drive, so
+ * the agent would see just the name. Tell it why the file is missing.
+ */
+export function gchatDriveFileNote(raw: Record<string, unknown>): string | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const event = raw as any;
+  // Add-on webhooks nest the message under chat.messagePayload; Pub/Sub does not.
+  const attachments: unknown = (event.chat?.messagePayload?.message ?? event.message)?.attachment;
+  if (!Array.isArray(attachments)) return null;
+  const notes = attachments
+    .filter((att) => att?.source === 'DRIVE_FILE' && !att.attachmentDataRef?.resourceName)
+    .map(
+      (att) =>
+        `[Google Drive file "${att.contentName || 'file'}" was not downloaded: this app can't open files shared ` +
+        `from Google Drive. Ask the sender to upload the file into the chat instead (paste or drag it in).]`,
+    );
+  return notes.length > 0 ? notes.join('\n') : null;
+}
+
 registerChannelAdapter('gchat', {
   factory: () => {
     const env = readEnvFile([
@@ -90,6 +111,7 @@ registerChannelAdapter('gchat', {
       concurrency: 'concurrent',
       supportsThreads: true,
       defaults: GCHAT_DEFAULTS,
+      extractRawText: gchatDriveFileNote,
     });
   },
   defaults: GCHAT_DEFAULTS,
