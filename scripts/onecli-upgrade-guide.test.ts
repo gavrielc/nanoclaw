@@ -788,6 +788,28 @@ esac
     expect(verify).toMatch(/exit 4/);
   });
 
+  it('says the CLI on a remote gateway host must be signed in to that gateway', () => {
+    const at = guide.indexOf(CHECK);
+    expect(guide.slice(at - 700, at)).toContain('onecli auth login --api-key');
+  });
+
+  it('names the configured container, not only onecli, where the reply check fails', () => {
+    const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
+    expect(verify.slice(verify.indexOf('No reply (exit 3)'))).toContain('ONECLI_GATEWAY_CONTAINER');
+    // Detect, Verify and the newer-gateway note also run docker on the container by name.
+    const detect = guide.slice(guide.indexOf('## 1. Detect'), guide.indexOf('## 2. Upgrade'));
+    expect(detect).toMatch(/not named `onecli`, use its name in every `docker inspect` and `docker logs`/);
+  });
+
+  it('refuses a gateway that reports version unknown in Verify, as the grants gate does', () => {
+    const verify = guide.slice(guide.indexOf('## 3. Verify'), guide.indexOf('Verify the bind interface'));
+    expect(verify).not.toMatch(/or "unknown"/);
+    expect(verify).toMatch(/including `unknown`/);
+    // The gate accepts any 1.45.x, so the guide may only claim it refuses an unreadable version.
+    expect(verify).toMatch(/before they save a key \(`check-grants-gateway\.sh`\) also refuses a gateway that reports `unknown`/);
+    expect(verify).not.toMatch(/does not report the pin/);
+  });
+
   it('stops without a local gateway container, which it must read the boot log from', () => {
     const r = post({ container: false });
     expect(r.status).toBe(2);

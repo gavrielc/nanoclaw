@@ -19,7 +19,16 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
 
-function gate(opts: { version?: string; health?: boolean; modes?: string[]; grants?: boolean }) {
+function gate(opts: {
+  version?: string;
+  health?: boolean;
+  modes?: string[];
+  grants?: boolean;
+  apiHost?: string;
+  cli?: boolean;
+  configFails?: boolean;
+  listFails?: boolean;
+}) {
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(
@@ -35,16 +44,21 @@ function gate(opts: { version?: string; health?: boolean; modes?: string[]; gran
     `#!/bin/sh
 echo "onecli $*" >> "${home}/calls.log"
 case "$1 $2" in
-  "config get") echo '{"key":"api-host","value":"http://172.17.0.1:10254"}' ;;
-  "agents list") echo '${agents}' ;;
+  "config get") ${opts.configFails ? 'exit 3' : `echo '{"key":"api-host","value":"${opts.apiHost ?? 'http://172.17.0.1:10254'}"}'`} ;;
+  "agents list") ${opts.listFails ? 'echo "401 Unauthorized" >&2; exit 1' : `echo '${agents}'`} ;;
   "agents grants") [ "${opts.grants === false ? 'no' : 'yes'}" = yes ] || { echo "unknown command" >&2; exit 2; } ;;
   *) exit 9 ;;
 esac
 `,
     { mode: 0o755 },
   );
+  // Without a CLI, drop every PATH entry that holds a real onecli.
+  if (opts.cli === false) fs.rmSync(path.join(bin, 'onecli'));
+  const rest = (process.env.PATH ?? '')
+    .split(':')
+    .filter((d) => opts.cli !== false || !fs.existsSync(path.join(d, 'onecli')));
   const r = spawnSync('sh', [GATE, '/add-vercel'], {
-    env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home },
+    env: { PATH: [bin, ...rest].join(':'), HOME: home },
     encoding: 'utf8',
   });
   const calls = fs.existsSync(path.join(home, 'calls.log'))
@@ -66,6 +80,11 @@ describe('OneCLI grants gate', () => {
     ['a CLI without agents grants', { grants: false }, "no 'agents grants' command"],
     ['an unreachable gateway', { health: false }, 'could not reach the OneCLI gateway'],
     ['a newer gateway', { version: '1.46.0' }, 'newer than the pinned 1.45'],
+    ['a three-digit minor', { version: '1.100.0' }, 'newer than the pinned 1.45'],
+    ['a two-digit major', { version: '10.0.0' }, 'newer than the pinned 1.45'],
+    ['a gateway that reports version unknown', { version: 'unknown' }, "reports version 'unknown'"],
+    ['a CLI without an api-host', { apiHost: '' }, "no api-host"],
+    ['no onecli CLI', { cli: false }, 'is not installed'],
   ])('refuses %s and writes nothing', (_name, opts, message) => {
     const r = gate(opts);
     expect(r.status).not.toBe(0);
@@ -86,6 +105,36 @@ describe('OneCLI grants gate messages', () => {
 
   it('says a gateway older than 1.44 has no agent grants', () => {
     expect(gate({ version: '1.42.0' }).stderr).toContain('older than 1.44 and has no agent grants');
+  });
+
+  it('names the CLI setup, not the gateway, when the api-host cannot be read', () => {
+    const r = gate({ apiHost: '' });
+    expect(r.stderr).toContain('onecli config set api-host');
+    expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
+  });
+
+  it('says the config read failed, not that no api-host is set, when the CLI cannot read it', () => {
+    const r = gate({ configFails: true });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('`onecli config get api-host` failed');
+    expect(r.stderr).not.toContain('no api-host set');
+  });
+
+  it('says to sign the CLI in, not to upgrade the gateway, when listing agents fails', () => {
+    const r = gate({ listFails: true });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('onecli auth login --api-key');
+    expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
+  });
+
+  it('names the pinned CLI when no onecli CLI is installed', () => {
+    const r = gate({ cli: false });
+    expect(r.stderr).toContain('needs the pinned onecli CLI, 2.11.0');
+    expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
+  });
+
+  it('does not call a gateway that reports version unknown newer than the pin', () => {
+    expect(gate({ version: 'unknown' }).stderr).not.toContain('newer than');
   });
 
   it('names the CLI, not the gateway, when only the CLI is too old', () => {

@@ -21,7 +21,7 @@ curl -s "$GW/api/health"                            # liveness check; its `versi
 curl -s -o /dev/null -w '%{http_code}' "$GW/v1/health"
 ```
 
-This doc applies only when OneCLI is registered and the provider is unset or `onecli`; otherwise (for example `iron-proxy`, or OneCLI not registered) **stop: it does not apply**, even if a leftover `ONECLI_URL` is still in `.env`. If your service sets `ONECLI_URL` in its own environment instead of `.env`, use that value for `GW`. If the running tag is `:latest`, note the image ID: it is what you roll back to. Use `ONECLI_URL` rather than `127.0.0.1`: on Linux a local gateway listens on the Docker bridge (for example `http://172.17.0.1:10254`), and for a remote gateway it is the remote host. (`NANOCLAW_ONECLI_API_HOST` is a setup-time override only, not persisted to `.env`.) If the last command prints `404`, the server predates the `/v1` API that `@onecli-sh/sdk` 2.x requires — every SDK call will fail with 404s that look transient but are permanent.
+This doc applies only when OneCLI is registered and the provider is unset or `onecli`; otherwise (for example `iron-proxy`, or OneCLI not registered) **stop: it does not apply**, even if a leftover `ONECLI_URL` is still in `.env`. If your service sets `ONECLI_URL` in its own environment instead of `.env`, use that value for `GW`. If the running tag is `:latest`, note the image ID: it is what you roll back to. Use `ONECLI_URL` rather than `127.0.0.1`: on Linux a local gateway listens on the Docker bridge (for example `http://172.17.0.1:10254`), and for a remote gateway it is the remote host. (`NANOCLAW_ONECLI_API_HOST` is a setup-time override only, not persisted to `.env`.) If your gateway container is not named `onecli`, use its name in every `docker inspect` and `docker logs` command in this doc. If the last command prints `404`, the server predates the `/v1` API that `@onecli-sh/sdk` 2.x requires — every SDK call will fail with 404s that look transient but are permanent.
 
 Why gateways fall behind: the OneCLI installer's docker-compose tracks the `latest` image tag, but Docker never re-pulls a tag — the server freezes at whatever `latest` meant on install day.
 
@@ -89,7 +89,7 @@ Then pull and restart:
 cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECLI_VERSION docker compose up -d
 ```
 
-Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
+Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI; when the gateway uses an API token, sign that CLI in first with `onecli auth login --api-key <token>`). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
 
 ```bash
 GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh
@@ -111,10 +111,10 @@ curl -s "$GW/v1/health"     # must return {"status":"ok",...}; GW from the Detec
 
 ```bash
 docker inspect -f '{{.Config.Image}}' onecli    # gateway host: must print ghcr.io/onecli/onecli:<pin>
-curl -s "$GW/api/health"                        # its "version" must be the pin, or "unknown"
+curl -s "$GW/api/health"                        # its "version" must be the pin
 ```
 
-If the tag is not the pin, go back to step 2: the pin is not saved, or the compose file does not use it. If `version` reports anything other than the pin, put the gateway on the pin (step 2). From a NanoClaw host that only reaches a remote gateway, the `version` field is the only check; it says `unknown` on some builds, so then check the tag on the gateway host.
+If the tag is not the pin, go back to step 2: the pin is not saved, or the compose file does not use it. If `version` reports anything other than the pin, including `unknown`, put the gateway on the pin (step 2). The grants check that tool skills run before they save a key (`check-grants-gateway.sh`) also refuses a gateway that reports `unknown`. From a NanoClaw host that only reaches a remote gateway, the `version` field is the only check.
 
 **Verify the bind interface (container reachability).** Agent containers reach the gateway over the docker bridge (`host.docker.internal` → e.g. `172.17.0.1`), so a server bound only to `127.0.0.1` boots clean host-side while every credentialed call from containers dies at the proxy:
 
@@ -140,7 +140,7 @@ Then confirm that an agent still answers. A real reply is the check that the gat
 pnpm run chat "Reply with the single word ok"
 ```
 
-It must print the agent's reply (exit 0). If it could not reach the NanoClaw host (exit 2), start the service and run it again. No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check `docker logs onecli` and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
+It must print the agent's reply (exit 0). If it could not reach the NanoClaw host (exit 2), start the service and run it again. No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check the gateway's log (`docker logs onecli`, or the name you set in `ONECLI_GATEWAY_CONTAINER`) and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
 
 Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key.
 
