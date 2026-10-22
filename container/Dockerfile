@@ -76,9 +76,11 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # ---- Bun runtime -------------------------------------------------------------
 # Install via the official script (handles multi-arch detection), then move
 # the binary to /usr/local/bin so the non-root `node` user can execute it.
+# The version check fails the build if the script installed anything but the pin.
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
     install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
-    rm -rf /root/.bun
+    rm -rf /root/.bun && \
+    test "$(bun --version)" = "${BUN_VERSION}"
 
 # ---- agent-runner deps -------------------------------------------------------
 # Deps are cached independently of CLI versions. Source is NOT baked in —
