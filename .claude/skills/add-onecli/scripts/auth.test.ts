@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const child = vi.hoisted(() => ({ exec: vi.fn(), spawn: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFileSync: child.exec, spawnSync: child.spawn }));
-const prompts = vi.hoisted(() => ({ select: vi.fn() }));
+const prompts = vi.hoisted(() => ({ select: vi.fn(), password: vi.fn() }));
 vi.mock('@clack/prompts', () => ({
   select: prompts.select,
-  password: vi.fn(),
+  password: prompts.password,
   isCancel: () => false,
   log: { success: vi.fn(), warn: vi.fn() },
 }));
@@ -163,4 +163,91 @@ it('a subscription sign-in that sees two new Anthropic secrets records neither a
   signIn();
   await expect(run()).rejects.toThrow(/more than one/);
   expect(fs.existsSync(path.join(root, 'data', 'onecli', 'provider-credentials.json'))).toBe(false);
+});
+
+it('saves a subscription token only under the name setup records', async () => {
+  // A custom name would be saved but never recorded, so the group gets no key.
+  const script = fs.readFileSync(path.join(__dirname, 'register-claude-token.sh'), 'utf8');
+  expect(script).not.toMatch(/SECRET_NAME|onecli secrets/);
+  child.exec.mockImplementation((_cmd: string, args: string[]) =>
+    args[1] === 'list' ? '{"data":[]}' : '{"id":"sec-sub","name":"Anthropic"}',
+  );
+  prompts.select.mockResolvedValueOnce('subscription');
+  signIn();
+  await run();
+  const create = child.exec.mock.calls.find(([, args]) => args[1] === 'create')?.[1];
+  expect(create).toEqual(expect.arrayContaining(['--name', 'Anthropic']));
+  expect(record()).toEqual({ claude: ['sec-sub'] });
+});
+
+describe('pasted Claude keys', () => {
+  const argv = process.argv;
+  // What `secrets create` read from its --file; the key itself never goes on argv.
+  let saved: string | undefined;
+  beforeEach(() => {
+    // No .env and no saved secret, so run() goes straight to the prompt.
+    process.argv = [argv[0], argv[1], 'claude'];
+    vi.stubEnv('NANOCLAW_ANTHROPIC_BASE_URL', '');
+    saved = undefined;
+    child.exec.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[1] === 'list') return '{"data":[]}';
+      saved = fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8');
+      return '{"id":"sec-new","name":"Anthropic"}';
+    });
+  });
+  afterEach(() => {
+    process.argv = argv;
+  });
+
+  it('saves a pasted service-account API key, and the API-key prompt accepts every API key type', async () => {
+    prompts.select.mockResolvedValueOnce('api');
+    prompts.password.mockResolvedValueOnce(' sk-ant-svc01-\nfixture ');
+    await run();
+    expect(child.exec).toHaveBeenCalledWith(
+      'onecli',
+      expect.arrayContaining(['create', '--type', 'anthropic', '--file']),
+      expect.anything(),
+    );
+    expect(saved).toBe('sk-ant-svc01-fixture');
+    expect(child.exec.mock.calls.flatMap(([, args]) => args)).not.toContain('sk-ant-svc01-fixture');
+    expect(record()).toEqual({ claude: ['sec-new'] });
+    const { message, validate } = prompts.password.mock.calls[0][0];
+    expect(message).toMatch(/one workspace/);
+    for (const key of ['sk-ant-api03-x', 'sk-ant-usr01-x', 'sk-ant-svc01-x']) expect(validate?.(key)).toBeUndefined();
+    expect(validate?.('')).toBe('Required');
+  });
+
+  it('saves an OAuth token pasted into the API-key prompt the same way as the OAuth path', async () => {
+    // OneCLI reads the auth mode from the value, so both paths make the same call.
+    prompts.select.mockResolvedValueOnce('api');
+    prompts.password.mockResolvedValueOnce(' sk-ant-oat01-\nfixture ');
+    await run();
+    expect(child.exec).toHaveBeenCalledWith(
+      'onecli',
+      [
+        'secrets',
+        'create',
+        '--name',
+        'Anthropic',
+        '--type',
+        'anthropic',
+        '--host-pattern',
+        'api.anthropic.com',
+        '--file',
+        expect.any(String),
+      ],
+      expect.anything(),
+    );
+    expect(saved).toBe('sk-ant-oat01-fixture');
+    expect(prompts.password.mock.calls[0][0].validate?.('sk-ant-oat01-x')).toBeUndefined();
+  });
+
+  it('rejects an API key in the OAuth-token prompt', async () => {
+    prompts.select.mockResolvedValueOnce('oauth');
+    prompts.password.mockResolvedValueOnce('sk-ant-oat01-fixture');
+    await run();
+    const { validate } = prompts.password.mock.calls[0][0];
+    expect(validate?.('sk-ant-oat01-x')).toBeUndefined();
+    expect(validate?.('sk-ant-svc01-x')).toMatch(/sk-ant-oat/);
+  });
 });

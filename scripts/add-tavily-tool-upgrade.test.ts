@@ -125,6 +125,22 @@ describe('Tavily paid-key upgrade on OneCLI grants', () => {
     expect(stderr).not.toMatch(/newest/);
   });
 
+  it('reads an agent list answered as a bare array, as the gate accepts', () => {
+    fs.writeFileSync(
+      path.join(root, 'bin', 'onecli'),
+      `#!/usr/bin/env bash\necho "onecli $*" >> "$CALLS"\ncase "$1 $2" in "secrets list") echo '{"data":[{"id":"sec-tavily","name":"Tavily","hostPattern":"mcp.tavily.com"}]}' ;; "agents list") echo '[{"id":"oc-research","identifier":"ag-research"}]' ;; esac\n`,
+      { mode: 0o755 },
+    );
+    const r = spawnSync('sh', ['-c', ATTACH.replaceAll('{{AGENT_GROUP_ID}}', 'ag-research')], {
+      env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls },
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    expect(fs.readFileSync(calls, 'utf8')).toContain(
+      'agents grants attach-secret --id oc-research --secret-id sec-tavily',
+    );
+  });
+
   it('with no key yet, says to save it through the link first', () => {
     fs.writeFileSync(
       path.join(root, 'bin', 'onecli'),

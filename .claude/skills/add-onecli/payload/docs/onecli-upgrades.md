@@ -16,12 +16,12 @@ grep -q "onecli" src/gateway-providers/installed.ts && echo "OneCLI registered" 
 GWP=$(env_get NANOCLAW_GATEWAY_PROVIDER | tr 'A-Z' 'a-z'); echo "provider: ${GWP:-unset}"
 GW=$(env_get ONECLI_URL); echo "ONECLI_URL: ${GW:-none}"   # the address NanoClaw uses
 cat .claude/skills/add-onecli/versions.json         # the sanctioned pin (onecli-gateway)
-docker inspect -f '{{.Config.Image}} {{.Image}}' onecli   # running tag + image ID (local gateway)
+docker inspect -f '{{.Config.Image}} {{.Image}}' "${ONECLI_GATEWAY_CONTAINER:-onecli}"   # running tag + image ID (local gateway); a `:latest` tag says nothing about the version
 curl -s "$GW/api/health"                            # liveness check; an old gateway may say "unknown" for `version`
 curl -s -o /dev/null -w '%{http_code}' "$GW/v1/health"
 ```
 
-This doc applies only when OneCLI is registered and the provider is unset or `onecli`; otherwise (for example `iron-proxy`, or OneCLI not registered) **stop: it does not apply**, even if a leftover `ONECLI_URL` is still in `.env`. If your service sets `ONECLI_URL` in its own environment instead of `.env`, use that value for `GW`. If the running tag is `:latest`, note the image ID: it is what you roll back to. Use `ONECLI_URL` rather than `127.0.0.1`: on Linux a local gateway listens on the Docker bridge (for example `http://172.17.0.1:10254`), and for a remote gateway it is the remote host. (`NANOCLAW_ONECLI_API_HOST` is a setup-time override only, not persisted to `.env`.) If your gateway container is not named `onecli`, use its name in every `docker inspect` and `docker logs` command in this doc. If the last command prints `404`, the server predates the `/v1` API that `@onecli-sh/sdk` 2.x requires — every SDK call will fail with 404s that look transient but are permanent.
+This doc applies only when OneCLI is registered and the provider is unset or `onecli`; otherwise (for example `iron-proxy`, or OneCLI not registered) **stop: it does not apply**, even if a leftover `ONECLI_URL` is still in `.env`. If your service sets `ONECLI_URL` in its own environment instead of `.env`, use that value for `GW`. If the running tag is `:latest`, note the image ID: it is what you roll back to. Use `ONECLI_URL` rather than `127.0.0.1`: on Linux a local gateway listens on the Docker bridge (for example `http://172.17.0.1:10254`), and for a remote gateway it is the remote host. (`NANOCLAW_ONECLI_API_HOST` is a setup-time override only, not persisted to `.env`.) If your gateway container is not named `onecli`, export `ONECLI_GATEWAY_CONTAINER=<name>` first: the commands in this doc and its checks read it. If the last command prints `404`, the server predates the `/v1` API that `@onecli-sh/sdk` 2.x requires — every SDK call will fail with 404s that look transient but are permanent.
 
 Why gateways fall behind: the OneCLI installer's docker-compose tracks the `latest` image tag, but Docker never re-pulls a tag — the server freezes at whatever `latest` meant on install day.
 
@@ -93,9 +93,9 @@ Then check the conversion, and that the gateway still injects credentials, befor
 GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh
 ```
 
-It reads only this boot's `grant-conversion` line and requires `0 failed`, `0 preempted` and `0 verify-failed` (a failed verification can make the gateway deny every request while the line still says `0 failed`), then checks that no agent is still in `all` mode. Continue only once it prints `OK`; the upgrade is done only after the agent reply at the end of Verify. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
+It reads only this boot's `grant-conversion` line and requires `0 failed`, `0 preempted` and `0 verify-failed` (a failed verification can make the gateway deny every request while the line still says `0 failed`), then checks that no agent is still in `all` mode. Continue only once it prints `OK`; the upgrade is done only after the agent reply at the end of Verify. It reads only the current boot's line: the gateway logs one on every start, and a later start converts whatever an earlier one left. If you run it long after the upgrade, restart the gateway once first (`cd ~/.onecli && env -u ONECLI_VERSION docker compose restart onecli`), wait a few seconds, then run it. Existing agents keep what the conversion gave them. From now on an agent receives only the secrets attached to it: NanoClaw attaches a group's model credential (the one its provider setup saved) on every spawn, and nothing else. A tool secret or app connection reaches a new group only when you attach it, through the skill that added it or with `onecli agents grants attach-secret`.
 
-**If a gateway newer than the pin has started, even briefly:** it can migrate its database, and going back to the pin does not undo that. Put the gateway back on the pin (step 2), then check `docker logs onecli 2>&1 | grep -iE 'migrat|error'`. Access rules and approvals were not checked in testing. If you see a database error, restore a backup taken before the newer version ran (the one from step 2, if you took it in time). There is no other tested repair, so otherwise [open an issue](https://github.com/nanocoai/nanoclaw/issues) with the log lines.
+**If a gateway newer than the pin has started, even briefly:** it can migrate its database, and going back to the pin does not undo that. Put the gateway back on the pin (step 2), then check `docker logs "${ONECLI_GATEWAY_CONTAINER:-onecli}" 2>&1 | grep -iE 'migrat|error'`. Access rules and approvals were not checked in testing. If you see a database error, restore a backup taken before the newer version ran (the one from step 2, if you took it in time). There is no other tested repair, so otherwise [open an issue](https://github.com/nanocoai/nanoclaw/issues) with the log lines.
 
 ## 3. Verify
 
@@ -108,7 +108,7 @@ curl -s "$GW/v1/health"     # must return {"status":"ok",...}; GW from the Detec
 **Confirm the pinned version is the one running.** Health alone cannot tell an upgraded gateway from one that never moved:
 
 ```bash
-docker inspect -f '{{.Config.Image}}' onecli    # gateway host: must print ghcr.io/onecli/onecli:<pin>
+docker inspect -f '{{.Config.Image}}' "${ONECLI_GATEWAY_CONTAINER:-onecli}"    # gateway host: must print ghcr.io/onecli/onecli:<pin>
 curl -s "$GW/api/health"                        # its "version" must be the pin
 ```
 
@@ -138,7 +138,9 @@ Then confirm that an agent still answers. A real reply is the check that the gat
 pnpm run chat "Reply with the single word ok"
 ```
 
-It must print the agent's reply (exit 0). If it could not reach the NanoClaw host (exit 2), start the service and run it again. No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check the gateway's log (`docker logs onecli`, or the name you set in `ONECLI_GATEWAY_CONTAINER`) and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
+It must print the agent's reply (exit 0). If it could not reach the NanoClaw host (exit 2), start the service and run it again. No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check the gateway's log (`docker logs "${ONECLI_GATEWAY_CONTAINER:-onecli}"`) and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
+
+If a new group fails while existing ones answer, NanoClaw may have no recorded key for its provider. It matches an older install's key once, and only by the name setup saves (`Anthropic` for Claude, `Codex` or `openai` for Codex): a key saved under another name is not used, and the NanoClaw log names it. Run that provider's login again (`pnpm exec tsx setup/index.ts --step gateway-auth claude`, or `codex`) so it records the key, then try the new group again.
 
 Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key.
 
@@ -147,7 +149,7 @@ Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5
 Save the old version in `~/.onecli/.env` the same way as in step 2, so a later restart does not undo the rollback, then restart and check the running tag. The command accepts only a version or `rollback`; if it refuses, nothing restarts. The last line printed must end in `:<old-version>`:
 
 ```bash
-cd ~/.onecli && (umask 077 && P=<old-version> && { printf '%s\n' "$P" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+|rollback' || { echo "Not saved: '$P' is not a version or rollback" >&2; exit 1; }; } && touch .env && { grep -v '^[[:space:]]*ONECLI_VERSION[[:space:]]*=' .env; echo "ONECLI_VERSION=$P"; } > .env.new && cat .env.new > .env && rm .env.new) && env -u ONECLI_VERSION docker compose up -d && docker inspect -f '{{.Config.Image}}' onecli
+cd ~/.onecli && (umask 077 && P=<old-version> && { printf '%s\n' "$P" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+|rollback' || { echo "Not saved: '$P' is not a version or rollback" >&2; exit 1; }; } && touch .env && { grep -v '^[[:space:]]*ONECLI_VERSION[[:space:]]*=' .env; echo "ONECLI_VERSION=$P"; } > .env.new && cat .env.new > .env && rm .env.new) && env -u ONECLI_VERSION docker compose up -d && docker inspect -f '{{.Config.Image}}' "${ONECLI_GATEWAY_CONTAINER:-onecli}"
 ```
 
 If the old gateway ran `:latest`, `latest` now means a different image. Give the image ID you noted in the Detect step a tag first (`docker tag <image-id> ghcr.io/onecli/onecli:rollback`) and use `rollback` as `<old-version>`.

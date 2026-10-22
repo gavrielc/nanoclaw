@@ -620,7 +620,11 @@ esac
     expect(verify.slice(verify.indexOf('No reply (exit 3)'))).toContain('ONECLI_GATEWAY_CONTAINER');
     // Detect, Verify and the newer-gateway note also run docker on the container by name.
     const detect = guide.slice(guide.indexOf('## 1. Detect'), guide.indexOf('## 2. Upgrade'));
-    expect(detect).toMatch(/not named `onecli`, use its name in every `docker inspect` and `docker logs`/);
+    expect(detect).toMatch(/not named `onecli`, export `ONECLI_GATEWAY_CONTAINER=<name>`/);
+    // Every command that reads the container by name honours the variable, as the scripts do.
+    const byName = guide.match(/docker (inspect|logs)[^\n`]*/g) ?? [];
+    expect(byName.length).toBeGreaterThan(3);
+    for (const cmd of byName) expect(cmd).toContain('"${ONECLI_GATEWAY_CONTAINER:-onecli}"');
   });
 
   it('says only an old gateway may report version unknown in Detect, since Verify refuses it', () => {
@@ -632,7 +636,7 @@ esac
   it("names the key in NanoClaw's .env in every sign-in hint, not a bare token", () => {
     const SCRIPTS = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts');
     for (const text of [guide, fs.readFileSync(path.join(SCRIPTS, 'post-upgrade-check.sh'), 'utf8')]) {
-      expect(text).toContain("onecli auth login");
+      expect(text).toContain('onecli auth login');
       expect(text).toContain("pipe ONECLI_API_KEY from NanoClaw's .env into");
       // On the command line the key shows in `ps` and shell history; pasted, on screen.
       expect(text).not.toContain('--api-key');
@@ -649,6 +653,22 @@ esac
       /before they save a key \(`check-grants-gateway\.sh`\) also refuses a gateway that reports `unknown`/,
     );
     expect(verify).not.toMatch(/does not report the pin/);
+  });
+
+  it('says the check reads the current boot only, so a late run restarts the gateway once first', () => {
+    const at = guide.indexOf(CHECK);
+    const after = guide.slice(at, guide.indexOf('## 3. Verify'));
+    expect(after).toMatch(/logs one on every start/);
+    expect(after).toContain('docker compose restart onecli');
+  });
+
+  it('tells a new group with no recorded key to run its provider login again', () => {
+    const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
+    expect(verify).toContain('pnpm exec tsx setup/index.ts --step gateway-auth claude');
+    expect(verify).toMatch(/new group fails while existing ones answer/);
+    // Names only: a key under another name is reported, never adopted by its type.
+    expect(verify).toMatch(/only by the name setup saves/);
+    expect(verify).not.toMatch(/one key of that provider's type/);
   });
 
   it('stops without a local gateway container, which it must read the boot log from', () => {

@@ -16,7 +16,8 @@
 # bind mount at runtime (see src/container-runner.ts). Source-only changes
 # never require an image rebuild.
 
-FROM node:22-slim
+# Pinned by digest so a rebuild cannot reuse a cached older base; bump tag and digest together.
+FROM node:22.23.4-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
 
 # ---- Build-time arguments ----------------------------------------------------
 # CJK fonts add ~200MB. Opt in only if you render Chinese/Japanese/Korean text.
@@ -32,6 +33,8 @@ ARG BUN_VERSION=1.4.0
 # ---- System dependencies -----------------------------------------------------
 # tini: correct PID 1 / signal forwarding so outbound.db writes finalize on
 # SIGTERM instead of being orphaned by the shell entrypoint.
+# poppler-utils: Claude Code's Read tool shells out to pdftoppm to open a PDF;
+# without it every PDF a user sends comes back as an error.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -55,6 +58,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ca-certificates \
         curl \
         git \
+        poppler-utils \
         tini \
         unzip \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
@@ -104,13 +108,6 @@ ENV PATH="$PNPM_HOME:$PATH"
 # installed". Keep this in lockstep with package.json's `packageManager`.
 ARG PNPM_VERSION=10.34.5
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
-
-# The npm bundled with node:22-slim (10.9.8) vendors tar <7.5.19, which
-# carries a fixable critical (GHSA-23hp-3jrh-7fpw) that the publish gate
-# refuses to ship. Patch-level bump only. Drop this once the base image
-# ships npm >= 10.9.9.
-ARG NPM_VERSION=10.9.9
-RUN npm install -g npm@${NPM_VERSION}
 
 # Global Node CLIs the agent invokes at runtime live in cli-tools.json so a
 # skill can add one with a json-merge instead of editing this Dockerfile.

@@ -129,6 +129,36 @@ export function isSavedProviderCredential(provider: string, secret: { name?: unk
   return typeof secret.name === 'string' && hasSavedProviderNames(provider) && SAVED[provider](secret.name);
 }
 
+// The shape of each provider's model key, as older setup matched it. Never
+// adopted (on a shared gateway it may be another user's); only reported, so
+// the operator can run the login that records this install's own key.
+const lower = (value: unknown) => (typeof value === 'string' ? value.toLowerCase() : '');
+const MODEL_KEY: Record<string, (secret: { type?: unknown; hostPattern?: unknown }) => boolean> = {
+  claude: (s) => s.type === 'anthropic',
+  codex: (s) => s.type === 'openai' || ['api.openai.com', 'chatgpt.com'].includes(lower(s.hostPattern)),
+};
+
+/**
+ * Secrets shaped like `provider`'s model key that no provider recorded and no
+ * other provider saves by name: an older install's key under another name.
+ */
+export function unrecordedModelKeys(
+  record: ProviderCredentialRecord,
+  provider: string,
+  secrets: Array<{ id?: unknown; name?: unknown; type?: unknown; hostPattern?: unknown }>,
+): Array<{ id: string; name: string }> {
+  if (!Object.hasOwn(MODEL_KEY, provider)) return [];
+  const recorded = new Set(Object.values(record.providers).flat());
+  return secrets.flatMap((s) =>
+    typeof s.id === 'string' &&
+    !recorded.has(s.id) &&
+    MODEL_KEY[provider](s) &&
+    !Object.keys(SAVED).some((other) => other !== provider && isSavedProviderCredential(other, s))
+      ? [{ id: s.id, name: typeof s.name === 'string' ? s.name : '' }]
+      : [],
+  );
+}
+
 /**
  * The secrets a provider's login saved, by name, for an install that recorded
  * none. Several secrets under one name cannot be told apart (another install's,

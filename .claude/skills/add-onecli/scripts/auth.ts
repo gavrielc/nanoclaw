@@ -12,6 +12,11 @@ import {
   isSavedProviderCredential,
   recordProviderCredentials,
 } from '../payload/src/gateway-providers/onecli-provider-credentials.js';
+import {
+  anthropicCredentialError,
+  anthropicCredentialPrompt,
+  pastedCredential,
+} from '../../../../setup/lib/anthropic-credential.js';
 import { createSecret } from './secret-input.js';
 
 type Method = 'subscription' | 'oauth' | 'api' | 'skip';
@@ -196,19 +201,15 @@ export async function run(): Promise<void> {
     return;
   }
 
-  const prefix = method === 'oauth' ? 'sk-ant-oat' : 'sk-ant-api';
-  const token = answer<string>(
-    await p.password({
-      message: method === 'oauth' ? 'Paste your OAuth token' : 'Paste your API key',
-      clearOnError: true,
-      validate: (raw) => {
-        const value = (raw ?? '').replace(/\s+/g, '');
-        if (!value) return 'Required';
-        if (!value.startsWith(prefix)) return `Must start with ${prefix}`;
-        return undefined;
-      },
-    }),
-  ).replace(/\s+/g, '');
+  const token = pastedCredential(
+    answer<string>(
+      await p.password({
+        message: anthropicCredentialPrompt(method),
+        clearOnError: true,
+        validate: (raw) => anthropicCredentialError(method, raw),
+      }),
+    ),
+  );
   await saveSecret(token);
   p.log.success('Claude account connected.');
 }
