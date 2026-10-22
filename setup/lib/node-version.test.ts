@@ -16,6 +16,7 @@ vi.setConfig({ testTimeout: 20_000 });
 const libDir = path.dirname(fileURLToPath(import.meta.url));
 const LIB = path.join(libDir, 'node-version.sh');
 const INSTALL_NODE = path.resolve(libDir, '..', 'install-node.sh');
+const ROOT = path.resolve(libDir, '..', '..');
 
 function which(cmd: string): string {
   const r = spawnSync('/bin/sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' });
@@ -113,5 +114,23 @@ describe('setup/install-node.sh', () => {
     expect(field(r.out, 'STATUS')).toBe('installed');
     expect(field(r.out, 'NODE_VERSION')).toBe('v22.23.4');
     expect(calls()).toContain('brew install node@22');
+  });
+});
+
+describe('nanoclaw.sh hand-off', () => {
+  it('hands setup:auto the keg-only node@22 over an older PATH Node on macOS', () => {
+    // The PATH recovery before `exec pnpm ... setup:auto`, which registers the
+    // service with `command -v node`; the exec is swapped for a print of it.
+    const source = fs.readFileSync(path.join(ROOT, 'nanoclaw.sh'), 'utf8');
+    const start = source.indexOf('# setup.sh may have just installed Node/npm/pnpm');
+    const end = source.indexOf('exec pnpm --silent run setup:auto "$@"');
+    expect(start, 'hand-off section not found in nanoclaw.sh').toBeGreaterThanOrEqual(0);
+    fakeNode(bin, '24.10.0');
+    fakeNode(keg, '22.23.4');
+    stub(bin, 'uname', 'echo Darwin');
+    stub(bin, 'brew', `[ "$1" = --prefix ] && echo ${path.dirname(keg)}`);
+    const prelude = `set -euo pipefail; PROJECT_ROOT=${ROOT}; red() { printf '%s' "$1"; }; write_abort_entry() { :; }`;
+    const r = run(['-c', `${prelude}\n${source.slice(start, end)}echo "HANDOFF $(command -v node)"`]);
+    expect(r.out.trim()).toBe(`HANDOFF ${keg}/node`);
   });
 });

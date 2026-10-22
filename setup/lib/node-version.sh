@@ -1,6 +1,6 @@
 # node-version.sh — the lowest Node setup accepts on each supported line.
-# Sourced by setup.sh and setup/install-node.sh; pure bash, since it runs
-# before Node is installed.
+# Sourced by setup.sh, setup/install-node.sh and nanoclaw.sh; pure bash,
+# since it runs before Node is installed.
 NODE_MINIMUMS="22.23.4 24.22.1 26.12.1"
 
 # node_meets_minimum VERSION: a listed line at or above its minimum, or a
@@ -34,4 +34,26 @@ node_install_line() {
 
 node_minimum_message() {
   echo "Node $1 at $2 does not meet the minimum (${NODE_MINIMUMS// / / })."
+}
+
+# node_use_patched: if the PATH node is below the minimum, put one that meets
+# it from where install-node.sh installs (~/.local/bin, keg-only node@22) in
+# front. PATH changes stay in the calling shell, so each script calls this.
+node_use_patched() {
+  local dir keg dirs=("$HOME/.local/bin")
+  if command -v node >/dev/null 2>&1 && node_meets_minimum "$(node --version 2>/dev/null)"; then
+    return 0
+  fi
+  if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1; then
+    keg="$(brew --prefix node@22 2>/dev/null || true)"
+    if [ -n "$keg" ]; then dirs+=("$keg/bin"); fi
+  fi
+  for dir in "${dirs[@]}"; do
+    if [ -x "$dir/node" ] && node_meets_minimum "$("$dir/node" --version 2>/dev/null)"; then
+      export PATH="$dir:$PATH"
+      hash -r 2>/dev/null || true
+      return 0
+    fi
+  done
+  return 1
 }

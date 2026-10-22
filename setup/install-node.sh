@@ -23,7 +23,7 @@ if command -v node >/dev/null 2>&1; then
   fi
   if ! NODE_LINE="$(node_install_line "$(node --version)")"; then
     echo "STATUS: failed"
-    echo "ERROR: $(node_minimum_message "$(node --version)" "$(command -v node)") Install Node 22 or 24, then re-run."
+    echo "ERROR: $(node_minimum_message "$(node --version)" "$(command -v node)") Switch to one of these, then re-run."
     echo "=== END ==="
     exit 1
   fi
