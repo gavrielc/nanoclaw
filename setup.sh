@@ -232,14 +232,7 @@ if [ "$NODE_OK" = "false" ]; then
   log "Node missing or too old — running setup/install-node.sh"
   echo "Node is missing or below the minimum (${NODE_MINIMUMS// / / }) — installing via setup/install-node.sh"
   if bash "$PROJECT_ROOT/setup/install-node.sh" 2>&1 | tee -a "$LOG_FILE"; then
-    if [ -x "$HOME/.local/bin/node" ]; then
-      export PATH="$HOME/.local/bin:$PATH"
-    elif [ "$PLATFORM" = "macos" ] && command -v brew >/dev/null 2>&1; then
-      if NODE22_PREFIX="$(brew --prefix node@22 2>/dev/null)"; then
-        export PATH="$NODE22_PREFIX/bin:$PATH"
-      fi
-    fi
-    hash -r 2>/dev/null || true
+    node_use_patched || true
     check_node
   else
     log "install-node.sh failed"

@@ -117,6 +117,19 @@ describe('setup/install-node.sh', () => {
   });
 });
 
+describe('node_use_patched', () => {
+  it('skips an old ~/.local/bin node for the keg-only node@22 on macOS', () => {
+    const localBin = path.join(tmp, 'home', '.local', 'bin');
+    fakeNode(bin, '22.20.0');
+    fakeNode(localBin, '26.8.1');
+    fakeNode(keg, '22.23.4');
+    stub(bin, 'uname', 'echo Darwin');
+    stub(bin, 'brew', `[ "$1" = --prefix ] && echo ${path.dirname(keg)}`);
+    const r = run(['-c', `source ${LIB}; node_use_patched; echo "rc=$? $(command -v node)"`]);
+    expect(r.out.trim()).toBe(`rc=0 ${keg}/node`);
+  });
+});
+
 describe('nanoclaw.sh hand-off', () => {
   it('hands setup:auto the keg-only node@22 over an older PATH Node on macOS', () => {
     // The PATH recovery before `exec pnpm ... setup:auto`, which registers the
