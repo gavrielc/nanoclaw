@@ -154,6 +154,13 @@ it('a subscription sign-in that sees two new Anthropic secrets records neither a
   expect(fs.existsSync(path.join(root, 'data', 'onecli', 'provider-credentials.json'))).toBe(false);
 });
 
+it('saves a subscription token only under the name setup records', () => {
+  // A custom name would be saved but never recorded, so the group gets no key.
+  const script = fs.readFileSync(path.join(__dirname, 'register-claude-token.sh'), 'utf8');
+  expect(script).not.toMatch(/SECRET_NAME/);
+  expect(script).toMatch(/--name Anthropic\b/);
+});
+
 describe('pasted Claude keys', () => {
   const argv = process.argv;
   beforeEach(() => {
