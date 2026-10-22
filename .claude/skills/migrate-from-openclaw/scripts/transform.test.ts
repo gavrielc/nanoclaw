@@ -125,8 +125,8 @@ describe('classifyCredential — vault vs .env routing', () => {
 describe('vaultCreateCommand', () => {
   it('renders the onecli secrets create command for a vault plan', () => {
     const plan = { name: 'Anthropic', type: 'anthropic' as const, hostPattern: 'api.anthropic.com' };
-    expect(vaultCreateCommand(plan, 'sk-ant-xyz')).toBe(
-      'onecli secrets create --name Anthropic --type anthropic --value sk-ant-xyz --host-pattern api.anthropic.com',
+    expect(vaultCreateCommand(plan, '"$T"')).toBe(
+      'onecli secrets create --name Anthropic --type anthropic --file "$T" --host-pattern api.anthropic.com',
     );
   });
 });

@@ -65,6 +65,11 @@ case "$1 $2" in
   "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; cat "$ROOT/secrets.json" ;;
   "agents list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"oc-default","identifier":"default","isDefault":true},{"id":"oc-sales","identifier":"ag-sales"},{"id":"oc-ops","identifier":"ag-ops"}]}' ;;
   "agents create") echo '{"hint":"h","id":"oc-new"}' ;;
+  "secrets create") p=""; f=""; for a in "$@"; do [ "$p" = --file ] && f="$a"; p="$a"; done
+    cat "$f" > "$ROOT/key-seen"; ls -ld "$(dirname "$f")" | cut -c1-10 > "$ROOT/key-dir-mode"
+    # A failing gateway that quotes the value back, as a worst case.
+    [ -z "$FAIL_CREATE" ] || { echo "{\"error\":\"rejected $(cat "$f")\"}" >&2; exit 1; }
+    echo '{"id":"sec-new"}' ;;
   "agents secrets"|"agents set-secrets") echo '{"error":"removed","code":"GONE"}'; exit 1 ;;
   *) echo '{}' ;;
 esac
@@ -100,6 +105,39 @@ const attached = (lines: string[]) => lines.filter((l) => l.includes('grants att
 const shells = ['sh', 'bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'true']).status === 0);
 
 describe('/add-vercel OneCLI steps', () => {
+  const TOKEN = 'vcp_TESTKEY-not-a-real-token-0123456789';
+  /** The save as the agent runs it: `mktemp -d`, its file tool writes the token, then the save block. */
+  function saveToken(shell: string, prefix = '') {
+    const made = spawnSync(shell, ['-c', block('SKILL.md', '### Set up Vercel API credential')], { encoding: 'utf8' });
+    const dir = made.stdout.trim();
+    fs.writeFileSync(path.join(dir, 'token'), TOKEN);
+    const save = block('SKILL.md', '### Set up Vercel API credential', 1).replace(/^D=.*$/m, `D="${dir}"`);
+    return { dir, ...run(prefix + save, shell) };
+  }
+
+  it.each(shells)('saves the token from a file in a private temp dir, never in a command (%s)', (shell) => {
+    const { dir, status, lines } = saveToken(shell);
+    expect(status).toBe(0);
+    expect(lines).toEqual([
+      expect.stringMatching(
+        /^onecli secrets create --name Vercel API Token --type generic --file \S+\/token --host-pattern api\.vercel\.com --header-name Authorization --value-format Bearer \{value\}$/,
+      ),
+    ]);
+    expect(fs.readFileSync(path.join(root, 'key-seen'), 'utf8')).toBe(TOKEN);
+    expect(fs.readFileSync(path.join(root, 'key-dir-mode'), 'utf8').trim()).toBe('drwx------');
+    expect(fs.existsSync(dir)).toBe(false);
+    // No step has a token placeholder for the agent to fill into a command.
+    expect(fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8')).not.toMatch(/<TOKEN>|--value "/);
+  });
+
+  it.each(shells)('a failed save prints no token and removes it, even under set -e (%s)', (shell) => {
+    const { dir, status, stdout, stderr } = saveToken(shell, 'set -e; FAIL_CREATE=1; export FAIL_CREATE\n');
+    expect(status).not.toBe(0);
+    expect(stdout + stderr).not.toContain(TOKEN);
+    expect(stderr).toContain('OneCLI did not save the token');
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
   it('attaches the Vercel secret only to the chosen groups', () => {
     const { status, lines } = run(chosen('ag-sales'));
     expect(status).toBe(0);
@@ -239,7 +277,7 @@ describe('/add-vercel OneCLI steps', () => {
 
   it.each([
     ['the existing-credential check', '### Check if Vercel credential already exists', 0],
-    ['the check after saving', 'Once the user provides the token, add it to OneCLI:', 1],
+    ['the check after saving', 'Once the user provides the token', 2],
   ])('%s shows Vercel tokens by host without previews', (_name, heading, skip) => {
     vault([MODEL, { id: 'sec-notes', name: 'vercel notes', hostPattern: 'notes.example.com' }, VERCEL]);
     const { stdout } = run(block('SKILL.md', heading, skip));

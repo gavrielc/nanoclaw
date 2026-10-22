@@ -145,14 +145,17 @@ describe('OneCLI grants gate messages', () => {
 
   it('names the key from .env in the sign-in hint, as the api-host hint does', () => {
     const r = gate({ listFails: true });
-    expect(r.stderr).toContain('onecli auth login --api-key <ONECLI_API_KEY from .env>');
+    expect(r.stderr).toContain(
+      "`grep '^ONECLI_API_KEY=' .env | cut -d= -f2- | onecli auth login >/dev/null 2>&1 && echo signed in`",
+    );
+    expect(r.stderr).not.toContain('--api-key');
     expect(r.stderr).not.toContain('<token>');
   });
 
   it('says to sign the CLI in, not to upgrade the gateway, when listing agents fails', () => {
     const r = gate({ listFails: true });
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('onecli auth login --api-key');
+    expect(r.stderr).toContain('onecli auth login');
     expect(r.stderr).not.toContain('needs the pinned OneCLI gateway');
   });
 

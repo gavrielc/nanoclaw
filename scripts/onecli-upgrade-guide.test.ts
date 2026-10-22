@@ -612,7 +612,7 @@ esac
 
   it('says the CLI on a remote gateway host must be signed in to that gateway', () => {
     const at = guide.indexOf(CHECK);
-    expect(guide.slice(at - 700, at)).toContain('onecli auth login --api-key');
+    expect(guide.slice(at - 700, at)).toContain('`onecli auth login >/dev/null 2>&1`');
   });
 
   it('names the configured container, not only onecli, where the reply check fails', () => {
@@ -632,7 +632,10 @@ esac
   it("names the key in NanoClaw's .env in every sign-in hint, not a bare token", () => {
     const SCRIPTS = path.resolve(__dirname, '../.claude/skills/add-onecli/scripts');
     for (const text of [guide, fs.readFileSync(path.join(SCRIPTS, 'post-upgrade-check.sh'), 'utf8')]) {
-      expect(text).toContain("onecli auth login --api-key <ONECLI_API_KEY from NanoClaw's .env>");
+      expect(text).toContain("onecli auth login");
+      expect(text).toContain("pipe ONECLI_API_KEY from NanoClaw's .env into");
+      // On the command line the key shows in `ps` and shell history; pasted, on screen.
+      expect(text).not.toContain('--api-key');
       expect(text).not.toContain('<token>');
     }
   });

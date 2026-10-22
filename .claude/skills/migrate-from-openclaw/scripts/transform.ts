@@ -197,16 +197,16 @@ export function channelEnvVars(channel: string): string[] {
 }
 
 /**
- * Render a OneCLI vault plan into the exact command the operator runs.
- * The credential value is passed through unmasked here because the caller
- * runs the command directly — it must never be echoed to a chat transcript.
+ * Render a OneCLI vault plan into the exact command the operator runs. The
+ * value is read from `file` (a 0600 temp file): on the command line any local
+ * user could read it with `ps`.
  */
-export function vaultCreateCommand(plan: VaultPlan, value: string): string {
+export function vaultCreateCommand(plan: VaultPlan, file: string): string {
   return [
     'onecli secrets create',
     `--name ${plan.name}`,
     `--type ${plan.type}`,
-    `--value ${value}`,
+    `--file ${file}`,
     `--host-pattern ${plan.hostPattern}`,
   ].join(' ');
 }

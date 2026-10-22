@@ -18,6 +18,12 @@ import { run } from './auth.js';
 let root: string;
 const record = () =>
   JSON.parse(fs.readFileSync(path.join(root, 'data', 'onecli', 'provider-credentials.json'), 'utf8')).providers;
+// The sign-in script writes the captured token to the path it is given.
+const signIn = () =>
+  child.spawn.mockImplementationOnce((_cmd: string, args: string[]) => {
+    fs.writeFileSync(args[1], 'sk-ant-oat01-fixture');
+    return { status: 0 };
+  });
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'onecli-auth-'));
   vi.spyOn(process, 'cwd').mockReturnValue(root);
@@ -42,6 +48,7 @@ it('records the Anthropic secret a subscription sign-in saved', async () => {
   child.exec
     .mockReturnValueOnce(JSON.stringify({ data: [{ id: 'sec-vercel', name: 'Vercel', type: 'generic' }] }))
     .mockReturnValueOnce(JSON.stringify({ data: [{ id: 'sec-vercel', name: 'Vercel', type: 'generic' }] }))
+    .mockReturnValueOnce('') // secrets create, no id in its output
     .mockReturnValueOnce(
       JSON.stringify({
         data: [
@@ -51,9 +58,11 @@ it('records the Anthropic secret a subscription sign-in saved', async () => {
       }),
     );
   prompts.select.mockResolvedValueOnce('subscription');
-  child.spawn.mockReturnValueOnce({ status: 0 });
+  signIn();
   await run();
-  expect(child.exec.mock.calls.every(([, args]) => args.includes('--max') && args.includes('0'))).toBe(true);
+  const calls = child.exec.mock.calls.map(([, args]) => args as string[]);
+  expect(calls.filter((a) => a[1] === 'list').every((a) => a.includes('--max') && a.includes('0'))).toBe(true);
+  expect(calls.find((a) => a[1] === 'create')).toEqual(expect.arrayContaining(['--type', 'anthropic', '--file']));
   expect(record()).toEqual({ claude: ['sec-sub'] });
 });
 
@@ -85,9 +94,10 @@ it('with duplicate Anthropic secrets and none recorded, asks to sign in and reco
   child.exec
     .mockReturnValueOnce(JSON.stringify({ data: dupes }))
     .mockReturnValueOnce(JSON.stringify({ data: dupes }))
+    .mockReturnValueOnce('')
     .mockReturnValueOnce(JSON.stringify({ data: [...dupes, { id: 'sec-new', name: 'Anthropic', type: 'anthropic' }] }));
   prompts.select.mockResolvedValueOnce('subscription');
-  child.spawn.mockReturnValueOnce({ status: 0 });
+  signIn();
   await run();
   expect(prompts.select).toHaveBeenCalledOnce();
   expect(record()).toEqual({ claude: ['sec-new'] });
@@ -140,6 +150,7 @@ it('a subscription sign-in that sees two new Anthropic secrets records neither a
   child.exec
     .mockReturnValueOnce(JSON.stringify({ data: [] }))
     .mockReturnValueOnce(JSON.stringify({ data: [] }))
+    .mockReturnValueOnce('')
     .mockReturnValueOnce(
       JSON.stringify({
         data: [
@@ -149,7 +160,7 @@ it('a subscription sign-in that sees two new Anthropic secrets records neither a
       }),
     );
   prompts.select.mockResolvedValueOnce('subscription');
-  child.spawn.mockReturnValueOnce({ status: 0 });
+  signIn();
   await expect(run()).rejects.toThrow(/more than one/);
   expect(fs.existsSync(path.join(root, 'data', 'onecli', 'provider-credentials.json'))).toBe(false);
 });

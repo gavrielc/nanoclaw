@@ -12,6 +12,7 @@ import {
   isSavedProviderCredential,
   recordProviderCredentials,
 } from '../payload/src/gateway-providers/onecli-provider-credentials.js';
+import { createSecret } from './secret-input.js';
 
 type Method = 'subscription' | 'oauth' | 'api' | 'skip';
 
@@ -62,14 +63,12 @@ async function recordClaudeSecret(id: string | null, before = new Set<string>())
   if (ids.length) await recordProviderCredentials(dataDir(), 'claude', ids);
 }
 
-async function saveSecret(value: string, baseUrl?: string): Promise<void> {
-  const args = ['secrets', 'create', '--name', 'Anthropic'];
+async function saveSecret(value: string, baseUrl?: string, before?: Set<string>): Promise<void> {
+  const args = ['--name', 'Anthropic'];
   if (baseUrl) {
     args.push(
       '--type',
       'generic',
-      '--value',
-      value,
       '--host-pattern',
       new URL(baseUrl).hostname,
       '--header-name',
@@ -78,14 +77,25 @@ async function saveSecret(value: string, baseUrl?: string): Promise<void> {
       'Bearer {value}',
     );
   } else {
-    args.push('--type', 'anthropic', '--value', value, '--host-pattern', 'api.anthropic.com');
+    args.push('--type', 'anthropic', '--host-pattern', 'api.anthropic.com');
   }
-  const output = execFileSync('onecli', args, {
-    encoding: 'utf8',
-    env: childEnv(),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  await recordClaudeSecret(createdSecretId(output));
+  await recordClaudeSecret(createdSecretId(createSecret(args, value, childEnv())), before);
+}
+
+// The script only captures the token, into a private file: saving it here
+// keeps a failed save as redacted as a pasted token's.
+function capturedSubscriptionToken(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'onecli-claude-token-'));
+  const output = path.join(dir, 'token');
+  try {
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'register-claude-token.sh');
+    const result = spawnSync('bash', [script, output], { env: childEnv(), stdio: 'inherit' });
+    const token = result.status === 0 && fs.existsSync(output) ? fs.readFileSync(output, 'utf8').trim() : '';
+    if (!token) throw new Error('Claude subscription sign-in failed');
+    return token;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function saveEnv(key: string, value: string): void {
@@ -179,15 +189,10 @@ export async function run(): Promise<void> {
     return;
   }
   if (method === 'subscription') {
+    // Without a parsed id, record only the Claude secret this save added.
     const before = new Set(listSecrets().flatMap((s) => (s.id ? [s.id] : [])));
-    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'register-claude-token.sh');
-    const result = spawnSync('bash', [script], {
-      env: childEnv(),
-      stdio: 'inherit',
-    });
-    if (result.status !== 0) throw new Error('Claude subscription sign-in failed');
-    // The script saves under the name 'Anthropic'; record only the one it added.
-    await recordClaudeSecret(null, before);
+    await saveSecret(capturedSubscriptionToken(), undefined, before);
+    p.log.success('Claude account connected.');
     return;
   }
 
