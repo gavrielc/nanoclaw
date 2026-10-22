@@ -76,9 +76,16 @@ export function gchatDriveFileNote(raw: Record<string, unknown>): string | null 
     .filter((att) => att?.source === 'DRIVE_FILE' && !att.attachmentDataRef?.resourceName)
     .map((att) => {
       const name = typeof att.contentName === 'string' && att.contentName ? att.contentName : 'file';
+      // Google Docs, Sheets, Slides and Drawings have no file to upload until
+      // exported. Shortcuts and folders share the MIME prefix but can't be exported.
+      const ask = /^application\/vnd\.google-apps\.(document|spreadsheet|presentation|drawing)$/.test(
+        String(att.contentType),
+      )
+        ? 'Ask the sender to export it (for example as PDF) and upload that file into the chat instead.'
+        : 'Ask the sender to upload the file into the chat instead (paste or drag it in).';
       return (
         `[Google Drive file ${quoteFileName(name)} was not downloaded: this app can't open files shared ` +
-        `from Google Drive. Ask the sender to upload the file into the chat instead (paste or drag it in).]`
+        `from Google Drive. ${ask}]`
       );
     });
   return notes.length > 0 ? notes.join('\n') : null;
