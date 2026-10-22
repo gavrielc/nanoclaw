@@ -284,6 +284,9 @@ describe.skipIf(!HAS_LAB)('mattermost live round trip', () => {
     // letting the shared webhook server take an ephemeral one.
     webhookPort = await freePort();
     process.env.WEBHOOK_PORT = String(webhookPort);
+    // Mattermost calls back from its container. On Linux host.docker.internal
+    // is the bridge address, which a loopback-only webhook server refuses.
+    process.env.WEBHOOK_HOST ||= '0.0.0.0';
 
     // The real builder the factory ships — not a copy of it.
     adapter = buildMattermostAdapter({
