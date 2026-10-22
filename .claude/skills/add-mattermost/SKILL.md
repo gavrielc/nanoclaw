@@ -340,3 +340,5 @@ longer than the adapter heartbeat.
 **Messages arrive but no agent runs.** Inspect `ncl dropped-messages list` and
 `ncl wirings list`. `no_agent_wired` means approval is pending or no wiring was
 created; it is not an adapter failure.
+
+**A proxy or tunnel on another machine, or in Docker on Linux, gets connection refused or times out.** The webhook server listens on 127.0.0.1 only. Add `WEBHOOK_HOST=0.0.0.0` to `.env` and restart; `Webhook server started` in `logs/nanoclaw.log` shows the host it bound.

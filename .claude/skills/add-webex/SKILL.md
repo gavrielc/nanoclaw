@@ -132,3 +132,5 @@ If you're in the middle of `/setup`, return to the setup flow now. Otherwise run
 **Events arrive but are rejected.** Signature mismatch: the secret set at webhook creation must equal `WEBEX_WEBHOOK_SECRET` exactly. Recreate the webhook with a known secret and update `.env` to match.
 
 **Adapter installed but silent.** Run `pnpm exec vitest run src/channels/webex-registration.test.ts` — red means the barrel import or the `@bitbasti/chat-adapter-webex` install drifted, so re-run the Apply steps. If green, restart the service so it loads the adapter and the tokens, then watch `logs/nanoclaw.log` for the webhook hit.
+
+**A proxy or tunnel on another machine, or in Docker on Linux, gets connection refused or times out.** The webhook server listens on 127.0.0.1 only. Add `WEBHOOK_HOST=0.0.0.0` to `.env` and restart; `Webhook server started` in `logs/nanoclaw.log` shows the host it bound.

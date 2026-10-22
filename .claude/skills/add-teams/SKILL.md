@@ -582,3 +582,7 @@ a second, orphaned app.
 A Teams bot's platform ID is derived from the first inbound activity, so wire
 the messaging group that the router auto-creates after you DM the bot — don't
 guess the platform ID. See **Finish wiring** above.
+
+### Proxy or tunnel gets connection refused
+
+A proxy or tunnel on another machine, or in Docker on Linux, cannot reach the webhook server: it listens on 127.0.0.1 only. Add `WEBHOOK_HOST=0.0.0.0` to `.env` and restart; `Webhook server started` in `logs/nanoclaw.log` shows the host it bound.
