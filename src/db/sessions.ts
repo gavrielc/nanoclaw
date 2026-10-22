@@ -375,6 +375,13 @@ export async function getAskQuestionRender(id: string): Promise<
   return undefined;
 }
 
+export async function getUnboundPendingApprovals(): Promise<PendingApproval[]> {
+  return getDb().all<PendingApproval>(
+    "SELECT * FROM pending_approvals WHERE status = 'pending' AND platform_message_id IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+    new Date().toISOString(),
+  );
+}
+
 /** Bind the delivered platform card after its approval row is durable. */
 export async function bindPendingApprovalMessage(approvalId: string, messageId: string): Promise<void> {
   await getDb().run(
