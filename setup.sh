@@ -68,6 +68,26 @@ check_node() {
   fi
 }
 
+# --- Node.js install ---
+
+ensure_node() {
+  check_node
+  # An earlier install may have left a Node that meets the minimum off PATH.
+  if [ "$NODE_OK" = "false" ] && node_use_patched; then
+    check_node
+  fi
+  if [ "$NODE_OK" = "false" ]; then
+    log "Node missing or too old — running setup/install-node.sh"
+    echo "Node is missing or below the minimum (${NODE_MINIMUMS// / / }) — installing via setup/install-node.sh"
+    if bash "$PROJECT_ROOT/setup/install-node.sh" 2>&1 | tee -a "$LOG_FILE"; then
+      node_use_patched || true
+      check_node
+    else
+      log "install-node.sh failed"
+    fi
+  fi
+}
+
 # --- pnpm install ---
 
 install_deps() {
@@ -227,17 +247,7 @@ log "=== Bootstrap started ==="
 
 detect_platform
 
-check_node
-if [ "$NODE_OK" = "false" ]; then
-  log "Node missing or too old — running setup/install-node.sh"
-  echo "Node is missing or below the minimum (${NODE_MINIMUMS// / / }) — installing via setup/install-node.sh"
-  if bash "$PROJECT_ROOT/setup/install-node.sh" 2>&1 | tee -a "$LOG_FILE"; then
-    node_use_patched || true
-    check_node
-  else
-    log "install-node.sh failed"
-  fi
-fi
+ensure_node
 install_deps
 check_build_tools
 

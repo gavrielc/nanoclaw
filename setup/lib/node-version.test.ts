@@ -57,8 +57,11 @@ function fakeNode(dir: string, version: string): void {
   fs.writeFileSync(path.join(dir, '.node-version'), `v${version}\n`);
 }
 
-function run(args: string[]): { status: number | null; out: string } {
-  const r = spawnSync(BASH, args, { encoding: 'utf8', env: { PATH: bin, HOME: path.join(tmp, 'home') } });
+// The system-dir lists point at an empty dir, so the host's own Node never leaks in.
+function run(args: string[], env: Record<string, string> = {}): { status: number | null; out: string } {
+  const sys = path.join(tmp, 'sys');
+  const base = { PATH: bin, HOME: path.join(tmp, 'home'), NODE_APT_DIRS: sys, NODE_SYSTEM_DIRS: sys };
+  const r = spawnSync(BASH, args, { encoding: 'utf8', env: { ...base, ...env } });
   return { status: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -84,13 +87,17 @@ describe('node-version.sh', () => {
 });
 
 describe('setup/install-node.sh', () => {
-  it('upgrades an unpatched Node through nodesource on Linux', () => {
-    fakeNode(bin, '22.20.0');
+  function linux(): void {
     stub(bin, 'uname', 'echo Linux');
     stub(bin, 'curl', `echo "curl $*" >> ${log}`);
     stub(bin, 'sudo', `echo "sudo $*" >> ${log}; [ "$1" = -E ] && shift; exec "$@"`);
     stub(bin, 'apt-get', `echo "apt-get $*" >> ${log}; echo v22.23.4 > ${bin}/.node-version`);
-    const r = run([INSTALL_NODE]);
+  }
+
+  it('upgrades an unpatched system Node through nodesource on Linux', () => {
+    fakeNode(bin, '22.20.0');
+    linux();
+    const r = run([INSTALL_NODE], { NODE_APT_DIRS: bin });
     expect(field(r.out, 'STATUS')).toBe('installed');
     expect(field(r.out, 'NODE_VERSION')).toBe('v22.23.4');
     // curl and sudo run as one pipeline, so their two lines land in either order.
@@ -99,6 +106,18 @@ describe('setup/install-node.sh', () => {
       'sudo -E /bin/bash -',
     ]);
     expect(calls().slice(2)).toEqual(['sudo apt-get install -y nodejs', 'apt-get install -y nodejs']);
+  });
+
+  it("stops before sudo when Linux's Node comes from a version manager", () => {
+    fakeNode(bin, '22.20.0');
+    linux();
+    const r = run([INSTALL_NODE]);
+    expect(r.status).toBe(1);
+    expect(field(r.out, 'ERROR')).toBe(
+      `Node v22.20.0 at ${bin}/node does not meet the minimum (22.23.4 / 24.22.1 / 26.12.1). ` +
+        'Update Node in your version manager to 22.23.4 or newer, then re-run setup.',
+    );
+    expect(calls()).toEqual([]);
   });
 
   it("installs Homebrew's node@22 on macOS and checks the keg Node", () => {
@@ -113,7 +132,57 @@ describe('setup/install-node.sh', () => {
     const r = run([INSTALL_NODE]);
     expect(field(r.out, 'STATUS')).toBe('installed');
     expect(field(r.out, 'NODE_VERSION')).toBe('v22.23.4');
+    expect(field(r.out, 'NOTE')).toBe(
+      `NanoClaw will use Homebrew's node@22. Your own node (${bin}/node) stays on v24.10.0 until you update it, e.g. brew upgrade node.`,
+    );
     expect(calls()).toContain('brew install node@22');
+  });
+
+  it('prints no NOTE on macOS when the old Node is the keg node@22 that brew upgrades', () => {
+    stub(bin, 'uname', 'echo Darwin');
+    fakeNode(keg, '22.20.0');
+    stub(
+      bin,
+      'brew',
+      `case "$1" in --prefix) echo ${path.dirname(keg)} ;; install) echo v22.23.4 > ${keg}/.node-version ;; esac`,
+    );
+    const r = run([INSTALL_NODE], { PATH: `${keg}:${bin}` });
+    expect(field(r.out, 'STATUS')).toBe('installed');
+    expect(field(r.out, 'NOTE')).toBeUndefined();
+  });
+});
+
+describe('setup.sh ensure_node', () => {
+  function ensureNode(): string {
+    const source = fs.readFileSync(path.join(ROOT, 'setup.sh'), 'utf8');
+    const fn = (name: string) => {
+      const start = source.indexOf(`${name}() {`);
+      expect(start, `${name}() not found in setup.sh`).toBeGreaterThanOrEqual(0);
+      return source.slice(start, source.indexOf('\n}', start) + 2);
+    };
+    const project = path.join(tmp, 'project');
+    stub(path.join(project, 'setup'), 'install-node.sh', `echo install-node >> ${log}; exit 1`);
+    for (const tool of ['bash', 'sed', 'tee']) fs.symlinkSync(which(tool), path.join(bin, tool));
+    const prelude = `source ${LIB}; PROJECT_ROOT=${project}; LOG_FILE=${tmp}/boot.log; log() { :; }`;
+    return run(['-c', `${prelude}\n${fn('check_node')}\n${fn('ensure_node')}\nensure_node; echo "NODE_OK=$NODE_OK"`])
+      .out.trim()
+      .split('\n')
+      .pop() as string;
+  }
+
+  it('uses a patched system Node behind an old PATH Node instead of installing', () => {
+    stub(bin, 'uname', 'echo Linux');
+    fakeNode(bin, '22.20.0');
+    fakeNode(path.join(tmp, 'sys'), '22.23.4');
+    expect(ensureNode()).toBe('NODE_OK=true');
+    expect(calls()).toEqual([]);
+  });
+
+  it('runs install-node.sh when no installed Node meets the minimum', () => {
+    stub(bin, 'uname', 'echo Linux');
+    fakeNode(bin, '22.20.0');
+    expect(ensureNode()).toBe('NODE_OK=false');
+    expect(calls()).toEqual(['install-node']);
   });
 });
 
@@ -127,6 +196,16 @@ describe('node_use_patched', () => {
     stub(bin, 'brew', `[ "$1" = --prefix ] && echo ${path.dirname(keg)}`);
     const r = run(['-c', `source ${LIB}; node_use_patched; echo "rc=$? $(command -v node)"`]);
     expect(r.out.trim()).toBe(`rc=0 ${keg}/node`);
+  });
+
+  it('falls back to the apt-installed system Node behind an old ~/.local/bin node', () => {
+    const sys = path.join(tmp, 'sys');
+    fakeNode(bin, '22.20.0');
+    fakeNode(path.join(tmp, 'home', '.local', 'bin'), '22.12.0');
+    fakeNode(sys, '22.23.4');
+    stub(bin, 'uname', 'echo Linux');
+    const r = run(['-c', `source ${LIB}; node_use_patched; echo "rc=$? $(command -v node)"`]);
+    expect(r.out.trim()).toBe(`rc=0 ${sys}/node`);
   });
 });
 
