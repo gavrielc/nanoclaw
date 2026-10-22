@@ -327,12 +327,21 @@ async function sendApprovalCard(
   title: string,
   question: string,
 ): Promise<void> {
+  // Channels without buttons show fallbackText; handleApprovalTextReply parses the answer.
+  const shortId = approvalId.slice(-6);
   const messageId = await adapter.deliver(
     to.channel_type,
     to.platform_id,
     threadId,
     'chat-sdk',
-    JSON.stringify({ type: 'ask_question', questionId: approvalId, title, question, options: APPROVAL_OPTIONS }),
+    JSON.stringify({
+      type: 'ask_question',
+      questionId: approvalId,
+      title,
+      question,
+      options: APPROVAL_OPTIONS,
+      fallbackText: `${title}\n\n${question}\n\nReply "approve ${shortId}", "reject ${shortId}" or "reject ${shortId} <reason>".`,
+    }),
     undefined,
     to.instance,
   );
