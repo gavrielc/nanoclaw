@@ -140,7 +140,7 @@ pnpm run chat "Reply with the single word ok"
 
 It must print the agent's reply (exit 0). If it could not reach the NanoClaw host (exit 2), start the service and run it again. No reply (exit 3) or the runner's failure notice (exit 4) means the upgrade is not done: check the gateway's log (`docker logs "${ONECLI_GATEWAY_CONTAINER:-onecli}"`) and the post-upgrade check above. If no agent is wired to the terminal channel, send one message to any agent from your chat app instead and wait for a real answer, not a failure notice.
 
-If a new group fails while existing ones answer, NanoClaw may have no recorded key for its provider. It matches an older install's key once, by the name setup saves (`Anthropic`, `Codex`). Failing that, it takes the one key of that provider's type, and refuses when there are several. Run that provider's login again (`pnpm exec tsx setup/index.ts --step gateway-auth claude`, or `codex`) so it records the key, then try the new group again.
+If a new group fails while existing ones answer, NanoClaw may have no recorded key for its provider. It matches an older install's key once, and only by the name setup saves (`Anthropic` for Claude, `Codex` or `openai` for Codex): a key saved under another name is not used, and the NanoClaw log names it. Run that provider's login again (`pnpm exec tsx setup/index.ts --step gateway-auth claude`, or `codex`) so it records the key, then try the new group again.
 
 Once the service is back, if `/add-tavily-tool` is installed, re-run its Phase 5: the upgrade block it wrote into each group earlier has no attach step, so a group that upgraded to a paid key would drop the keyless header and end up with no key.
 

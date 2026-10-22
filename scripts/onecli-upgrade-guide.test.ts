@@ -663,6 +663,9 @@ esac
     const verify = guide.slice(guide.indexOf('Finally, restart the NanoClaw service'), guide.indexOf('## 4. Rollback'));
     expect(verify).toContain('pnpm exec tsx setup/index.ts --step gateway-auth claude');
     expect(verify).toMatch(/new group fails while existing ones answer/);
+    // Names only: a key under another name is reported, never adopted by its type.
+    expect(verify).toMatch(/only by the name setup saves/);
+    expect(verify).not.toMatch(/one key of that provider's type/);
   });
 
   it('stops without a local gateway container, which it must read the boot log from', () => {

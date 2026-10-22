@@ -9,10 +9,11 @@ import {
   adoptSavedProviderCredentials,
   hasSavedProviderNames,
   providerCredentialFile,
+  type ProviderCredentialRecord,
   readProviderCredentials,
   RecordLockedError,
+  unrecordedModelKeys,
   updateProviderCredentials,
-  type ProviderCredentialRecord,
 } from './onecli-provider-credentials.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
@@ -249,13 +250,24 @@ export async function grantProviderCredentials(
     if (!res.ok) throw new Error(`attaching secret ${id} returned ${res.status}`);
   }
   if (ids.length === 0) {
-    log.warn(
-      'No model credential recorded for this provider is in the OneCLI vault; the group gets none until its login is run again',
-      {
-        agentGroupId: identifier,
-        provider,
-      },
-    );
+    const unrecorded = unrecordedModelKeys(record, provider, vault);
+    if (unrecorded.length) {
+      // A group that still holds one (converted on upgrade) works; a new one gets no key.
+      const level = unrecorded.some((s) => held.has(s.id)) ? 'warn' : 'error';
+      log[level](
+        `OneCLI holds a ${provider} model key NanoClaw never recorded, so new groups get no key: ` +
+          `run \`pnpm exec tsx setup/index.ts --step gateway-auth ${provider}\` to sign in and record one`,
+        { agentGroupId: identifier, provider, unrecorded: unrecorded.map((s) => s.name) },
+      );
+    } else {
+      log.warn(
+        'No model credential recorded for this provider is in the OneCLI vault; the group gets none until its login is run again',
+        {
+          agentGroupId: identifier,
+          provider,
+        },
+      );
+    }
   }
   return missing;
 }
