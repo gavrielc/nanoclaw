@@ -38,7 +38,11 @@ function dockerOk(args: string[]): boolean {
   }
 }
 
-/** Whether the egress network is `--internal`; undefined when it does not exist. */
+/**
+ * Whether the egress network is `--internal`; undefined when it does not exist.
+ * Any other inspect failure (daemon down, timeout) throws: creating the network
+ * would fail too, under a misleading message.
+ */
 function egressNetworkInternal(): boolean | undefined {
   try {
     const out = execFileSync(
@@ -51,8 +55,10 @@ function egressNetworkInternal(): boolean | undefined {
       },
     );
     return out.trim() === 'true';
-  } catch {
-    return undefined;
+  } catch (err) {
+    const { stderr, message } = err as { stderr?: unknown; message?: unknown };
+    if (/no such network|not found/i.test(`${String(stderr ?? '')} ${String(message ?? '')}`)) return undefined;
+    throw new EgressLockdownError(`the "${EGRESS_NETWORK}" network could not be inspected`);
   }
 }
 

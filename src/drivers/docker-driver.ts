@@ -142,6 +142,9 @@ export class DockerSessionDriver implements SessionDriver {
         return new DockerHandle(spec.key, name, this.#cli, null, auxiliaryNames, privateNetwork, this.#emit);
       }
       log.warn('Replacing existing container that is not on the required network', { containerName: name });
+      // A bare remove is enough: no host runtime supervises this container (a
+      // registered one makes the wake a no-op before prepare), and an
+      // off-network verdict only comes for targets without auxiliary containers.
       try {
         this.#cli.run(['rm', '--force', name]);
       } catch (error) {

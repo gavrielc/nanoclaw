@@ -207,6 +207,12 @@ async function releaseClaimQuietly(sessionId: string, incarnation: number): Prom
  */
 const wakePromises = new Map<string, Promise<boolean>>();
 
+/**
+ * Sweep-run deferred-adoption retries in flight, keyed by session id (see
+ * `retryPendingAdoptions`). Resolves false when the retry failed.
+ */
+const adoptionRetries = new Map<string, Promise<boolean>>();
+
 export function getActiveContainerCount(): number {
   return activeContainers.size;
 }
@@ -269,6 +275,7 @@ const pendingStops = new Map<string, string>();
 export function _resetAdoptionRetryStateForTesting(): void {
   pendingAdoptions.clear();
   pendingStops.clear();
+  adoptionRetries.clear();
 }
 
 /**
@@ -381,6 +388,23 @@ async function retryPendingAdoption(sessionId: string): Promise<boolean> {
  * next tick.
  */
 export function wakeContainer(session: Session): Promise<boolean> {
+  // The sweep is re-fencing this session's survivor (checked first: it may be
+  // registered and mid-stop). Once it settles cleanly, wake again from a fresh
+  // read, so a container it stopped or found gone is replaced now, not a tick
+  // later; a failed retry or a closed session is not.
+  const retry = adoptionRetries.get(session.id);
+  if (retry) {
+    return retry
+      .then(async (settled) => {
+        if (!settled) return false;
+        const current = await getSession(session.id);
+        return current?.status === 'active' ? wakeContainer(current) : false;
+      })
+      .catch((err: unknown) => {
+        log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
+        return false;
+      });
+  }
   if (activeContainers.has(session.id)) {
     log.debug('Container already running', { sessionId: session.id });
     return Promise.resolve(true);
@@ -1004,19 +1028,22 @@ export async function stopOrphanedSessions(): Promise<number> {
 /**
  * Retry adoptions a failed claim write deferred. Without this an idle session's
  * surviving container stays unadopted, and unchecked against the network
- * policy, until a message wakes it. Never spawns; a concurrent wake joins the
- * retry through `wakePromises` instead of racing it.
+ * policy, until a message wakes it. Never spawns; a wake that arrives meanwhile
+ * waits on `adoptionRetries`, then wakes as usual.
  */
 export async function retryPendingAdoptions(): Promise<void> {
   for (const sessionId of [...pendingAdoptions]) {
     if (activeContainers.has(sessionId) || wakePromises.has(sessionId)) continue;
     const retry = retryPendingAdoption(sessionId)
-      .catch((err: unknown) => {
-        log.warn('Deferred adoption retry failed — the next sweep retries', { sessionId, err });
-        return false;
-      })
-      .finally(() => wakePromises.delete(sessionId));
-    wakePromises.set(sessionId, retry);
+      .then(
+        () => true,
+        (err: unknown) => {
+          log.warn('Deferred adoption retry failed — the next sweep retries', { sessionId, err });
+          return false;
+        },
+      )
+      .finally(() => adoptionRetries.delete(sessionId));
+    adoptionRetries.set(sessionId, retry);
     await retry;
   }
 }

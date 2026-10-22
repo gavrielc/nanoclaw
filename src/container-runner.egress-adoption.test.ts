@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   alive: true,
   /** The daemon refuses to stop or remove the container. */
   stopFails: false,
+  /** Runs when the adopted container's networks are read (after it is registered). */
+  onNetworksRead: undefined as (() => void) | undefined,
   cli: undefined as unknown,
 }));
 
@@ -29,6 +31,7 @@ class ScriptedCli extends FakeCli {
     }
     if (args[0] === 'ps' && joined.includes('name=^/')) return state.alive ? CONTAINER : '';
     if (args[0] === 'inspect' && joined.includes('.NetworkSettings.Networks')) {
+      state.onNetworksRead?.();
       if (!state.networks) throw new Error('Error response from daemon');
       return JSON.stringify(state.networks);
     }
@@ -105,6 +108,7 @@ beforeEach(async () => {
   state.networks = {};
   state.alive = true;
   state.stopFails = false;
+  state.onNetworksRead = undefined;
   state.cli = new ScriptedCli('docker');
   release.mockClear();
   resetSessionDriver();
@@ -246,6 +250,55 @@ describe('adopting a running container under egress lockdown', () => {
     expect(groupLookups).toHaveBeenCalledTimes(2);
   });
 
+  it('a wake that arrives during the sweep retry goes on to the spawn path once the retry has stopped the container', async () => {
+    state.networks = { bridge: {} };
+    const coordination = await import('./db/coordination.js');
+    vi.spyOn(coordination, 'tryClaimSession').mockRejectedValueOnce(new Error('store down'));
+    await adoptRunningSessions();
+    const session = (await getSession('sess-1'))!;
+    // The retry's own group read runs for real; the spawn the wake then starts
+    // ends at its group read, before it touches the filesystem.
+    const groups = await import('./db/agent-groups.js');
+    const getAgentGroup = groups.getAgentGroup;
+    const groupLookups = vi
+      .spyOn(groups, 'getAgentGroup')
+      .mockImplementationOnce(getAgentGroup)
+      .mockResolvedValueOnce(undefined);
+
+    const sweep = retryPendingAdoptions();
+    const woke = wakeContainer(session);
+    await sweep;
+
+    expect(await woke).toBe(true);
+    expect(state.alive).toBe(false);
+    expect(groupLookups).toHaveBeenCalledTimes(2);
+  });
+
+  it('a wake that arrives while the sweep retry is stopping the container waits, then goes on to the spawn path', async () => {
+    state.networks = { bridge: {} };
+    const coordination = await import('./db/coordination.js');
+    vi.spyOn(coordination, 'tryClaimSession').mockRejectedValueOnce(new Error('store down'));
+    await adoptRunningSessions();
+    const session = (await getSession('sess-1'))!;
+    const groups = await import('./db/agent-groups.js');
+    const getAgentGroup = groups.getAgentGroup;
+    const groupLookups = vi
+      .spyOn(groups, 'getAgentGroup')
+      .mockImplementationOnce(getAgentGroup)
+      .mockResolvedValueOnce(undefined);
+    // Wake while the retry has the survivor registered and is about to stop it.
+    let woke: Promise<boolean> | undefined;
+    state.onNetworksRead = () => {
+      woke ??= wakeContainer(session);
+    };
+
+    await retryPendingAdoptions();
+
+    expect(await woke).toBe(true);
+    expect(state.alive).toBe(false);
+    expect(groupLookups).toHaveBeenCalledTimes(2);
+  });
+
   it('the sweep retries a deferred adoption for an idle session, without spawning', async () => {
     state.networks = { bridge: {} };
     const coordination = await import('./db/coordination.js');
@@ -282,5 +335,23 @@ describe('adopting a running container under egress lockdown', () => {
     state.stopFails = false;
     await vi.waitFor(() => expect(isContainerRunning('sess-1')).toBe(false));
     expect(state.alive).toBe(false);
+  });
+
+  it('a wake waiting on the sweep retry reports failure when the retry could not stop the container', async () => {
+    _setFinishFenceScheduleForTesting([], 10);
+    state.networks = { bridge: {} };
+    const coordination = await import('./db/coordination.js');
+    vi.spyOn(coordination, 'tryClaimSession').mockRejectedValueOnce(new Error('store down'));
+    await adoptRunningSessions();
+    const session = (await getSession('sess-1'))!;
+    state.stopFails = true;
+
+    const sweep = retryPendingAdoptions();
+    const woke = wakeContainer(session);
+    await sweep;
+
+    expect(await woke).toBe(false);
+    state.stopFails = false;
+    await vi.waitFor(() => expect(isContainerRunning('sess-1')).toBe(false));
   });
 });

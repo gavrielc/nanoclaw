@@ -212,7 +212,9 @@ degrading.
 - **Agents already running:** the setting is read when the host starts. An
   agent that was running when lockdown was turned on is stopped as the host
   restarts, and its next turn starts on the locked network. A turn it was in
-  the middle of is retried, as after any other container stop.
+  the middle of is retried, as after any other container stop. Turning
+  lockdown off affects only new agents: a container already on the egress
+  network stays there until it restarts.
 
 **Default: egress is open.** Lockdown is **off** unless you opt in; by default
 the agent reaches the gateway over the host-gateway path and outbound traffic is

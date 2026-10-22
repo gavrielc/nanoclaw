@@ -362,6 +362,27 @@ describe('fail-closed adoption', () => {
     groupLookups.mockRestore();
   });
 
+  it('a wake waiting on the sweep retry does not restart a session the retry found closed', async () => {
+    const controls = await deferAdoption();
+    const stale = (await getSession('sess-1'))!;
+    await updateSession('sess-1', { status: 'closed' });
+    // A spawn would read the group first; end it there so nothing is written.
+    const groups = await import('./db/agent-groups.js');
+    const groupLookups = vi.spyOn(groups, 'getAgentGroup').mockResolvedValue(undefined);
+
+    try {
+      const sweep = retryPendingAdoptions();
+      const woke = wakeContainer(stale);
+      await sweep;
+
+      expect(await woke).toBe(false);
+      expect(controls.stopped).toEqual(['orphan-at-startup']);
+      expect(groupLookups).not.toHaveBeenCalled();
+    } finally {
+      groupLookups.mockRestore();
+    }
+  });
+
   it('a deferred container whose stop failed is stopped by a later retry, never adopted', async () => {
     const controls = await deferAdoption();
     const stop = controls.handle.stop.bind(controls.handle);

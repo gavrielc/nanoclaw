@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   attached: false,
   internal: true,
+  /** Thrown by the network's Internal inspect, as execFileSync throws. */
+  inspectError: undefined as Error | undefined,
   access: { endpoint: 'gateway.internal', target: { kind: 'runtime' as const, identity: 'fixture-gateway' } },
   execFileSync: vi.fn(),
 }));
@@ -30,10 +32,14 @@ describe('gateway egress attachment', () => {
   beforeEach(() => {
     state.attached = false;
     state.internal = true;
+    state.inspectError = undefined;
     state.access = { endpoint: 'gateway.internal', target: { kind: 'runtime', identity: 'fixture-gateway' } };
     state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
       if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
-      if (args.includes('{{.Internal}}')) return String(state.internal);
+      if (args.includes('{{.Internal}}')) {
+        if (state.inspectError) throw state.inspectError;
+        return String(state.internal);
+      }
       if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
       return '';
     });
@@ -53,6 +59,30 @@ describe('gateway egress attachment', () => {
       "target 'host' cannot join",
     );
     expect(state.execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('creates the egress network when the inspect says it does not exist', () => {
+    state.inspectError = Object.assign(new Error('Command failed'), {
+      stderr: 'Error response from daemon: network fixture-egress not found\n',
+    });
+
+    expect(ensureEgressNetwork(state.access)).toBe(true);
+    expect(state.execFileSync).toHaveBeenCalledWith(
+      'docker',
+      ['network', 'create', '--internal', 'fixture-egress'],
+      expect.anything(),
+    );
+  });
+
+  it('names a failed inspect instead of trying to create the network', () => {
+    state.inspectError = Object.assign(new Error('spawnSync docker ETIMEDOUT'), { code: 'ETIMEDOUT' });
+
+    expect(() => ensureEgressNetwork(state.access)).toThrow('"fixture-egress" network could not be inspected');
+    expect(state.execFileSync).not.toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['create']),
+      expect.anything(),
+    );
   });
 
   it('fails closed when the egress network exists but is not internal', () => {
