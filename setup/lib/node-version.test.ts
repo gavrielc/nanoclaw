@@ -10,7 +10,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Each case spawns several bash processes; a loaded machine can push one past
+// the 5 s default with nothing wrong.
+vi.setConfig({ testTimeout: 20_000 });
 
 const libDir = path.dirname(fileURLToPath(import.meta.url));
 const LIB = path.join(libDir, 'node-version.sh');
@@ -197,12 +201,10 @@ describe('setup/install-node.sh', () => {
     expect(r.status).toBe(0);
     expect(field(r.out, 'STATUS')).toBe('installed');
     expect(field(r.out, 'NODE_VERSION')).toBe('v22.23.4');
-    expect(calls()).toEqual([
-      'curl -fsSL https://deb.nodesource.com/setup_22.x',
-      'sudo -E /bin/bash -',
-      'sudo apt-get install -y nodejs',
-      'apt-get install -y nodejs',
-    ]);
+    // curl and sudo run as one pipeline, so their two lines land in either order.
+    const log = calls();
+    expect(log.slice(0, 2).sort()).toEqual(['curl -fsSL https://deb.nodesource.com/setup_22.x', 'sudo -E /bin/bash -']);
+    expect(log.slice(2)).toEqual(['sudo apt-get install -y nodejs', 'apt-get install -y nodejs']);
   });
 
   it('keeps an unpatched Node 24 on its own nodesource line', () => {
