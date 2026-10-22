@@ -12,7 +12,7 @@ skill="${1:-this skill}"
 no() {
   case "${2:-}" in
     cli) need="the pinned onecli CLI, 2.11.0: see \"The CLI binary\" in docs/onecli-upgrades.md" ;;
-    config) need="the onecli CLI pointed at and signed in to the OneCLI gateway: \`onecli config get api-host\` prints the address (set it with \`onecli config set api-host <ONECLI_URL from .env>\`), and a gateway with an API token needs \`grep '^ONECLI_API_KEY=' .env | cut -d= -f2- | onecli auth login >/dev/null 2>&1 && echo signed in\`" ;;
+    config) need="the onecli CLI pointed at and signed in to the OneCLI gateway: \`onecli config get api-host\` prints the address (set it with \`onecli config set api-host <ONECLI_URL from .env>\`), and a gateway with an API token needs \`grep '^ONECLI_API_KEY=' .env | cut -d= -f2- | tr -d '\"'\"'\" | onecli auth login >/dev/null 2>&1 && echo signed in\`" ;;
     reach) need="a running OneCLI gateway at that address: start the OneCLI gateway, or fix the address with \`onecli config set api-host <ONECLI_URL from .env>\`" ;;
     jq) need="jq" ;;
     *) need="the pinned OneCLI gateway, 1.45: see docs/onecli-upgrades.md" ;;

@@ -220,6 +220,18 @@ describe('redact', () => {
     expect(text).toBe('a [redacted] b [redacted] c');
   });
 
+  it('removes a value starting with n, r or t that follows a raw backslash', () => {
+    for (const value of ['nT3stKey0123456789', 'rT3stKey0123456789', 'tT3stKey0123456789']) {
+      expect(redact(`C:\\keys\\${value} done`, [value])).toBe('C:\\keys\\[redacted] done');
+      expect(redact(`C:\\keys\\${value[0]}\r\n${value.slice(1)} done`, [value])).toBe('C:\\keys\\[redacted] done');
+      const json = JSON.stringify({ error: `C:\\keys\\${value[0]}\r\n${value.slice(1)}` });
+      expect(redact(json, [value])).toBe(JSON.stringify({ error: 'C:\\keys\\' }).replace(/"}$/, '[redacted]"}'));
+    }
+    // A false start just before the value must not hide it.
+    expect(redact('C:\\keys\\AbCd\\nAbCdAbCd done', ['nAbCdAbCd'])).not.toContain('nAbCdAbCd');
+    expect(redact('C:\\keys\\AbCd\\nAbCdAbCd done', ['nAbCdAbCd'])).not.toMatch(/AbCdAbCd/);
+  });
+
   it('stays fast on long runs of backslashes', () => {
     const started = Date.now();
     const value = `sk-ant-api03-${'\\'.repeat(12)}Z`;

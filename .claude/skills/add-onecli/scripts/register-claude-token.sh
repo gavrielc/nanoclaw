@@ -59,7 +59,7 @@ fi
 if [ "$is_headless" = "1" ]; then
   cat <<'EOF'
 A sign-in link will appear for you to sign in with your Claude account.
-When you finish, we'll save the token to your OneCLI vault automatically.
+When you finish, setup saves the token to your OneCLI vault.
 
 Press Enter to continue, or edit the command first.
 
@@ -67,7 +67,7 @@ EOF
 else
   cat <<'EOF'
 A browser window will open for you to sign in with your Claude account.
-When you finish, we'll save the token to your OneCLI vault automatically.
+When you finish, setup saves the token to your OneCLI vault.
 
 Press Enter to continue, or edit the command first.
 

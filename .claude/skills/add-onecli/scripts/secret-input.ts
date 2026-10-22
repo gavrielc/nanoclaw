@@ -11,20 +11,25 @@ const MARK = '[redacted]';
 
 // `text` without whitespace, then without backslash runs or the n/r/t a
 // backslash escapes, with `\uXXXX` decoded and `%xx` upper-cased; plus the
-// span each kept character came from. A value wrapped across lines (even
-// inside an escape), or escaped (JSON, shell) any number of times, reduces to
-// the same characters.
-function skeleton(text: string): { chars: string; from: number[]; to: number[] } {
+// span each kept character came from, and the escape letters dropped just
+// before it. A value wrapped across lines (even inside an escape), or escaped
+// (JSON, shell) any number of times, reduces to the same characters.
+type Dropped = { c: string; at: number };
+function skeleton(text: string): { chars: string; from: number[]; to: number[]; dropped: Dropped[][] } {
   const at: number[] = [];
   for (let i = 0; i < text.length; i++) if (!/\s/.test(text[i])) at.push(i);
   const t = at.map((i) => text[i]).join('');
   let chars = '';
   const from: number[] = [];
   const to: number[] = [];
+  const dropped: Dropped[][] = [];
+  let pending: Dropped[] = [];
   const keep = (c: string, start: number, end: number) => {
     chars += c;
     from.push(at[start]);
     to.push(at[end] + 1);
+    dropped.push(pending);
+    pending = [];
   };
   for (let i = 0; i < t.length; i++) {
     const start = i;
@@ -35,26 +40,34 @@ function skeleton(text: string): { chars: string; from: number[]; to: number[] }
         i += 5;
         const c = String.fromCharCode(parseInt(hex[1], 16));
         if (!/[\s\\]/.test(c)) keep(c, start, i);
-      } else if (/[nrt]/.test(t[i + 1] ?? '')) i++;
+      } else if (/[nrt]/.test(t[i + 1] ?? '')) pending.push({ c: t[++i], at: at[i] });
     } else if (/^%[0-9a-fA-F]{2}/.test(t.slice(i, i + 3))) {
       for (const j of [i, i + 1, i + 2]) keep(t[j].toUpperCase(), j, j);
       i += 2;
     } else keep(t[i], i, i);
   }
-  return { chars, from, to };
+  return { chars, from, to, dropped };
 }
 
 /** `text` without any secret, raw, URL-encoded or base64, even wrapped or escaped. */
 export function redact(text: string, secrets: string[]): string {
-  const { chars, from, to } = skeleton(text);
+  const { chars, from, to, dropped } = skeleton(text);
   const spans: Array<[number, number]> = [];
   for (const secret of secrets) {
     const bytes = Buffer.from(secret);
     for (const form of [secret, encodeURIComponent(secret), bytes.toString('base64'), bytes.toString('base64url')]) {
       const needle = skeleton(form).chars;
       if (!needle) continue;
-      for (let k = chars.indexOf(needle); k !== -1; k = chars.indexOf(needle, k + needle.length))
-        spans.push([from[k], to[k + needle.length - 1]]);
+      // A leading n/r/t right after a raw backslash reads as an escape and drops
+      // out, so also find the rest and take that letter back.
+      const tail = /^[nrt]./.test(needle) ? needle.slice(1) : '';
+      for (const n of tail ? [needle, tail] : [needle]) {
+        for (let k = chars.indexOf(n); k !== -1; k = chars.indexOf(n, k + 1)) {
+          const letter = n === tail ? dropped[k].find((d) => d.c === needle[0]) : undefined;
+          if (n === tail && !letter) continue;
+          spans.push([letter?.at ?? from[k], to[k + n.length - 1]]);
+        }
+      }
     }
   }
   let out = '';
