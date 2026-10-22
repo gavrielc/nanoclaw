@@ -12,6 +12,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createOneCliCredentialConnection } from '../../add-onecli/scripts/provider-credentials.js';
+import { readEnvFile } from '../../../../src/env.js';
 
 export const DIAL_SECRET = {
   name: 'Dial API',
@@ -36,8 +37,11 @@ const field = (output: string, key: string): string => {
   }
 };
 
-/** The gateway the onecli CLI writes to, and its key ('' for a gateway with ambient local auth). */
-export function cliConnection(run: Run = onecli): { url: string; apiKey: string } {
+/**
+ * The gateway the onecli CLI writes to, its key ('' for a gateway with ambient
+ * local auth), and its effective project (env or saved config; unset if unread).
+ */
+export function cliConnection(run: Run = onecli): { url: string; apiKey: string; project?: string } {
   let url = '';
   try {
     url = field(run(['config', 'get', 'api-host']), 'value');
@@ -51,12 +55,18 @@ export function cliConnection(run: Run = onecli): { url: string; apiKey: string 
   } catch {
     apiKey = '';
   }
-  return { url, apiKey };
+  let project: string | undefined;
+  try {
+    project = field(run(['config', 'get', 'project']), 'value');
+  } catch {
+    project = undefined;
+  }
+  return { url, apiKey, project };
 }
 
 export async function storeDialKey(
   authFile = dialAuthFile(),
-  connection: { url: string; apiKey: string } = cliConnection(),
+  connection: { url: string; apiKey: string; project?: string } = cliConnection(),
   fetchImpl: typeof fetch = globalThis.fetch,
   root = process.cwd(),
 ): Promise<string> {
@@ -69,6 +79,17 @@ export async function storeDialKey(
   }
   if (!key) {
     throw new Error('no Dial API key in the host auth file — sign in with dial auth login / verify-otp, then re-run');
+  }
+  // The key is written in NanoClaw's project and granted by the CLI in its own,
+  // so a mismatch would overwrite another project's key and then fail the grant.
+  const project = process.env.ONECLI_PROJECT_ID || readEnvFile(['ONECLI_PROJECT_ID'], root).ONECLI_PROJECT_ID || '';
+  const cliProject = connection.project ?? (process.env.ONECLI_PROJECT || '');
+  if (project !== cliProject) {
+    throw new Error(
+      `NanoClaw's OneCLI project (ONECLI_PROJECT_ID: ${project || 'default'}) and the onecli CLI's ` +
+        `(${cliProject || 'default'}) differ: set the CLI's project to the same id (ONECLI_PROJECT, or ` +
+        '`onecli config set project`), or clear both, and run again. Nothing was written to OneCLI.',
+    );
   }
   // An empty key sends none: NanoClaw's own key never goes to the CLI's gateway.
   const vault = createOneCliCredentialConnection(DIAL_SECRET, connection.url, connection.apiKey, fetchImpl, root);

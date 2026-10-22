@@ -34,7 +34,7 @@ function gateway(rows: unknown[]) {
 }
 const writes = (f: ReturnType<typeof gateway>) => f.mock.calls.filter(([, init]) => init.method !== 'GET');
 const CLI = { url: 'http://gw.test:10254', apiKey: '' };
-const store = (f: ReturnType<typeof gateway>, connection = CLI) =>
+const store = (f: ReturnType<typeof gateway>, connection: { url: string; apiKey: string; project?: string } = CLI) =>
   storeDialKey(auth, connection, f as unknown as typeof fetch, root);
 
 describe('add-dial-tool: storing the Dial key', () => {
@@ -94,6 +94,31 @@ describe('add-dial-tool: storing the Dial key', () => {
     ).toBe(true);
   });
 
+  it.each([
+    ['ONECLI_PROJECT and ONECLI_PROJECT_ID differ', { ONECLI_PROJECT: 'proj-a' }, 'ONECLI_PROJECT_ID=proj-b\n'],
+    ['only .env names a project', {}, 'ONECLI_PROJECT_ID=proj-b\n'],
+    ['only the CLI names a project', { ONECLI_PROJECT: 'proj-a' }, ''],
+  ])('refuses before any write when %s: the key and its grants must land in one project', async (_n, env, dotenv) => {
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    vi.stubEnv('ONECLI_PROJECT_ID', '');
+    if (!('ONECLI_PROJECT' in env)) vi.stubEnv('ONECLI_PROJECT', '');
+    fs.appendFileSync(path.join(root, '.env'), dotenv);
+    const f = gateway([existing()]);
+    await expect(store(f)).rejects.toThrow(/ONECLI_PROJECT/);
+    expect(f).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it('writes when the CLI and NanoClaw name the same project', async () => {
+    vi.stubEnv('ONECLI_PROJECT', 'proj-b');
+    vi.stubEnv('ONECLI_PROJECT_ID', '');
+    fs.appendFileSync(path.join(root, '.env'), 'ONECLI_PROJECT_ID=proj-b\n');
+    const f = gateway([existing()]);
+    await expect(store(f)).resolves.toBe('sec-dial');
+    expect((f.mock.calls[0][1].headers as Record<string, string>)['X-Project-Id']).toBe('proj-b');
+    vi.unstubAllEnvs();
+  });
+
   it('reads the CLI connection, and stops without an api-host', () => {
     const run = (out: Record<string, string>) => (args: string[]) => {
       const v = out[args.join(' ')];
@@ -110,6 +135,26 @@ describe('add-dial-tool: storing the Dial key', () => {
       apiKey: '',
     });
     expect(() => cliConnection(run({}))).toThrow("could not read the onecli CLI's api-host");
+  });
+
+  it('reads the CLI’s effective project, which a saved `onecli config set project` sets too', async () => {
+    const run = (out: Record<string, string>) => (args: string[]) => {
+      const v = out[args.join(' ')];
+      if (v === undefined) throw new Error('unknown');
+      return v;
+    };
+    const host = { 'config get api-host': '{"value":"http://h:1"}' };
+    expect(cliConnection(run({ ...host, 'config get project': '{"key":"project","value":"proj-b"}' })).project).toBe(
+      'proj-b',
+    );
+    expect(cliConnection(run({ ...host, 'config get project': '{"key":"project","value":""}' })).project).toBe('');
+    vi.stubEnv('ONECLI_PROJECT', '');
+    vi.stubEnv('ONECLI_PROJECT_ID', '');
+    // Saved in the CLI only: the key would go to the default project, so refuse.
+    await expect(store(gateway([existing()]), { ...CLI, project: 'proj-b' })).rejects.toThrow(/ONECLI_PROJECT/);
+    fs.appendFileSync(path.join(root, '.env'), 'ONECLI_PROJECT_ID=proj-b\n');
+    await expect(store(gateway([existing()]), { ...CLI, project: 'proj-b' })).resolves.toBe('sec-dial');
+    vi.unstubAllEnvs();
   });
 
   it('reads the auth file where the dial CLI writes it', () => {
