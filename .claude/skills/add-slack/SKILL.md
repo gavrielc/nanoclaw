@@ -153,6 +153,7 @@ With webhook delivery, the bridge serves port 3000 at `/webhook/slack`; that
 URL must be publicly reachable and registered with Slack. Tell the user:
 ```nc:operator when:connection=webhook
 Set up event delivery (needs a public HTTPS URL for port 3000 — ngrok, a Cloudflare Tunnel, or a reverse proxy on a VPS):
+NanoClaw's webhook server listens on 127.0.0.1 only, so a tunnel or proxy on this machine works as is. If yours runs on another machine or in Docker on Linux, add `WEBHOOK_HOST=0.0.0.0` to `.env` before the restart step.
 1. Event Subscriptions → Enable Events. Set the Request URL to https://<your-public-host>/webhook/slack and wait for the challenge to pass.
 2. Subscribe to bot events: message.channels, message.groups, message.im, app_mention. Save Changes.
 3. Interactivity & Shortcuts → toggle Interactivity on, set the same Request URL, Save Changes, then reinstall the app when Slack prompts.

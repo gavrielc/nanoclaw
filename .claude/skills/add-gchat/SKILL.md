@@ -115,6 +115,7 @@ named after your project number. So it needs both values. Tell the user:
 In Google Cloud Console, open Google Chat API → Configuration. Make sure "Build this Chat app as a Google Workspace add-on" is checked, and that under Connection settings → Triggers, "Use a common HTTP endpoint URL for all triggers" is selected with a URL ending in /webhook/gchat. Save.
 An existing Chat app that is not an add-on has no such checkbox: it needs Google's "Convert to add-on" steps first (https://developers.google.com/workspace/chat/convert), and that conversion can't be undone.
 Then find the project number: the same page shows a Service Account Email like service-123456789012@gcp-sa-gsuiteaddons.iam.gserviceaccount.com, and the digits in it are your project number.
+NanoClaw's webhook server listens on 127.0.0.1 only, so a tunnel or proxy on this machine works as is. If yours runs on another machine or in Docker on Linux, add `WEBHOOK_HOST=0.0.0.0` to `.env`; it takes effect at the next restart.
 ```
 
 Store both in `.env` (set-if-absent). The URL must match the console exactly,

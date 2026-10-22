@@ -194,10 +194,15 @@ identity before it saves any settings.
 
 Approvals require Mattermost itself—not the browser—to reach NanoClaw. Ask for
 a URL routable from the Mattermost server. It may be NanoClaw's base URL or the
-full `/webhook/mattermost` route; the adapter normalizes either form.
+full `/webhook/mattermost` route; the adapter normalizes either form. The
+webhook server listens on 127.0.0.1 only, so a URL served by a tunnel or proxy
+on this machine works as is. Only when Mattermost calls NanoClaw directly from
+another machine, or from Docker on Linux (`host.docker.internal` mapped with
+`host-gateway` is the bridge address), add `WEBHOOK_HOST=0.0.0.0` to `.env`;
+the restart below picks it up.
 
 ```nc:prompt callback_url reuse:MATTERMOST_CALLBACK_URL normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
-Callback URL reachable from Mattermost, such as `https://nanoclaw.example.com` or `http://host.docker.internal:3000/webhook/mattermost`.
+Callback URL reachable from Mattermost, such as `https://nanoclaw.example.com` or `http://host.docker.internal:3000/webhook/mattermost`. If Mattermost calls it directly from another machine or from Docker on Linux, add `WEBHOOK_HOST=0.0.0.0` to `.env` first.
 ```
 
 Save the selected server, authenticated bot token, and callback URL. On a rerun,
