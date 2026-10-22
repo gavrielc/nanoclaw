@@ -405,6 +405,21 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(stdout).not.toMatch(/withheld:|allowed:/);
   });
 
+  it.each([
+    ['an empty id', '[{"id":"","identifier":"ag-sales"}]'],
+    ['no identifier', '[{"id":"oc-sales"}]'],
+  ])('fails instead of reporting withheld for an agent entry with %s', (_name, list) => {
+    writeStub('onecli', `echo "onecli $*" >> "$CALLS"\nif [ "$1 $2" = "agents list" ]; then echo '${list}'; fi`);
+    const { status, stdout } = scope('none', [CMD.attach]);
+    expect(status).not.toBe(0);
+    expect(stdout).not.toMatch(/withheld:|allowed:/);
+  });
+
+  it('fails when the agent group list command prints nothing', () => {
+    writeStub('ncl', 'exit 0');
+    expect(scope('none', [CMD.attach]).status).not.toBe(0);
+  });
+
   it('fails instead of doing nothing when the agent group list cannot be read', () => {
     writeStub('ncl', `if [ "$1 $2" = "groups list" ]; then echo '{"ok":true}'; fi`);
     const { status } = scope('none', [CMD.attach]);
@@ -749,6 +764,9 @@ describe('add-dial-tool: shared-gateway and first-run wording', () => {
     expect(op.slice(0, op.indexOf('```'))).toMatch(
       /different Dial account switches every agent that holds the Dial key/,
     );
+    // A host that starts signed out can also sign in to a different account than another install's.
+    const out = doc.slice(doc.indexOf('```nc:operator when:signed_in=false'));
+    expect(out.slice(0, out.indexOf('```', 5))).toMatch(/switches every agent that holds the Dial key/);
   });
 
   it('tells a first-time /add-dial user that the tool reaches no agent until /add-dial-tool runs', () => {
