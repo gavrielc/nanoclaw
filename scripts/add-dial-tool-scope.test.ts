@@ -426,6 +426,18 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(status).not.toBe(0);
   });
 
+  it.each([
+    ['an embedded newline', { id: 'ag-sales\nag-foreign', name: 'Sales' }],
+    ['a trailing newline', { id: 'ag-sales\n', name: 'ag-foreign' }],
+  ])('fails on a group id with %s, before any grant changes', (_n, group) => {
+    const groups = { ok: true, data: [group] };
+    writeStub('ncl', `if [ "$1 $2" = "groups list" ]; then echo '${JSON.stringify(groups)}'; fi`);
+    const { status, stdout } = scope('none', [CMD.attach]);
+    expect(status).not.toBe(0);
+    expect(stdout).not.toMatch(/withheld:|allowed:/);
+    expect(callLines().some((l) => l.includes('detach-secret') || l.includes('attach-secret'))).toBe(false);
+  });
+
   it('a group name with a newline or tab never reads as another group id', () => {
     // Another install's agent on the same gateway holds the key and must keep it.
     fs.rmSync(root, { recursive: true, force: true });

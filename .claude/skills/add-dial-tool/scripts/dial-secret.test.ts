@@ -157,6 +157,27 @@ describe('add-dial-tool: storing the Dial key', () => {
     vi.unstubAllEnvs();
   });
 
+  it.each([
+    ['no value key', '{"key":"project"}'],
+    ['output that is not JSON', 'Error: something went wrong'],
+  ])('stops when the CLI project read prints %s, instead of reading it as the default project', (_n, out) => {
+    const run = (args: string[]) => {
+      const key = args.join(' ');
+      if (key === 'config get api-host') return '{"value":"http://h:1"}';
+      if (key === 'config get project') return out;
+      throw new Error('unknown');
+    };
+    expect(() => cliConnection(run)).toThrow("could not read the onecli CLI's project");
+  });
+
+  it('falls back to ONECLI_PROJECT when the CLI has no project setting to read', () => {
+    const run = (args: string[]) => {
+      if (args.join(' ') === 'config get api-host') return '{"value":"http://h:1"}';
+      throw new Error('unknown key');
+    };
+    expect(cliConnection(run).project).toBeUndefined();
+  });
+
   it('reads the auth file where the dial CLI writes it', () => {
     expect(dialAuthFile({ XDG_DATA_HOME: '/x' })).toBe('/x/dial/auth.v1.json');
     expect(dialAuthFile({})).toBe(path.join(os.homedir(), '.local', 'share', 'dial', 'auth.v1.json'));

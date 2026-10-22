@@ -55,11 +55,28 @@ export function cliConnection(run: Run = onecli): { url: string; apiKey: string;
   } catch {
     apiKey = '';
   }
-  let project: string | undefined;
+  // A CLI without a project setting falls back to ONECLI_PROJECT; one that
+  // answers without a readable value stops, since '' would mean the default.
+  let out: string | undefined;
   try {
-    project = field(run(['config', 'get', 'project']), 'value');
+    out = run(['config', 'get', 'project']);
   } catch {
-    project = undefined;
+    out = undefined;
+  }
+  let project: string | undefined;
+  if (out !== undefined) {
+    let value: unknown;
+    try {
+      value = (JSON.parse(out) as Record<string, unknown>).value;
+    } catch {
+      value = undefined;
+    }
+    if (typeof value !== 'string') {
+      throw new Error(
+        "could not read the onecli CLI's project from `onecli config get project`, so the Dial key's project is unknown",
+      );
+    }
+    project = value.trim();
   }
   return { url, apiKey, project };
 }
