@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const SKILL_DIR = path.resolve(__dirname, '../.claude/skills/add-vercel');
 
@@ -63,7 +63,7 @@ beforeEach(() => {
 echo "onecli $*" >> "$CALLS"
 case "$1 $2" in
   "secrets list") [ "$3 $4" = "--max 0" ] || exit 7; cat "$ROOT/secrets.json" ;;
-  "agents list") [ "$3 $4" = "--max 0" ] || exit 7; echo '{"hint":"h","data":[{"id":"oc-default","identifier":"default","isDefault":true},{"id":"oc-sales","identifier":"ag-sales"},{"id":"oc-ops","identifier":"ag-ops"}]}' ;;
+  "agents list") [ "$3 $4" = "--max 0" ] || exit 7; A='[{"id":"oc-default","identifier":"default","isDefault":true},{"id":"oc-sales","identifier":"ag-sales"},{"id":"oc-ops","identifier":"ag-ops"}]'; if [ -n "$BARE_AGENTS" ]; then printf '%s\\n' "$A"; else printf '{"hint":"h","data":%s}\\n' "$A"; fi ;;
   "agents create") echo '{"hint":"h","id":"oc-new"}' ;;
   "agents secrets"|"agents set-secrets") echo '{"error":"removed","code":"GONE"}'; exit 1 ;;
   *) echo '{}' ;;
@@ -106,6 +106,15 @@ describe('/add-vercel OneCLI steps', () => {
     expect(lines.filter((l) => l.includes('grants attach-secret'))).toEqual([
       'onecli agents grants attach-secret --id oc-sales --secret-id sec-vercel',
     ]);
+  });
+
+  it('reads an agent list answered as a bare array, as the gate accepts, without creating a duplicate agent', () => {
+    vi.stubEnv('BARE_AGENTS', '1');
+    const { status, lines } = run(chosen('ag-sales'));
+    vi.unstubAllEnvs();
+    expect(status).toBe(0);
+    expect(lines.some((l) => l.startsWith('onecli agents create'))).toBe(false);
+    expect(attached(lines)).toEqual(['onecli agents grants attach-secret --id oc-sales --secret-id sec-vercel']);
   });
 
   it('creates the OneCLI agent for a chosen group that has not run yet, then attaches', () => {

@@ -122,10 +122,10 @@ else
   esac
 fi
 G=$(ncl groups list --json --limit 100000) || { echo "could not list agent groups; is the NanoClaw host running?" >&2; exit 1; }
-AG=$(onecli agents list --max 0) || { echo "could not list OneCLI agents" >&2; exit 1; }
+AG=$(onecli agents list --max 0 | jq -ce 'if type == "array" then . else .data end | arrays') || { echo "could not list OneCLI agents" >&2; exit 1; }
 for gid in $(printf '%s' "$VERCEL_GROUPS" | tr ',' ' '); do
   gname=$(printf '%s' "$G" | jq -r --arg g "$gid" '.data[] | select(.id==$g) | .name'); [ -n "$gname" ] || { echo "unknown agent group '$gid'; see: ncl groups list" >&2; exit 1; }
-  aid=$(printf '%s' "$AG" | jq -r --arg g "$gid" '.data[] | select(.identifier==$g) | .id')
+  aid=$(printf '%s' "$AG" | jq -r --arg g "$gid" '.[] | select(.identifier==$g) | .id')
   [ -n "$aid" ] || aid=$(onecli agents create --name "$gname" --identifier "$gid" | jq -r '.id // empty'); [ -n "$aid" ] || { echo "could not create a OneCLI agent for $gname ($gid)" >&2; exit 1; }
   onecli agents grants attach-secret --id "$aid" --secret-id "$S" >/dev/null || { echo "could not attach the Vercel secret to $gname ($gid)" >&2; exit 1; }
   echo "Vercel attached to $gname ($gid)"

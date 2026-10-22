@@ -14,14 +14,13 @@ set -euo pipefail
 #   3. Register it with OneCLI.
 #
 # Env overrides:
-#   SECRET_NAME   OneCLI secret name   (default: Anthropic)
 #   HOST_PATTERN  OneCLI host pattern  (default: api.anthropic.com)
+# The secret name is fixed: setup records the new secret saved as 'Anthropic'.
 
 # Prefer bash 4+ (for `read -e -i` readline preload). macOS ships 3.2 in
 # /bin/bash, but Homebrew users usually have 5.x first on PATH. The
 # readline preload is optional — on 3.x we fall back to a plain prompt.
 
-SECRET_NAME="${SECRET_NAME:-Anthropic}"
 HOST_PATTERN="${HOST_PATTERN:-api.anthropic.com}"
 
 command -v onecli >/dev/null \
@@ -116,10 +115,10 @@ fi
 
 echo
 echo "Got token: ${token:0:16}…${token: -4}"
-echo "Saving it to your OneCLI vault as '${SECRET_NAME}' (host: ${HOST_PATTERN})…"
+echo "Saving it to your OneCLI vault as 'Anthropic' (host: ${HOST_PATTERN})…"
 
 onecli secrets create \
-  --name "$SECRET_NAME" \
+  --name Anthropic \
   --type anthropic \
   --value "$token" \
   --host-pattern "$HOST_PATTERN"

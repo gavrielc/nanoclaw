@@ -404,6 +404,50 @@ describe('OneCLI gateway package', () => {
     await expect(grant(gateway, 'codex')).resolves.toEqual([]);
   });
 
+  it('an older Claude key under another name is not adopted: the host errors with the login that fixes it', async () => {
+    // Older setup accepted any type=anthropic secret, so an upgraded install's key may not be named Anthropic.
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-renamed', name: 'Claude key', type: 'anthropic' },
+        { id: 'sec-vercel', name: 'Vercel API Token', type: 'generic' },
+      ],
+    });
+    await expect(grant(gateway)).resolves.toEqual([]);
+    expect(attached(gateway)).toEqual([]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining('pnpm exec tsx setup/index.ts --step gateway-auth claude'),
+      expect.objectContaining({ provider: 'claude', unrecorded: ['Claude key'] }),
+    );
+    expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining('No model credential'), expect.anything());
+  });
+
+  it('a converted group that still holds the unrecorded key gets a warning, not an error, and keeps working', async () => {
+    const gateway = fakeGateway({
+      held: ['sec-renamed'],
+      vault: [{ id: 'sec-renamed', name: 'Claude key', type: 'anthropic' }],
+    });
+    await expect(grant(gateway)).resolves.toEqual([]);
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('--step gateway-auth claude'),
+      expect.objectContaining({ unrecorded: ['Claude key'] }),
+    );
+  });
+
+  it('names only Codex-shaped keys for a Codex group, never another provider’s', async () => {
+    const gateway = fakeGateway({
+      vault: [
+        { id: 'sec-chatgpt', name: 'My ChatGPT', type: 'generic', hostPattern: 'chatgpt.com' },
+        { id: 'sec-oc', name: 'OpenCode ChatGPT', type: 'openai' },
+      ],
+    });
+    await expect(grant(gateway, 'codex')).resolves.toEqual([]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining('--step gateway-auth codex'),
+      expect.objectContaining({ unrecorded: ['My ChatGPT'] }),
+    );
+  });
+
   it('an unrecorded install adopts both Cursor entries once for a Cursor group, and nothing else', async () => {
     const gateway = fakeGateway({
       vault: [
@@ -912,7 +956,7 @@ function fakeGateway(
     putDelayMs?: number;
     /** Secret ids the group's agent (oc-g1) already holds. */
     held?: string[];
-    vault?: Array<{ id: string; name: string; type?: string }>;
+    vault?: Array<{ id: string; name: string; type?: string; hostPattern?: string }>;
   } = {},
 ) {
   const calls: string[] = [];
