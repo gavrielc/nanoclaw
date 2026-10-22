@@ -150,9 +150,10 @@ BOOTSTRAP_RAW="$STEPS_DIR/01-bootstrap.log"
 export NANOCLAW_BOOTSTRAP_LOG="$BOOTSTRAP_RAW"
 
 if bash "$PROJECT_ROOT/setup.sh" > "$BOOTSTRAP_RAW" 2>&1; then
-  # Parse the status block from setup.sh output
-  STATUS=$(grep '^STATUS:' "$BOOTSTRAP_RAW" | head -1 | sed 's/^STATUS: *//')
-  NODE_VERSION=$(grep '^NODE_VERSION:' "$BOOTSTRAP_RAW" | head -1 | sed 's/^NODE_VERSION: *//')
+  # Parse the status block from setup.sh output. It comes last: install-node.sh,
+  # when it ran, printed its own block first.
+  STATUS=$(grep '^STATUS:' "$BOOTSTRAP_RAW" | tail -1 | sed 's/^STATUS: *//')
+  NODE_VERSION=$(grep '^NODE_VERSION:' "$BOOTSTRAP_RAW" | tail -1 | sed 's/^NODE_VERSION: *//')
 
   if [ "$STATUS" = "success" ]; then
     step_ok "Prerequisites ready $(dim "(node $NODE_VERSION)")"

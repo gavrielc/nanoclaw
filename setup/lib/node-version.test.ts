@@ -147,3 +147,19 @@ describe('nanoclaw.sh hand-off', () => {
     expect(r.out.trim()).toBe(`HANDOFF ${keg}/node`);
   });
 });
+
+describe('migrate-v2.sh bootstrap status', () => {
+  it("reads setup.sh's block, not install-node.sh's, when Node was upgraded", () => {
+    const source = fs.readFileSync(path.join(ROOT, 'migrate-v2.sh'), 'utf8');
+    const parse = source.split('\n').filter((l) => /^\s+(STATUS|NODE_VERSION)=\$\(grep /.test(l));
+    expect(parse).toHaveLength(2);
+    const raw = path.join(tmp, 'bootstrap.log');
+    fs.writeFileSync(
+      raw,
+      'STATUS: installed\nNODE_VERSION: v22.23.4\n=== NANOCLAW SETUP: BOOTSTRAP ===\nNODE_VERSION: 22.23.4\nSTATUS: success\n',
+    );
+    for (const tool of ['grep', 'tail', 'sed']) fs.symlinkSync(which(tool), path.join(bin, tool));
+    const r = run(['-c', `BOOTSTRAP_RAW=${raw}\n${parse.join('\n')}\necho "$STATUS $NODE_VERSION"`]);
+    expect(r.out.trim()).toBe('success 22.23.4');
+  });
+});
