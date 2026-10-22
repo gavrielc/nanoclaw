@@ -20,6 +20,9 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [bootstrap] $*" >> "$LOG_FILE"; }
 
+# shellcheck source=setup/lib/node-version.sh
+source "$PROJECT_ROOT/setup/lib/node-version.sh"
+
 # --- Platform detection ---
 
 detect_platform() {
@@ -56,14 +59,35 @@ check_node() {
   if command -v node >/dev/null 2>&1; then
     NODE_VERSION=$(node --version 2>/dev/null | sed 's/^v//')
     NODE_PATH_FOUND=$(command -v node)
-    local major
-    major=$(echo "$NODE_VERSION" | cut -d. -f1)
-    if [ "$major" -ge 22 ] 2>/dev/null; then
+    local status
+    status=$(node_version_status "$NODE_VERSION")
+    if [ "$status" = "ok" ]; then
       NODE_OK="true"
     fi
-    log "Node $NODE_VERSION at $NODE_PATH_FOUND (major=$major, ok=$NODE_OK)"
+    log "Node $NODE_VERSION at $NODE_PATH_FOUND (status=$status, ok=$NODE_OK)"
   else
     log "Node not found"
+  fi
+}
+
+# --- Node.js install ---
+
+ensure_node() {
+  check_node
+  # A patched Node from an earlier install (uvx's ~/.local/bin, keg-only
+  # node@22) may only be off PATH; use it before installing another.
+  if [ "$NODE_OK" = "false" ] && node_use_patched; then
+    check_node
+  fi
+  if [ "$NODE_OK" = "false" ]; then
+    log "Node missing, too old or unpatched — running setup/install-node.sh"
+    echo "Node is missing or lacks the October 2026 security fixes — installing via setup/install-node.sh"
+    if bash "$PROJECT_ROOT/setup/install-node.sh" 2>&1 | tee -a "$LOG_FILE"; then
+      node_use_patched || true
+      check_node
+    else
+      log "install-node.sh failed"
+    fi
   fi
 }
 
@@ -85,11 +109,14 @@ install_deps() {
   # is invisible but corepack still blocks on stdin. Auto-accept.
   export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
+  # The pnpm lookups below append to PATH, so a node in those dirs can't
+  # shadow the patched one check_node accepted.
+
   # A previous run (or the manual recovery printed below) may have left pnpm
   # in ~/.local/bin, which a fresh login shell doesn't always have on PATH.
   if ! command -v pnpm >/dev/null 2>&1 && [ -x "$HOME/.local/bin/pnpm" ]; then
-    export PATH="$HOME/.local/bin:$PATH"
-    log "Found pnpm in $HOME/.local/bin — prepended to PATH"
+    export PATH="$PATH:$HOME/.local/bin"
+    log "Found pnpm in $HOME/.local/bin — appended to PATH"
   fi
 
   # Preferred path: enable corepack so `pnpm` shim lands on PATH.
@@ -107,7 +134,7 @@ install_deps() {
       if mkdir -p "$user_bin" >> "$LOG_FILE" 2>&1 \
           && corepack enable --install-directory "$user_bin" pnpm >> "$LOG_FILE" 2>&1 \
           && [ -x "$user_bin/pnpm" ]; then
-        export PATH="$user_bin:$PATH"
+        export PATH="$PATH:$user_bin"
         hash -r 2>/dev/null || true
         log "corepack pnpm shim installed in $user_bin"
       else
@@ -150,7 +177,7 @@ install_deps() {
       NPM_LOCAL_PREFIX="$HOME/.local"
       if mkdir -p "$NPM_LOCAL_PREFIX" \
           && npm install -g "pnpm@${pinned}" --prefix "$NPM_LOCAL_PREFIX" >> "$LOG_FILE" 2>&1; then
-        export PATH="$NPM_LOCAL_PREFIX/bin:$PATH"
+        export PATH="$PATH:$NPM_LOCAL_PREFIX/bin"
         log "Installed pnpm@${pinned} to user-owned prefix: $NPM_LOCAL_PREFIX"
       else
         log "pnpm install via user-owned prefix also failed"
@@ -161,14 +188,14 @@ install_deps() {
   # `npm install -g` writes to npm's global prefix, which isn't always on the
   # shell PATH — common on macOS where the user has `npm config set prefix
   # ~/.npm-global` to avoid sudo, or on Linux where /usr/local/bin isn't in
-  # PATH. Discover the prefix and prepend its bin dir so `command -v pnpm`
+  # PATH. Discover the prefix and append its bin dir so `command -v pnpm`
   # sees the new install.
   if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     local npm_prefix
     npm_prefix=$(npm config get prefix 2>/dev/null)
     if [ -n "$npm_prefix" ] && [ -x "$npm_prefix/bin/pnpm" ]; then
-      export PATH="$npm_prefix/bin:$PATH"
-      log "Prepended npm prefix bin to PATH: $npm_prefix/bin"
+      export PATH="$PATH:$npm_prefix/bin"
+      log "Appended npm prefix bin to PATH: $npm_prefix/bin"
     fi
   fi
 
@@ -226,24 +253,7 @@ log "=== Bootstrap started ==="
 
 detect_platform
 
-check_node
-if [ "$NODE_OK" = "false" ]; then
-  log "Node missing or too old — running setup/install-node.sh"
-  echo "Node 22+ not found — installing via setup/install-node.sh"
-  if bash "$PROJECT_ROOT/setup/install-node.sh" 2>&1 | tee -a "$LOG_FILE"; then
-    if [ -x "$HOME/.local/bin/node" ]; then
-      export PATH="$HOME/.local/bin:$PATH"
-    elif [ "$PLATFORM" = "macos" ] && command -v brew >/dev/null 2>&1; then
-      if NODE22_PREFIX="$(brew --prefix node@22 2>/dev/null)"; then
-        export PATH="$NODE22_PREFIX/bin:$PATH"
-      fi
-    fi
-    hash -r 2>/dev/null || true
-    check_node
-  else
-    log "install-node.sh failed"
-  fi
-fi
+ensure_node
 install_deps
 check_build_tools
 

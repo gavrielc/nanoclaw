@@ -8,16 +8,34 @@
 # it. Pure bash by design — runs before Node exists on the host.
 set -euo pipefail
 
+# shellcheck source=setup/lib/node-version.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/node-version.sh"
+
 echo "=== NANOCLAW SETUP: INSTALL_NODE ==="
 
+# nodesource replaces the system nodejs, so an unpatched supported line is
+# upgraded on its own line; anything older gets Node 22.
+NODE_LINE=22
 if command -v node >/dev/null 2>&1; then
-  NODE_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"
-  if [ "$NODE_MAJOR" -ge 22 ] 2>/dev/null; then
-    echo "STATUS: already-installed"
-    echo "NODE_VERSION: $(node --version)"
-    echo "=== END ==="
-    exit 0
-  fi
+  CURRENT="$(node --version)"
+  case "$(node_version_status "$CURRENT")" in
+    ok)
+      echo "STATUS: already-installed"
+      echo "NODE_VERSION: $CURRENT"
+      echo "=== END ==="
+      exit 0
+      ;;
+    unsupported)
+      echo "STATUS: failed"
+      echo "ERROR: $(node_fix_hint "$CURRENT" "$(command -v node)")"
+      echo "=== END ==="
+      exit 1
+      ;;
+    outdated)
+      NODE_LINE="${CURRENT#v}"
+      NODE_LINE="${NODE_LINE%%.*}"
+      ;;
+  esac
   echo "STEP: upgrade-node"
 fi
 
@@ -40,12 +58,13 @@ else
         echo "=== END ==="
         exit 1
       fi
+      # Keg-only, so it never replaces another Node; node_use_patched finds it.
       brew install node@22
       export PATH="$(brew --prefix node@22)/bin:$PATH"
       ;;
     Linux)
       echo "STEP: nodesource-setup"
-      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E /bin/bash -
+      curl -fsSL "https://deb.nodesource.com/setup_${NODE_LINE}.x" | sudo -E /bin/bash -
       echo "STEP: apt-install-nodejs"
       sudo apt-get install -y nodejs
       ;;
@@ -65,6 +84,16 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+# The PATH node decides: the install can land behind another Node (nvm), or
+# the package mirror can lag the security release.
+INSTALLED="$(node --version)"
+if [ "$(node_version_status "$INSTALLED")" != ok ]; then
+  echo "STATUS: failed"
+  echo "ERROR: $(node_fix_hint "$INSTALLED" "$(command -v node)")"
+  echo "=== END ==="
+  exit 1
+fi
+
 echo "STATUS: installed"
-echo "NODE_VERSION: $(node --version)"
+echo "NODE_VERSION: $INSTALLED"
 echo "=== END ==="
