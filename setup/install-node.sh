@@ -63,7 +63,7 @@ else
       brew install node@22
       export PATH="$(brew --prefix node@22)/bin:$PATH"
       case "$CURRENT_NODE" in
-        "" | "$(brew --prefix node@22)"/* | "$(brew --cellar)/node@22/"*) ;;
+        "" | "$(brew --prefix node@22)"/*) ;;
         *) echo "NOTE: NanoClaw will use Homebrew's node@22. Your own node ($CURRENT_NODE) stays on $CURRENT_VERSION until you update it, e.g. brew upgrade node." ;;
       esac
       ;;
