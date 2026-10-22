@@ -36,6 +36,8 @@ interface SentEmail {
   subject: string;
   text: string;
   headers?: Record<string, string>;
+  cc?: string[];
+  bcc?: string[];
 }
 
 const INBOUND_EMAIL = {
@@ -43,6 +45,7 @@ const INBOUND_EMAIL = {
   object: 'email',
   from: 'Owner <owner@example.com>',
   to: ['bot@mail.example.com'],
+  cc: ['teammate@example.com'],
   subject: 'Weekly plan',
   text: 'Can you draft the weekly plan?',
   html: null,
@@ -50,6 +53,16 @@ const INBOUND_EMAIL = {
   headers: {},
   attachments: [],
   created_at: '2026-10-19T10:00:00.000Z',
+};
+
+const SECOND_EMAIL = {
+  ...INBOUND_EMAIL,
+  id: 'inbound-2',
+  cc: [],
+  subject: 'Budget',
+  text: 'And the budget?',
+  message_id: '<root-2@example.com>',
+  created_at: '2026-10-19T11:00:00.000Z',
 };
 
 let sent: SentEmail[];
@@ -64,20 +77,21 @@ function stubResendApi(): void {
         sent.push(JSON.parse(String(init.body)) as SentEmail);
         return Response.json({ id: `sent-${sent.length}` });
       }
-      if (url.endsWith(`/emails/receiving/${INBOUND_EMAIL.id}`)) return Response.json(INBOUND_EMAIL);
+      const email = [INBOUND_EMAIL, SECOND_EMAIL].find((e) => url.endsWith(`/emails/receiving/${e.id}`));
+      if (email) return Response.json(email);
       return new Response('{"message":"unexpected request"}', { status: 404 });
     }),
   );
 }
 
 /** A webhook request signed the way Resend (svix) signs it. */
-function signedWebhook(): Request {
+function signedWebhook(email: { id: string; created_at: string } = INBOUND_EMAIL): Request {
   const body = JSON.stringify({
     type: 'email.received',
-    created_at: INBOUND_EMAIL.created_at,
-    data: { email_id: INBOUND_EMAIL.id, attachments: [] },
+    created_at: email.created_at,
+    data: { email_id: email.id, attachments: [] },
   });
-  const id = 'msg_test_1';
+  const id = `msg_${email.id}`;
   const timestamp = String(Math.floor(Date.now() / 1000));
   const key = Buffer.from(WEBHOOK_SECRET.slice('whsec_'.length), 'base64');
   const signature = crypto.createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest('base64');
@@ -112,6 +126,7 @@ describe('resend channel delivery', () => {
   afterEach(async () => {
     await bridge.teardown();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     const { closeDb } = await import('../db/connection.js');
     await closeDb();
   });
@@ -140,9 +155,66 @@ describe('resend channel delivery', () => {
     await bridge.deliver(inbound[0].platformId, null, { kind: 'chat', content: { text: 'Here is the plan.' } });
 
     expect(sent).toHaveLength(1);
+    // Only the sender: people CC'd on their email are not copied on the reply.
     expect(sent[0].to).toEqual(['owner@example.com']);
+    expect(sent[0].cc).toBeUndefined();
+    expect(sent[0].bcc).toBeUndefined();
     expect(sent[0].subject).toBe('Re: Weekly plan');
     expect(sent[0].headers?.['In-Reply-To']).toBe('<root-1@example.com>');
+  });
+
+  it('does not wait on the saved copy of the thread', async () => {
+    const { registerWebhookAdapter } = await import('../webhook-server.js');
+    const chat = vi.mocked(registerWebhookAdapter).mock.calls.at(-1)![0] as Chat;
+    const handler = (chat.webhooks as Record<string, (r: Request) => Promise<Response>>).resend;
+    // Hold the state write: neither the inbound message nor the reply may wait on it.
+    const state = chat.getState();
+    const set = state.set.bind(state);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(state, 'set').mockImplementation(async (key: string, value: unknown, ttlMs?: number) => {
+      if (key.startsWith('nanoclaw:resend:latest-thread:')) await held;
+      return set(key, value, ttlMs);
+    });
+
+    expect((await handler(signedWebhook())).status).toBe(200);
+    await vi.waitFor(() => expect(inbound).toHaveLength(1));
+    await bridge.deliver('resend:owner@example.com', null, { kind: 'chat', content: { text: 'On it.' } });
+    release();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toBe('Re: Weekly plan');
+  });
+
+  it('replies in the newer thread when the person wrote twice', async () => {
+    const { registerWebhookAdapter } = await import('../webhook-server.js');
+    const chat = vi.mocked(registerWebhookAdapter).mock.calls.at(-1)![0] as Chat;
+    const handler = (chat.webhooks as Record<string, (r: Request) => Promise<Response>>).resend;
+
+    expect((await handler(signedWebhook(INBOUND_EMAIL))).status).toBe(200);
+    expect((await handler(signedWebhook(SECOND_EMAIL))).status).toBe(200);
+    await vi.waitFor(() => expect(inbound).toHaveLength(2));
+    await bridge.deliver('resend:owner@example.com', null, { kind: 'chat', content: { text: 'Both done.' } });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toBe('Re: Budget');
+    expect(sent[0].headers?.['In-Reply-To']).toBe('<root-2@example.com>');
+  });
+
+  it('opens a new thread after 30 days without mail from the person', async () => {
+    const { registerWebhookAdapter } = await import('../webhook-server.js');
+    const chat = vi.mocked(registerWebhookAdapter).mock.calls.at(-1)![0] as Chat;
+    const handler = (chat.webhooks as Record<string, (r: Request) => Promise<Response>>).resend;
+
+    expect((await handler(signedWebhook())).status).toBe(200);
+    await vi.waitFor(() => expect(inbound).toHaveLength(1));
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 24 * 60 * 60 * 1000);
+    await bridge.deliver('resend:owner@example.com', null, { kind: 'chat', content: { text: 'Still there?' } });
+
+    expect(sent).toHaveLength(1);
+    // A fresh thread from openDM has its own root, not the old email.
+    expect(sent[0].headers?.['In-Reply-To']).toBeDefined();
+    expect(sent[0].headers?.['In-Reply-To']).not.toBe('<root-1@example.com>');
   });
 
   it('keeps later sends to the same person in one thread', async () => {
