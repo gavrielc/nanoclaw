@@ -148,18 +148,36 @@ describe('nanoclaw.sh hand-off', () => {
   });
 });
 
-describe('migrate-v2.sh bootstrap status', () => {
-  it("reads setup.sh's block, not install-node.sh's, when Node was upgraded", () => {
-    const source = fs.readFileSync(path.join(ROOT, 'migrate-v2.sh'), 'utf8');
-    const parse = source.split('\n').filter((l) => /^\s+(STATUS|NODE_VERSION)=\$\(grep /.test(l));
+describe('migrate-v2.sh', () => {
+  const source = () => fs.readFileSync(path.join(ROOT, 'migrate-v2.sh'), 'utf8');
+
+  it("reads setup.sh's BOOTSTRAP block, not install-node.sh's lines in the same log", () => {
+    const parse = source()
+      .split('\n')
+      .filter((l) => /^\s+(STATUS|NODE_VERSION)=\$\(awk /.test(l));
     expect(parse).toHaveLength(2);
     const raw = path.join(tmp, 'bootstrap.log');
     fs.writeFileSync(
       raw,
-      'STATUS: installed\nNODE_VERSION: v22.23.4\n=== NANOCLAW SETUP: BOOTSTRAP ===\nNODE_VERSION: 22.23.4\nSTATUS: success\n',
+      'STATUS: installed\nNODE_VERSION: v22.23.4\n=== NANOCLAW SETUP: BOOTSTRAP ===\nNODE_VERSION: 22.23.4\nSTATUS: success\n' +
+        'STATUS: installed\n',
     );
-    for (const tool of ['grep', 'tail', 'sed']) fs.symlinkSync(which(tool), path.join(bin, tool));
+    fs.symlinkSync(which('awk'), path.join(bin, 'awk'));
     const r = run(['-c', `BOOTSTRAP_RAW=${raw}\n${parse.join('\n')}\necho "$STATUS $NODE_VERSION"`]);
     expect(r.out.trim()).toBe('success 22.23.4');
+  });
+
+  it('puts the keg-only node@22 first on macOS before the later steps run', () => {
+    const src = source();
+    const start = src.indexOf('# Later steps, and the service they register');
+    const end = src.indexOf('# setup.sh may have installed pnpm to a prefix');
+    expect(start, 'node check not found in migrate-v2.sh').toBeGreaterThanOrEqual(0);
+    fakeNode(bin, '22.20.0');
+    fakeNode(keg, '22.23.4');
+    stub(bin, 'uname', 'echo Darwin');
+    stub(bin, 'brew', `[ "$1" = --prefix ] && echo ${path.dirname(keg)}`);
+    const prelude = `PROJECT_ROOT=${ROOT}; step_fail() { echo "$1"; }; abort() { exit 1; }`;
+    const r = run(['-c', `${prelude}\n${src.slice(start, end)}echo "NEXT $(command -v node)"`]);
+    expect(r.out.trim()).toBe(`NEXT ${keg}/node`);
   });
 });
