@@ -87,7 +87,7 @@ Then pull and restart:
 cd ~/.onecli && env -u ONECLI_VERSION docker compose pull onecli && env -u ONECLI_VERSION docker compose up -d
 ```
 
-Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI; when the gateway uses an API token, sign that CLI in first: pipe ONECLI_API_KEY from NanoClaw's .env into `onecli auth login >/dev/null 2>&1`, which reads it from stdin). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
+Then check the conversion, and that the gateway still injects credentials, before you call the upgrade done. The conversion's log line appears a few seconds after `/v1/health` answers, so wait, then run this where the gateway container runs. For a local gateway that is this host, from the NanoClaw checkout; for a remote gateway, copy `.claude/skills/add-onecli/scripts/post-upgrade-check.sh` to the gateway host and run it there (it needs docker, curl, jq and the onecli CLI; when the gateway uses an API token, sign that CLI in first: pipe ONECLI_API_KEY from NanoClaw's .env into `onecli auth login >/dev/null 2>&1 && echo signed in || echo 'sign-in failed' >&2`, which reads it from stdin). If the gateway container is not named `onecli`, put `ONECLI_GATEWAY_CONTAINER=<name>` in front:
 
 ```bash
 GW="$GW" sh .claude/skills/add-onecli/scripts/post-upgrade-check.sh

@@ -405,8 +405,9 @@ Run it on the user's behalf; confirm with `onecli secrets list`.
 **Caveats:** `keyRef`/`tokenRef` with `source:"exec"` or `source:"file"` can't
 be auto-extracted — ask the user to paste it. Then, as in `/add-vercel`, run
 `mktemp -d`, write the value to `key` in that directory with your file-writing
-tool (never a shell command), and run the block with `D` set to it and no
-`jq` line. For an `oauth` profile with a
+tool (never a shell command), and run the block right away with `D` set to it
+and no `jq` line. If you will not run it, delete the directory with `rm -rf`
+first. For an `oauth` profile with a
 past expiry, warn that the token may need refreshing; the user can run
 `claude setup-token` and register the fresh token.
 

@@ -612,7 +612,9 @@ esac
 
   it('says the CLI on a remote gateway host must be signed in to that gateway', () => {
     const at = guide.indexOf(CHECK);
-    expect(guide.slice(at - 700, at)).toContain('`onecli auth login >/dev/null 2>&1`');
+    expect(guide.slice(at - 700, at)).toContain(
+      "`onecli auth login >/dev/null 2>&1 && echo signed in || echo 'sign-in failed' >&2`",
+    );
   });
 
   it('names the configured container, not only onecli, where the reply check fails', () => {

@@ -88,10 +88,16 @@ echo '{"data":[{"id":"ag-sales","name":"Sales"},{"id":"ag-ops","name":"Ops"},{"i
 
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-function run(script: string, shell = 'sh') {
+function run(script: string, shell = 'sh', tmp = root) {
   const r = spawnSync(shell, ['-c', script], {
     cwd: root,
-    env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, CALLS: calls, ROOT: root },
+    env: {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+      CALLS: calls,
+      ROOT: root,
+      TMPDIR: tmp,
+    },
     encoding: 'utf8',
   });
   return {
@@ -107,12 +113,15 @@ const shells = ['sh', 'bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'true']
 describe('/add-vercel OneCLI steps', () => {
   const TOKEN = 'vcp_TESTKEY-not-a-real-token-0123456789';
   /** The save as the agent runs it: `mktemp -d`, its file tool writes the token, then the save block. */
-  function saveToken(shell: string, prefix = '') {
-    const made = spawnSync(shell, ['-c', block('SKILL.md', '### Set up Vercel API credential')], { encoding: 'utf8' });
+  function saveToken(shell: string, prefix = '', tmp = root) {
+    const made = spawnSync(shell, ['-c', block('SKILL.md', '### Set up Vercel API credential')], {
+      encoding: 'utf8',
+      env: { ...process.env, TMPDIR: tmp },
+    });
     const dir = made.stdout.trim();
     fs.writeFileSync(path.join(dir, 'token'), TOKEN);
     const save = block('SKILL.md', '### Set up Vercel API credential', 1).replace(/^D=.*$/m, `D="${dir}"`);
-    return { dir, ...run(prefix + save, shell) };
+    return { dir, ...run(prefix + save, shell, tmp) };
   }
 
   it.each(shells)('saves the token from a file in a private temp dir, never in a command (%s)', (shell) => {
@@ -128,6 +137,33 @@ describe('/add-vercel OneCLI steps', () => {
     expect(fs.existsSync(dir)).toBe(false);
     // No step has a token placeholder for the agent to fill into a command.
     expect(fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8')).not.toMatch(/<TOKEN>|--value "/);
+  });
+
+  // macOS's /tmp is a symlink, which find does not enter unless told to.
+  it.each(
+    shells.flatMap((sh) => [
+      [sh, 'a directory'],
+      [sh, 'a symlink'],
+    ]),
+  )('a save clears a token dir an earlier run left, not one still in use (%s, TMPDIR is %s)', (shell, kind) => {
+    const tmp = kind === 'a symlink' ? path.join(root, 'tmp-link') : root;
+    if (tmp !== root) fs.symlinkSync(root, tmp);
+    const left = (name: string, ageMinutes: number) => {
+      const d = path.join(root, name);
+      fs.mkdirSync(d, { mode: 0o700 });
+      fs.writeFileSync(path.join(d, 'token'), TOKEN);
+      const t = new Date(Date.now() - ageMinutes * 60_000);
+      fs.utimesSync(d, t, t);
+      return d;
+    };
+    const stale = left('nanoclaw-vercel-token.OLD', 60);
+    const active = left('nanoclaw-vercel-token.NOW', 1);
+    const { dir, status } = saveToken(shell, '', tmp);
+    expect(status).toBe(0);
+    expect(fs.realpathSync(path.dirname(dir))).toBe(fs.realpathSync(root));
+    expect(path.basename(dir)).toMatch(/^nanoclaw-vercel-token\./);
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(active)).toBe(true);
   });
 
   it.each(shells)('a failed save prints no token and removes it, even under set -e (%s)', (shell) => {

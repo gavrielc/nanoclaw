@@ -147,7 +147,7 @@ describe('OneCLI grants gate messages', () => {
     const r = gate({ listFails: true });
     // Quotes go: NanoClaw's own .env reader accepts a quoted value.
     expect(r.stderr).toContain(
-      "`grep '^ONECLI_API_KEY=' .env | cut -d= -f2- | tr -d '\"'\"'\" | onecli auth login >/dev/null 2>&1 && echo signed in`",
+      "`grep '^ONECLI_API_KEY=' .env | cut -d= -f2- | tr -d '\"'\"'\" | onecli auth login >/dev/null 2>&1 && echo signed in || echo 'sign-in failed' >&2`",
     );
     expect(r.stderr).not.toContain('--api-key');
     expect(r.stderr).not.toContain('<token>');

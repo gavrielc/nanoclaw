@@ -196,20 +196,6 @@ export function channelEnvVars(channel: string): string[] {
   return CHANNEL_ENV_VARS[channel] ?? [];
 }
 
-/**
- * Render a OneCLI vault plan into the exact command the operator runs. The
- * value is read from `file` (a 0600 temp file): on the command line any local
- * user could read it with `ps`.
- */
-export function vaultCreateCommand(plan: VaultPlan, file: string): string {
-  return [
-    'onecli secrets create',
-    `--name ${plan.name}`,
-    `--type ${plan.type}`,
-    `--file ${file}`,
-    `--host-pattern ${plan.hostPattern}`,
-  ].join(' ');
-}
 
 // ---------------------------------------------------------------------------
 // Cron → v2 recurrence mapping

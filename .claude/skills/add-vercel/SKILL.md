@@ -80,15 +80,15 @@ The agent needs a Vercel personal access token. Tell the user:
 Once the user provides the token, add it to OneCLI from a file in a private temporary directory. Never put the token in a shell command: any local user can read a running command's text with `ps`. Make the directory:
 
 ```bash
-mktemp -d
+mktemp -d "${TMPDIR:-/tmp}/nanoclaw-vercel-token.XXXXXX"
 ```
 
-Write the token, and nothing else, to `token` in the printed directory with your file-writing tool, not a shell command. Then put the directory in `D` and run it. OneCLI's own output is dropped, since a gateway error can quote the token:
+Write the token, and nothing else, to `token` in the printed directory with your file-writing tool, not a shell command. Then put the directory in `D` and run the block right away. If you are not going to run it (the user stops, or the token was wrong), delete the directory with `rm -rf` first. OneCLI's own output is dropped, since a gateway error can quote the token. The block also clears a directory of yours that an earlier run left more than 10 minutes ago, when it stopped before this step:
 
 ```bash
 (
 D="<directory printed by mktemp -d>"
-trap 'rm -rf "$D"' EXIT
+trap 'rm -rf "$D"; find -H "${TMPDIR:-/tmp}" -maxdepth 1 -name "nanoclaw-vercel-token.*" -user "$(id -u)" -mmin +10 -exec rm -rf {} + 2>/dev/null' EXIT
 onecli secrets create \
   --name "Vercel API Token" \
   --type generic \
