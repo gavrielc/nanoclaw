@@ -13,29 +13,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/node-version.sh"
 
 echo "=== NANOCLAW SETUP: INSTALL_NODE ==="
 
-# nodesource replaces the system nodejs, so an unpatched supported line is
-# upgraded on its own line; anything older gets Node 22.
 NODE_LINE=22
 if command -v node >/dev/null 2>&1; then
-  CURRENT="$(node --version)"
-  case "$(node_version_status "$CURRENT")" in
-    ok)
-      echo "STATUS: already-installed"
-      echo "NODE_VERSION: $CURRENT"
-      echo "=== END ==="
-      exit 0
-      ;;
-    unsupported)
-      echo "STATUS: failed"
-      echo "ERROR: $(node_fix_hint "$CURRENT" "$(command -v node)")"
-      echo "=== END ==="
-      exit 1
-      ;;
-    outdated)
-      NODE_LINE="${CURRENT#v}"
-      NODE_LINE="${NODE_LINE%%.*}"
-      ;;
-  esac
+  if node_meets_minimum "$(node --version)"; then
+    echo "STATUS: already-installed"
+    echo "NODE_VERSION: $(node --version)"
+    echo "=== END ==="
+    exit 0
+  fi
+  if ! NODE_LINE="$(node_install_line "$(node --version)")"; then
+    echo "STATUS: failed"
+    echo "ERROR: $(node_minimum_message "$(node --version)" "$(command -v node)") Install Node 22 or 24, then re-run."
+    echo "=== END ==="
+    exit 1
+  fi
   echo "STEP: upgrade-node"
 fi
 
@@ -58,7 +49,6 @@ else
         echo "=== END ==="
         exit 1
       fi
-      # Keg-only, so it never replaces another Node; node_use_patched finds it.
       brew install node@22
       export PATH="$(brew --prefix node@22)/bin:$PATH"
       ;;
@@ -84,16 +74,14 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-# The PATH node decides: the install can land behind another Node (nvm), or
-# the package mirror can lag the security release.
-INSTALLED="$(node --version)"
-if [ "$(node_version_status "$INSTALLED")" != ok ]; then
+# The install can land behind another Node on PATH, or the mirror can lag.
+if ! node_meets_minimum "$(node --version)"; then
   echo "STATUS: failed"
-  echo "ERROR: $(node_fix_hint "$INSTALLED" "$(command -v node)")"
+  echo "ERROR: $(node_minimum_message "$(node --version)" "$(command -v node)") Update it, then re-run."
   echo "=== END ==="
   exit 1
 fi
 
 echo "STATUS: installed"
-echo "NODE_VERSION: $INSTALLED"
+echo "NODE_VERSION: $(node --version)"
 echo "=== END ==="

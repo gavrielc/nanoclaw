@@ -4,9 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// The agent fetches arbitrary URLs with this Node, so its base must carry the
-// same security minimum setup enforces on the host (setup/lib/node-version.sh).
-// A bare or floating tag lets a rebuild reuse whatever older base is cached.
+// The agent's Node must meet the same minimum setup enforces on the host.
 const here = dirname(fileURLToPath(import.meta.url));
 const dockerfile = readFileSync(join(here, 'Dockerfile'), 'utf8');
 const lib = join(here, '..', 'setup', 'lib', 'node-version.sh');
@@ -18,11 +16,9 @@ describe('container/Dockerfile base image', () => {
     expect(from?.[1]).toMatch(/^\d+\.\d+\.\d+-slim@sha256:[0-9a-f]{64}$/);
   });
 
-  it('is a Node release at or above the security minimum for its line', () => {
+  it('meets the Node minimum', () => {
     const version = from?.[1].split('-')[0] ?? '';
-    const r = spawnSync('bash', ['-c', 'source "$1"; node_version_status "$2"', '_', lib, version], {
-      encoding: 'utf8',
-    });
-    expect(r.stdout.trim()).toBe('ok');
+    const r = spawnSync('bash', ['-c', 'source "$1"; node_meets_minimum "$2"', '_', lib, version]);
+    expect(r.status).toBe(0);
   });
 });

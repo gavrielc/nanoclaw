@@ -425,32 +425,18 @@ export NANOCLAW_BOOTSTRAPPED=1
 # setup.sh may have just installed Node/npm/pnpm under ~/.local/bin via
 # uvx-nodeenv. Its PATH mutation doesn't propagate back to this parent shell,
 # so make that standard user bin directory discoverable before probing npm.
-# Keep an existing PATH entry in place rather than adding duplicates. Appended:
-# node_use_patched below moves a patched node from it to the front.
+# Keep an existing PATH entry in place rather than adding duplicates.
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
-  *) export PATH="$PATH:$HOME/.local/bin" ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-# Repeat setup.sh's Node choice: setup:auto registers the service with this
-# shell's PATH node, which may still be an unpatched one ahead of the keg-only
-# node@22 setup.sh used. Before the npm probe, so npm runs on the patched node.
-# shellcheck source=setup/lib/node-version.sh
-source "$PROJECT_ROOT/setup/lib/node-version.sh"
-if ! node_use_patched; then
-  printf '\n  %s %s\n\n' "$(red '✗')" \
-    "$(node_fix_hint "$(node --version 2>/dev/null || true)" "$(command -v node || true)")"
-  write_abort_entry bootstrap node-unpatched
-  exit 1
-fi
-
 # pnpm may instead have landed in npm's configured global prefix. Replay that
-# lookup here as a second recovery path before the final exec. Appended, so a
-# node in that prefix can't shadow the one checked above.
+# lookup here as a second recovery path before the final exec.
 if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-  NPM_PREFIX="$(npm config get prefix 2>/dev/null || true)"
+  NPM_PREFIX="$(npm config get prefix 2>/dev/null)"
   if [ -n "$NPM_PREFIX" ] && [ -x "$NPM_PREFIX/bin/pnpm" ]; then
-    export PATH="$PATH:$NPM_PREFIX/bin"
+    export PATH="$NPM_PREFIX/bin:$PATH"
   fi
 fi
 

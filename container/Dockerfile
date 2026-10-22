@@ -16,10 +16,7 @@
 # bind mount at runtime (see src/container-runner.ts). Source-only changes
 # never require an image rebuild.
 
-# 22.23.4 carries the October 2026 Node security fixes (Brotli decoder RCE, TLS
-# hostname checks) for everything the agent fetches. Pinned by multi-arch index
-# digest so a rebuild can't reuse an older cached node:22-slim. Bump the tag and
-# digest together.
+# Pinned by digest so a rebuild cannot reuse a cached older base; bump tag and digest together.
 FROM node:22.23.4-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
 
 # ---- Build-time arguments ----------------------------------------------------
