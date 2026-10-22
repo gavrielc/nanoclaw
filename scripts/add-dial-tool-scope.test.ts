@@ -92,6 +92,8 @@ function setup(
     secrets?: Array<{ id: string; name: string; hostPattern: string }>;
     /** Make `onecli agents list` fail. */
     agentsListFails?: boolean;
+    /** Answer `onecli agents list` with a bare array, which the gate also accepts. */
+    bareAgentList?: boolean;
     /** Write a host auth file with this key (default: one with a key). */
     authKey?: string | null;
   } = {},
@@ -113,7 +115,11 @@ function setup(
   }
   process.env.TEST_XDG = xdg;
 
-  fs.writeFileSync(path.join(state, 'agents.json'), JSON.stringify({ hint: 'h', data: opts.agents ?? DEFAULT_AGENTS }));
+  const agentList = opts.agents ?? DEFAULT_AGENTS;
+  fs.writeFileSync(
+    path.join(state, 'agents.json'),
+    JSON.stringify(opts.bareAgentList ? agentList : { hint: 'h', data: agentList }),
+  );
   fs.writeFileSync(
     path.join(state, 'grants.json'),
     JSON.stringify(opts.grants ?? { 'oc-sales': ['sec-anthropic'], 'oc-default': [] }),
@@ -362,6 +368,31 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(status).not.toBe(0);
     expect(stdout).not.toContain('allowed:');
     expect(callLines().some((l) => l.startsWith('onecli agents create') || l.includes('attach-secret'))).toBe(false);
+  });
+
+  it('withholds Dial from an unchosen group when OneCLI lists agents as a bare array', () => {
+    // A misread list would skip the detach yet still print withheld:.
+    fs.rmSync(root, { recursive: true, force: true });
+    setup({
+      bareAgentList: true,
+      agents: [
+        ...DEFAULT_AGENTS,
+        { id: 'oc-support', identifier: 'ag-support', name: 'Support', secretMode: 'selective' },
+      ],
+      grants: { 'oc-sales': [], 'oc-support': ['sec-dial'], 'oc-default': [] },
+    });
+    const { status, stdout } = scope('ag-sales', [CMD.attach]);
+    expect(status).toBe(0);
+    expect(stdout).toContain('withheld:ag-support');
+    expect(held()['oc-support']).toEqual([]);
+    expect(held()['oc-sales']).toEqual(['sec-dial']);
+  });
+
+  it('fails instead of withholding nothing when the OneCLI agent list cannot be read', () => {
+    writeStub('onecli', 'if [ "$1 $2" = "agents list" ]; then echo "not json"; fi');
+    const { status, stdout } = scope('ag-sales', [CMD.attach]);
+    expect(status).not.toBe(0);
+    expect(stdout).not.toMatch(/withheld:|allowed:/);
   });
 
   it('tolerates spaces in the answer', () => {
@@ -690,5 +721,30 @@ describe('add-dial-tool: removal', () => {
     expect(lines).not.toContain('onecli secrets delete --id sec-notes');
     expect(held()).toEqual({ 'oc-sales': ['sec-anthropic'], 'oc-default': [] });
     expect(lines.some((l) => /policy|rules|dial-policy/.test(l))).toBe(false);
+  });
+});
+
+describe('add-dial-tool: shared-gateway and first-run wording', () => {
+  const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, '..', rel), 'utf8');
+
+  it('warns that another Dial account switches every agent holding the key, other installs included', () => {
+    const doc = read('.claude/skills/add-dial-tool/SKILL.md');
+    const op = doc.slice(doc.indexOf('This host is signed in to Dial as {{connected_email}}'));
+    expect(op.slice(0, op.indexOf('```'))).toMatch(
+      /different Dial account switches every agent that holds the Dial key/,
+    );
+  });
+
+  it('tells a first-time /add-dial user that the tool reaches no agent until /add-dial-tool runs', () => {
+    const doc = read('.claude/skills/add-dial/SKILL.md');
+    const next = doc.slice(doc.indexOf('## Next Steps'), doc.indexOf('## Channel Info'));
+    expect(next).toMatch(/reaches no agent until/);
+    expect(next).toContain('/add-dial-tool');
+  });
+
+  it('says the upgrade guide’s Dial delete reaches a shared gateway’s other install, as REMOVE.md does', () => {
+    const guide = read('.claude/skills/add-onecli/payload/docs/onecli-upgrades.md');
+    const dial = guide.slice(guide.indexOf('Then, on every upgrade, delete any Dial key'));
+    expect(dial.slice(0, dial.indexOf('```'))).toMatch(/shared with another install, that install loses Dial too/);
   });
 });
