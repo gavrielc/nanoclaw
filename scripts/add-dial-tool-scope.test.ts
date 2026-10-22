@@ -395,6 +395,22 @@ describe('add-dial-tool: attaching Dial to the chosen agents', () => {
     expect(stdout).not.toMatch(/withheld:|allowed:/);
   });
 
+  it('fails instead of reporting withheld when an agent list entry cannot be read', () => {
+    writeStub(
+      'onecli',
+      `echo "onecli $*" >> "$CALLS"\nif [ "$1 $2" = "agents list" ]; then echo '["bad",{"id":"oc-sales","identifier":"ag-sales"}]'; fi`,
+    );
+    const { status, stdout } = scope('none', [CMD.attach]);
+    expect(status).not.toBe(0);
+    expect(stdout).not.toMatch(/withheld:|allowed:/);
+  });
+
+  it('fails instead of doing nothing when the agent group list cannot be read', () => {
+    writeStub('ncl', `if [ "$1 $2" = "groups list" ]; then echo '{"ok":true}'; fi`);
+    const { status } = scope('none', [CMD.attach]);
+    expect(status).not.toBe(0);
+  });
+
   it('tolerates spaces in the answer', () => {
     const { status } = scope('ag-sales, ag-support ,ag-sales');
     expect(status).toBe(0);
@@ -738,7 +754,7 @@ describe('add-dial-tool: shared-gateway and first-run wording', () => {
   it('tells a first-time /add-dial user that the tool reaches no agent until /add-dial-tool runs', () => {
     const doc = read('.claude/skills/add-dial/SKILL.md');
     const next = doc.slice(doc.indexOf('## Next Steps'), doc.indexOf('## Channel Info'));
-    expect(next).toMatch(/reaches no agent until/);
+    expect(next).toMatch(/before any agent existed, it reaches no agent until/);
     expect(next).toContain('/add-dial-tool');
   });
 

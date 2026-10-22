@@ -428,8 +428,8 @@ If you're in the middle of `/setup`, return to the setup flow now. Otherwise wir
 this channel with `/init-first-agent` (or `/manage-channels`). To add a second
 Dial number later, see the `/add-dial-number` skill.
 
-If you installed the Dial tool, it reaches no agent until you give it one: once
-your agent exists, run `/add-dial-tool` and pick it.
+If you installed the Dial tool before any agent existed, it reaches no agent until
+you give it one: once your agent exists, run `/add-dial-tool` and pick it.
 
 ## Channel Info
 
