@@ -1,6 +1,6 @@
 {
   "name": "nanoclaw",
-  "version": "2026.10.0",
+  "version": "2026.10.1-rc.2",
   "description": "Personal AI assistant. Lightweight, secure, customizable.",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
@@ -41,7 +41,7 @@
     "@clack/core": "^1.2.0",
     "@clack/prompts": "^1.2.0",
     "better-sqlite3": "13.0.3",
-    "chat": "4.29.0",
+    "chat": "4.41.1",
     "cron-parser": "5.5.0",
     "kleur": "^4.1.5",
     "yaml": "^2.9.0"
@@ -58,6 +58,7 @@
     "tsx": "^4.23.15",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.35.0",
+    "vite": "^8.0.16",
     "vitest": "^4.1.11"
   },
   "engines": {
