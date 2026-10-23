@@ -57,6 +57,9 @@ export interface AgentProvider {
    * before it ever replies. Providers without an on-disk transcript omit this.
    */
   maybeRotateContinuation?(continuation: string, cwd: string): string | null;
+
+  /** Read-only warm-query check. The transcript is moved only after the query closes. */
+  shouldRotateContinuation?(continuation: string, cwd: string): string | null;
 }
 
 /** One prompt/result round-trip, as reported to `onExchangeComplete`. */
@@ -153,6 +156,9 @@ export interface AgentQuery {
 
   /** Force-stop the query. */
   abort(): void;
+
+  /** Whether the provider has finished all work, including background tasks. */
+  canCloseAtIdleBoundary?(): boolean;
 }
 
 export type ProviderEvent =

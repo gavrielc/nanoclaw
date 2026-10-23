@@ -92,16 +92,42 @@ describe('poll loop integration', () => {
       queryCount = 0;
       rotationChecks = 0;
       continuations: Array<string | undefined> = [];
+      storedAtQueryStart: Array<string | undefined> = [];
+      closed = false;
 
       override query(input: QueryInput): AgentQuery {
         this.queryCount++;
         this.continuations.push(input.continuation);
-        return super.query(input);
+        this.storedAtQueryStart.push(getContinuation('mock'));
+        this.closed = false;
+        const query = super.query(input);
+        const provider = this;
+        return {
+          ...query,
+          events: {
+            async *[Symbol.asyncIterator]() {
+              try {
+                yield* query.events;
+              } finally {
+                provider.closed = true;
+              }
+            },
+          },
+        };
+      }
+
+      shouldRotateContinuation(_continuation: string, _cwd: string): string | null {
+        this.rotationChecks++;
+        return this.rotationChecks === 1 ? 'transcript exceeded test cap' : null;
       }
 
       override maybeRotateContinuation(_continuation: string, _cwd: string): string | null {
-        this.rotationChecks++;
-        return this.rotationChecks === 1 ? 'transcript exceeded test cap' : null;
+        // Cold start does not rotate this transcript. The warm move must wait
+        // for the provider stream to close, and the DB token still exists here.
+        if (this.queryCount === 0) return null;
+        expect(this.closed).toBe(true);
+        expect(getContinuation('mock')).toBeDefined();
+        return 'transcript exceeded test cap';
       }
     }
 
@@ -111,6 +137,7 @@ describe('poll loop integration', () => {
       () => [`<message to="discord-test">reply-${provider.queryCount}</message>`],
     );
     const controller = new AbortController();
+    setContinuation('mock', 'stored-session');
     const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 5000);
 
     insertMessage('m1', { prompt: 'first scheduled task' }, { kind: 'task', threadId: 'system:tasks:rotate' });
@@ -122,7 +149,8 @@ describe('poll loop integration', () => {
 
     expect(provider.queryCount).toBe(2);
     expect(provider.rotationChecks).toBeGreaterThanOrEqual(2);
-    expect(provider.continuations).toEqual([undefined, undefined]);
+    expect(provider.continuations).toEqual(['stored-session', undefined]);
+    expect(provider.storedAtQueryStart).toEqual(['stored-session', undefined]);
   });
 
   it('should process multiple messages in a batch', async () => {
