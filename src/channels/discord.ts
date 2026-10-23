@@ -2,7 +2,8 @@
  * Discord channel adapter (v2) — uses Chat SDK bridge.
  * Self-registers on import.
  */
-import { createDiscordAdapter } from '@chat-adapter/discord';
+import { cardToDiscordPayload, createDiscordAdapter } from '@chat-adapter/discord';
+import type { CardElement } from 'chat';
 
 import { readEnvFile } from '../env.js';
 import type { ChannelDefaults } from './adapter.js';
@@ -20,6 +21,23 @@ const DISCORD_DEFAULTS: ChannelDefaults = {
   group: { engageMode: 'mention-sticky', threads: true, unknownSenderPolicy: 'request_approval' },
   mentions: 'platform',
 };
+
+/**
+ * Discord shows a card as one embed and rejects a title over 256 characters, a
+ * description over 4,096, more than 5 rows of buttons or a button label over
+ * 80, so a card is measured with the adapter's own embed builder.
+ */
+export function fitsDiscordEmbed(card: CardElement): boolean {
+  const { embeds, components } = cardToDiscordPayload(card);
+  const [embed] = embeds;
+  const labels = components.flatMap((row) => row.components.map((c) => ('label' in c ? (c.label ?? '') : '')));
+  return (
+    (embed?.title?.length ?? 0) <= 256 &&
+    (embed?.description?.length ?? 0) <= 4096 &&
+    components.length <= 5 &&
+    labels.every((label) => label.length <= 80)
+  );
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractReplyContext(raw: Record<string, any>): ReplyContext | null {
@@ -72,6 +90,28 @@ export function unwrapForwards(adapter: ReturnType<typeof createDiscordAdapter>)
   };
 }
 
+/**
+ * Discord keeps a message's buttons on an edit that sends no components, and
+ * the adapter sends none for a card without actions. So an edit of a message
+ * into such a card, like a resolved approval, also sends `components: []`.
+ */
+export function clearButtonsOnCardEdits(adapter: ReturnType<typeof createDiscordAdapter>): void {
+  const a = adapter as unknown as {
+    discordFetch: (path: string, method: string, body?: unknown) => Promise<Response>;
+  };
+  const discordFetch = a.discordFetch.bind(adapter);
+  a.discordFetch = (path, method, body) => {
+    const cardEdit =
+      method === 'PATCH' &&
+      /^\/channels\/[^/]+\/messages\/[^/]+$/.test(path) &&
+      typeof body === 'object' &&
+      body !== null &&
+      'embeds' in body &&
+      !('components' in body);
+    return discordFetch(path, method, cardEdit ? { ...body, components: [] } : body);
+  };
+}
+
 registerChannelAdapter('discord', {
   factory: () => {
     const env = readEnvFile(['DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY', 'DISCORD_APPLICATION_ID']);
@@ -82,6 +122,7 @@ registerChannelAdapter('discord', {
       applicationId: env.DISCORD_APPLICATION_ID,
     });
     unwrapForwards(discordAdapter);
+    clearButtonsOnCardEdits(discordAdapter);
     return createChatSdkBridge({
       adapter: discordAdapter,
       concurrency: 'concurrent',
@@ -92,6 +133,8 @@ registerChannelAdapter('discord', {
       // Discord rejects messages over 2000 chars; without this the bridge
       // would let long agent replies fail instead of splitting them.
       maxTextLength: 2000,
+      // Spread, so an older core without this option still type-checks (and ignores it).
+      ...{ cardFits: fitsDiscordEmbed },
     });
   },
   defaults: DISCORD_DEFAULTS,
