@@ -113,6 +113,54 @@ function optionToCommand(option: string): string {
   return '/' + option.toLowerCase().replace(/\s+/g, '-');
 }
 
+type PendingQuestion = { questionId: string; options: NormalizedOption[] };
+/**
+ * What the host did with an answer, read loosely: this file is copied onto cores
+ * of any age, and one from before click outcomes returns nothing (undefined).
+ */
+type AnswerOutcome = 'accepted' | 'refused' | 'closed' | 'ignored' | undefined;
+/** Per question, the answer with the host right now: a later answer waits for it. */
+const answering = new WeakMap<PendingQuestion, Promise<unknown>>();
+
+/**
+ * Answers a pending question from a "/option" reply. The host decides: the chat
+ * hears the answer only once it is accepted, and a refused one keeps the
+ * question open for an approver (WhatsApp has no private reply, so nothing is
+ * posted). One answer at a time: a later reply waits for the earlier one and
+ * counts only if the question is still open (so an approver's answer after a
+ * refused one still counts). Undefined when the text answers no pending question.
+ */
+export async function answerPendingQuestion(
+  pendingQuestions: Map<string, PendingQuestion>,
+  chatJid: string,
+  text: string,
+  sender: string,
+  onAction: ChannelSetup['onAction'],
+  confirm: (option: NormalizedOption) => Promise<unknown>,
+): Promise<{ questionId: string; value: string; outcome: AnswerOutcome } | undefined> {
+  const pending = pendingQuestions.get(chatJid);
+  if (!pending || !text.startsWith('/')) return undefined;
+  const cmd = text.trim().toLowerCase();
+  const matched = pending.options.find((o) => optionToCommand(o.label) === cmd);
+  if (!matched) return undefined;
+  const turn = (answering.get(pending) ?? Promise.resolve()).then(async () => {
+    // Closed by the answer before this one: swallowed, not sent to the agent.
+    if (pendingQuestions.get(chatJid) !== pending) return undefined;
+    const result: unknown = await onAction(pending.questionId, matched.value, sender);
+    const outcome = typeof result === 'string' ? (result as AnswerOutcome) : undefined;
+    // A core from before click outcomes returns nothing: answered as before.
+    const shown = outcome ?? 'accepted';
+    if (shown !== 'refused' && pendingQuestions.get(chatJid) === pending) pendingQuestions.delete(chatJid);
+    if (shown === 'accepted') await confirm(matched);
+    return outcome;
+  });
+  answering.set(
+    pending,
+    turn.catch(() => undefined),
+  );
+  return { questionId: pending.questionId, value: matched.value, outcome: await turn };
+}
+
 // --- Markdown → WhatsApp formatting ---
 
 interface TextSegment {
@@ -440,13 +488,7 @@ registerChannelAdapter('whatsapp', {
 
     // Pending questions: chatJid → { questionId, options }
     // User replies with /approve, /reject, etc. to answer
-    const pendingQuestions = new Map<
-      string,
-      {
-        questionId: string;
-        options: NormalizedOption[];
-      }
-    >();
+    const pendingQuestions = new Map<string, PendingQuestion>();
 
     // Group sync tracking
     let lastGroupSync = 0;
@@ -888,22 +930,18 @@ registerChannelAdapter('whatsapp', {
             const isBotMessage = WHATSAPP_SHARED ? content.startsWith(`${ASSISTANT_NAME}:`) : false;
 
             // Check if this reply answers a pending question via slash command
-            const pending = pendingQuestions.get(chatJid);
-            if (pending && content.startsWith('/')) {
-              const cmd = content.trim().toLowerCase();
-              const matched = pending.options.find((o) => optionToCommand(o.label) === cmd);
-              if (matched) {
-                const voterName = msg.pushName || sender.split('@')[0];
-                setupConfig.onAction(pending.questionId, matched.value, sender);
-                pendingQuestions.delete(chatJid);
-                await sendRawMessage(chatJid, `${matched.selectedLabel} by ${voterName}`);
-                log.info('Question answered', {
-                  questionId: pending.questionId,
-                  value: matched.value,
-                  voterName,
-                });
-                continue; // Don't forward this reply to the agent
-              }
+            const voterName = msg.pushName || sender.split('@')[0];
+            const answered = await answerPendingQuestion(
+              pendingQuestions,
+              chatJid,
+              content,
+              sender,
+              (...args) => setupConfig.onAction(...args),
+              (option) => sendRawMessage(chatJid, `${option.selectedLabel} by ${voterName}`),
+            );
+            if (answered) {
+              log.info('Question answered', { ...answered, voterName });
+              continue; // Don't forward this reply to the agent
             }
 
             // Detect explicit @-mentions of the bot in groups. Detail in

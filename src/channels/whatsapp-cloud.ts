@@ -123,6 +123,12 @@ export const whatsappCloudRegistration: ChannelRegistration = {
       defaults: WHATSAPP_CLOUD_DEFAULTS,
       // Spread, so an older core without this option still type-checks (and ignores it).
       ...{ cardFits: fitsWhatsAppCard },
+      // A button reply is a new message quoting the card: name the card. Spread, so a
+      // core without this option still type-checks (and ignores it).
+      ...{
+        cardMessageIdOf: (event: { raw: unknown }) =>
+          (event.raw as { context?: { id?: string } } | undefined)?.context?.id,
+      },
     });
   },
   defaults: WHATSAPP_CLOUD_DEFAULTS,

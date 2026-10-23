@@ -549,11 +549,17 @@ export function createPhotonAdapter(
       const cmd = text.trim().toLowerCase();
       const matched = pending.options.find((o) => optionToCommand(o.label) === cmd);
       if (matched) {
-        setupConfig.onAction(pending.questionId, matched.value, sender);
-        pendingQuestions.delete(platformId);
-        await deliverText(platformId, `${matched.selectedLabel}`).catch((err) =>
-          log.debug('Photon: failed to confirm question answer', { err }),
-        );
+        // Confirmed only once the host accepts it; a refused answer keeps the
+        // question open for an approver (no private reply here, so nothing is sent).
+        const result: unknown = await setupConfig.onAction(pending.questionId, matched.value, sender);
+        // A core from before click outcomes returns nothing: answered as before.
+        const outcome = result === undefined ? 'accepted' : result;
+        if (outcome !== 'refused' && pendingQuestions.get(platformId) === pending) pendingQuestions.delete(platformId);
+        if (outcome === 'accepted') {
+          await deliverText(platformId, `${matched.selectedLabel}`).catch((err) =>
+            log.debug('Photon: failed to confirm question answer', { err }),
+          );
+        }
         return;
       }
     }

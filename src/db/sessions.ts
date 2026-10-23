@@ -229,8 +229,9 @@ export async function getPendingQuestion(questionId: string): Promise<PendingQue
   return { ...rest, options: JSON.parse(options_json) };
 }
 
-export async function deletePendingQuestion(questionId: string): Promise<void> {
-  await getDb().run('DELETE FROM pending_questions WHERE question_id = ?', questionId);
+/** False when the row was already gone (another answer took it). */
+export async function deletePendingQuestion(questionId: string): Promise<boolean> {
+  return (await getDb().run('DELETE FROM pending_questions WHERE question_id = ?', questionId)).changes > 0;
 }
 
 // ── Pending Approvals ──

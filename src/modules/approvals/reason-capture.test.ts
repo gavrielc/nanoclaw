@@ -61,8 +61,14 @@ let delivered: Array<{
   instance?: string;
 }>;
 
+/** A test can hold the next delivery until it releases it. */
+let deliverHold: Promise<void> | undefined;
+
 const fakeAdapter: ChannelDeliveryAdapter = {
   async deliver(channelType, platformId, threadId, _kind, content, _files, instance) {
+    const hold = deliverHold;
+    deliverHold = undefined;
+    await hold;
     delivered.push({ channelType, platformId, threadId, content, instance });
     return 'pm-1';
   },
@@ -185,6 +191,96 @@ describe('reject with reason', () => {
     expect(consumed).toBe(true);
     expect(await getPendingApproval('appr-2')).toBeUndefined();
     expect(lastRelayedText()).toBe('Your install_packages request was rejected by admin: "too risky for prod"');
+  });
+
+  it('ignores a plain Reject on the card while a reason is awaited, so the reason still reaches the agent', async () => {
+    const { captureReasonReply } = await import('./reason-capture.js');
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    await seedApproval('appr-reason-then-reject', 'install_packages');
+    await clickRejectWithReason('appr-reason-then-reject');
+
+    const outcome = await handleApprovalsResponse({
+      questionId: 'appr-reason-then-reject',
+      value: 'reject',
+      userId: 'admin-1',
+      channelType: DM_CHANNEL,
+      platformId: DM_PLATFORM,
+      threadId: null,
+    });
+    expect(outcome).toBe('ignored');
+    expect((await getPendingApproval('appr-reason-then-reject'))?.status).toBe('awaiting_reason');
+
+    expect(await captureReasonReply(dmReply('not on prod'))).toBe(true);
+    expect(lastRelayedText()).toBe('Your install_packages request was rejected by admin: "not on prod"');
+  });
+
+  it('reports "Reject with reason" accepted only once a reason can be captured', async () => {
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    await seedApproval('appr-arm-first', 'install_packages');
+    let posted!: () => void;
+    deliverHold = new Promise<void>((resolve) => (posted = resolve));
+    const accepted = vi.fn();
+    const outcome = handleApprovalsResponse({
+      questionId: 'appr-arm-first',
+      value: REJECT_WITH_REASON_VALUE,
+      userId: 'admin-1',
+      channelType: DM_CHANNEL,
+      platformId: DM_PLATFORM,
+      threadId: null,
+      accepted,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The prompt is still on its way: the card must not show it yet.
+    expect(accepted).not.toHaveBeenCalled();
+    posted();
+    expect(await outcome).toBe('accepted');
+  });
+
+  it('captures a reason typed while the prompt is still being delivered', async () => {
+    const { captureReasonReply } = await import('./reason-capture.js');
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    await seedApproval('appr-early-reason', 'install_packages');
+    let posted!: () => void;
+    deliverHold = new Promise<void>((resolve) => (posted = resolve));
+    const outcome = handleApprovalsResponse({
+      questionId: 'appr-early-reason',
+      value: REJECT_WITH_REASON_VALUE,
+      userId: 'admin-1',
+      channelType: DM_CHANNEL,
+      platformId: DM_PLATFORM,
+      threadId: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The prompt is visible but its delivery hasn't returned yet.
+    expect(await captureReasonReply(dmReply('typed fast'))).toBe(true);
+    posted();
+    await outcome;
+    expect(lastRelayedText()).toBe('Your install_packages request was rejected by admin: "typed fast"');
+  });
+
+  it('finalizes a reject whose prompt failed after a second Reject with reason took over the DM', async () => {
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    await seedApproval('appr-first', 'install_packages');
+    await seedApproval('appr-second', 'install_packages');
+    let failFirst!: () => void;
+    deliverHold = new Promise<void>((_, reject) => (failFirst = () => reject(new Error('channel down'))));
+    const click = (approvalId: string) =>
+      handleApprovalsResponse({
+        questionId: approvalId,
+        value: REJECT_WITH_REASON_VALUE,
+        userId: 'admin-1',
+        channelType: DM_CHANNEL,
+        platformId: DM_PLATFORM,
+        threadId: null,
+      });
+    const first = click('appr-first');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await click('appr-second');
+    failFirst();
+    await first;
+    // The first can't be answered any more: rejected now, not left to the sweep.
+    expect(await getPendingApproval('appr-first')).toBeUndefined();
+    expect((await getPendingApproval('appr-second'))?.status).toBe('awaiting_reason');
   });
 
   it('truncates an over-long reason to 280 chars with an ellipsis', async () => {

@@ -271,11 +271,10 @@ import { createConversationController } from './local-web-conversation-ui.js';
               option: index,
             }),
           });
-          if (!response.ok) {
-            const responseBody = await response.json().catch(() => ({}));
-            throw new Error(responseBody.error || `Action failed (${response.status})`);
-          }
-          resolveQuestion(card.questionId, option.selectedLabel || option.label);
+          const responseBody = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(responseBody.error || `Action failed (${response.status})`);
+          // The server says what to show; without it the host sends the final text itself.
+          if (responseBody.resolution) resolveQuestion(card.questionId, responseBody.resolution);
           setState('Ready', 'ready');
         } catch (error) {
           resolution.textContent = error instanceof Error ? error.message : 'Action could not be sent.';
