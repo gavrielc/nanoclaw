@@ -21,7 +21,6 @@ const envConfig = readEnvFile([
   'NANOCLAW_EGRESS_NETWORK',
   'WEBHOOK_PORT',
   'WEBHOOK_HOST',
-  'NANOCLAW_ABSOLUTE_CEILING_MS',
   'NANOCLAW_CLAIM_STUCK_MS',
 ]);
 
@@ -111,11 +110,9 @@ export const EGRESS_LOCKDOWN = (process.env.NANOCLAW_EGRESS_LOCKDOWN || envConfi
 export const EGRESS_NETWORK =
   process.env.NANOCLAW_EGRESS_NETWORK || envConfig.NANOCLAW_EGRESS_NETWORK || 'nanoclaw-egress';
 
-// Global overrides for the host sweep's two stuck-container timers (see
-// src/reconcile-session.ts). Raw strings: parsed and range-checked where they
-// are consumed so a bad value falls back to the built-in default, not NaN.
-export const ABSOLUTE_CEILING_MS_RAW =
-  process.env.NANOCLAW_ABSOLUTE_CEILING_MS || envConfig.NANOCLAW_ABSOLUTE_CEILING_MS || '';
+// Global override for the host sweep's claim-stuck timer (see
+// src/reconcile-session.ts). Raw string: parsed and range-checked where it is
+// consumed so a bad value falls back to the built-in default, not NaN.
 export const CLAIM_STUCK_MS_RAW = process.env.NANOCLAW_CLAIM_STUCK_MS || envConfig.NANOCLAW_CLAIM_STUCK_MS || '';
 
 // Resolve when the listener starts so a late process override still wins.

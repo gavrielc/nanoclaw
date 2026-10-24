@@ -7,15 +7,13 @@ import Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
 
 // Pin the sweep-timer overrides to unset: these cases assert the built-in
-// 30 min / 60 s defaults, not whatever a developer's .env or shell sets.
+// 60 s claim-stuck default, not whatever a developer's .env or shell sets.
 vi.mock('./config.js', async () => ({
   ...(await vi.importActual<typeof import('./config.js')>('./config.js')),
-  ABSOLUTE_CEILING_MS_RAW: '',
   CLAIM_STUCK_MS_RAW: '',
 }));
 
 import {
-  ABSOLUTE_CEILING_MS,
   CLAIM_STUCK_MS,
   _resetStuckProcessingRowsForTesting,
   decideStuckAction,
@@ -26,8 +24,7 @@ import { parseIsoTimestamp } from './mailbox/model.js';
 import { wrapSqliteInbound, wrapSqliteOutbound } from './mailbox/sqlite/index.js';
 
 const BASE = Date.parse('2026-04-20T12:00:00.000Z');
-const JUST_WITHIN_CEILING_MS = ABSOLUTE_CEILING_MS - 1;
-const JUST_OVER_CEILING_MS = ABSOLUTE_CEILING_MS + 1;
+const LONG_RUNNING_MS = 3 * 60 * 60 * 1000;
 
 function claim(id: string, offsetMs: number) {
   return { messageId: id, statusChanged: new Date(BASE - offsetMs).toISOString() };
@@ -35,85 +32,39 @@ function claim(id: string, offsetMs: number) {
 
 describe('decideStuckAction', () => {
   it('runs against the built-in defaults', () => {
-    expect(ABSOLUTE_CEILING_MS).toBe(30 * 60 * 1000);
     expect(CLAIM_STUCK_MS).toBe(60 * 1000);
   });
 
-  it('returns ok when heartbeat is within the absolute ceiling', () => {
+  it('does not kill a session whose heartbeat is hours old when no claim is stale', () => {
+    // No blanket runtime cap: a valid worker may stay quiet well past the old
+    // 30 min ceiling. Only a stale message claim can kill.
     expect(
       decideStuckAction({
         now: BASE,
-        heartbeatMtimeMs: BASE - JUST_WITHIN_CEILING_MS,
+        heartbeatMtimeMs: BASE - LONG_RUNNING_MS,
         containerState: null,
         claims: [],
       }),
     ).toEqual({ action: 'ok' });
   });
 
-  it('returns kill-ceiling when heartbeat exceeds the absolute ceiling', () => {
-    const res = decideStuckAction({
-      now: BASE,
-      heartbeatMtimeMs: BASE - JUST_OVER_CEILING_MS,
-      containerState: null,
-      claims: [],
-    });
-    expect(res).toEqual({
-      action: 'kill-ceiling',
-      heartbeatAgeMs: JUST_OVER_CEILING_MS,
-      ceilingMs: ABSOLUTE_CEILING_MS,
-    });
+  it('does not kill on a missing heartbeat alone, however long the container has run', () => {
+    expect(
+      decideStuckAction({
+        now: BASE,
+        heartbeatMtimeMs: 0,
+        containerState: null,
+        claims: [],
+      }),
+    ).toEqual({ action: 'ok' });
   });
 
-  it('skips the ceiling check when no heartbeat file exists and no fallback is known', () => {
-    // A freshly-spawned container hasn't produced any SDK events yet, so no
-    // heartbeat. Prior behavior treated this as infinitely stale and killed
-    // every container within seconds of spawn. With no claims either, we
-    // should conclude everything is fine.
+  it('does not kill a >30 min session whose claim is covered by a fresh heartbeat', () => {
     const res = decideStuckAction({
       now: BASE,
-      heartbeatMtimeMs: 0,
+      heartbeatMtimeMs: BASE - 2_000,
       containerState: null,
-      claims: [],
-    });
-    expect(res.action).toBe('ok');
-  });
-
-  it('does not kill a spawn within the absolute ceiling when heartbeat is absent', () => {
-    const res = decideStuckAction({
-      now: BASE,
-      heartbeatMtimeMs: 0,
-      containerStartedAtMs: BASE - JUST_WITHIN_CEILING_MS,
-      containerState: null,
-      claims: [],
-    });
-    expect(res.action).toBe('ok');
-  });
-
-  it('kills on ceiling using container spawn time when heartbeat never ticked', () => {
-    // Regression: a container spawns, finds nothing that warrants an SDK
-    // event, and sits idle indefinitely with no heartbeat file ever created.
-    // Prior behavior exempted it from the ceiling check forever.
-    const res = decideStuckAction({
-      now: BASE,
-      heartbeatMtimeMs: 0,
-      containerStartedAtMs: BASE - JUST_OVER_CEILING_MS,
-      containerState: null,
-      claims: [],
-    });
-    expect(res).toEqual({
-      action: 'kill-ceiling',
-      heartbeatAgeMs: JUST_OVER_CEILING_MS,
-      ceilingMs: ABSOLUTE_CEILING_MS,
-    });
-  });
-
-  it('prefers a heartbeat over the container spawn time', () => {
-    const res = decideStuckAction({
-      now: BASE,
-      heartbeatMtimeMs: BASE - JUST_WITHIN_CEILING_MS,
-      containerStartedAtMs: BASE - JUST_OVER_CEILING_MS,
-      containerState: null,
-      claims: [],
+      claims: [claim('msg-1', LONG_RUNNING_MS)],
     });
     expect(res.action).toBe('ok');
   });
@@ -121,7 +72,7 @@ describe('decideStuckAction', () => {
   it('kills on claim-stuck when heartbeat is absent AND a claim has aged past tolerance', () => {
     // Hanging fresh container: spawned, picked up a message (claim recorded
     // in processing_ack), but never wrote a heartbeat. Falls through the
-    // skipped ceiling check into claim-stuck — which correctly fires.
+    // no-heartbeat case into claim-stuck — which correctly fires.
     const claimedAgeMs = CLAIM_STUCK_MS + 5_000;
     const res = decideStuckAction({
       now: BASE,
@@ -132,18 +83,18 @@ describe('decideStuckAction', () => {
     expect(res.action).toBe('kill-claim');
   });
 
-  it('extends the ceiling when Bash has a declared timeout longer than 30 min', () => {
+  it('widens claim tolerance when Bash has a declared timeout longer than 30 min', () => {
     const twoHrMs = 2 * 60 * 60 * 1000;
     const res = decideStuckAction({
       now: BASE,
-      // 45 min — over the default ceiling, but under the Bash timeout
+      // 45 min since the claim — over the default tolerance, under the Bash timeout
       heartbeatMtimeMs: BASE - 45 * 60 * 1000,
       containerState: {
         currentTool: 'Bash',
         toolDeclaredTimeoutMs: twoHrMs,
         toolStartedAt: parseIsoTimestamp(new Date(BASE - 45 * 60 * 1000).toISOString()),
       },
-      claims: [],
+      claims: [claim('msg-1', 45 * 60 * 1000)],
     });
     expect(res.action).toBe('ok');
   });

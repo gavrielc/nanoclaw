@@ -24,7 +24,6 @@ import { reconcileSession } from './reconcile-session.js';
 import { sessionKey } from './reconcile.js';
 
 export {
-  ABSOLUTE_CEILING_MS,
   CLAIM_STUCK_MS,
   _resetStuckProcessingRowsForTesting,
   decideStuckAction,

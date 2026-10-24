@@ -24,7 +24,6 @@ vi.mock('./config.js', async () => {
   return {
     ...actual,
     DATA_DIR: '/tmp/nanoclaw-test-host-sweep-grace',
-    ABSOLUTE_CEILING_MS_RAW: '',
     CLAIM_STUCK_MS_RAW: '',
   };
 });

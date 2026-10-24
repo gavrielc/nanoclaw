@@ -153,12 +153,11 @@ For personal automation on capable hardware, the tradeoff favors local. For comp
 
 ## If Containers Get Killed Mid-Turn
 
-The host sweep kills a container when either of two timers runs out. The host log says which one:
+The host sweep has no overall runtime limit on a container; it kills one only when a claimed message goes quiet. The host log says so:
 
-- `NANOCLAW_ABSOLUTE_CEILING_MS` (default 30 minutes, log reason `absolute-ceiling`): no activity at all for this long. Streamed output counts as activity, so this is usually the one a slow model hits, for example while it loads or reads a long prompt.
-- `NANOCLAW_CLAIM_STUCK_MS` (default 60 seconds, log reason `claim-stuck`): the container picked up a message and has shown no activity since. The agent's first event usually arrives before the model call, so this mostly catches an agent stuck while starting up.
+- `NANOCLAW_CLAIM_STUCK_MS` (default 60 seconds, log reason `claim-stuck`): the container picked up a message and has shown no activity since. The agent's first event usually arrives before the model call, so this mostly catches an agent stuck while starting up, or a slow model that loads or reads a long prompt without streaming anything.
 
-Raising one does not raise the other. Set the one you hit, or both, in `.env` to a larger number of milliseconds, then restart the host. Out-of-range or unparseable values are logged and ignored. If the kill comes before the agent's first reply, the messages it started with are usually retried, waiting at least 5, 10, 20, 40 and 80 seconds between tries, then marked failed. Messages sent while it was already working usually are not.
+Set it in `.env` to a larger number of milliseconds, then restart the host. Out-of-range or unparseable values are logged and ignored. If the kill comes before the agent's first reply, the messages it started with are usually retried, waiting at least 5, 10, 20, 40 and 80 seconds between tries, then marked failed. Messages sent while it was already working usually are not.
 
 ## Reverting to Claude
 

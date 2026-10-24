@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./reconcile-session.js', () => ({
   reconcileSession: vi.fn(),
   // Re-exported surface host-sweep.ts forwards — inert stubs.
-  ABSOLUTE_CEILING_MS: 0,
   CLAIM_STUCK_MS: 0,
   _resetStuckProcessingRowsForTesting: vi.fn(),
   decideStuckAction: vi.fn(),
